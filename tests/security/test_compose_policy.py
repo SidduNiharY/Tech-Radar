@@ -124,6 +124,11 @@ def test_parser_has_no_network(compose_data):
         assert compose_data["services"]["parser"].get("network_mode") == "none"
 
 
+def test_clamav_has_no_network(compose_data):
+    if "clamav" in compose_data.get("services", {}):
+        assert compose_data["services"]["clamav"].get("network_mode") == "none"
+
+
 def test_only_allowed_services_on_internet_networks(compose_data):
     open_nets = {
         n for n, cfg in compose_data.get("networks", {}).items() if not (cfg or {}).get("internal")

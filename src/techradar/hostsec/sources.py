@@ -284,3 +284,34 @@ def from_postgres(line: str, *, migrating: bool = False) -> Alert | None:
         )
 
     return None
+
+
+def from_parser(line: str) -> Alert | None:
+    """Parse parser Intake log lines into structured security alerts."""
+    stripped = line.strip()
+    if not stripped or "INTAKE " not in stripped:
+        return None
+
+    at = datetime.now(UTC)
+    summary = stripped[:200]
+
+    if "INTAKE quarantine" in stripped:
+        return Alert(
+            level=Level.WARNING,
+            source="parser",
+            rule="intake quarantine",
+            service="parser",
+            summary=summary,
+            at=at,
+        )
+    if "INTAKE reject" in stripped:
+        return Alert(
+            level=Level.INFO,
+            source="parser",
+            rule="intake reject",
+            service="parser",
+            summary=summary,
+            at=at,
+        )
+
+    return None

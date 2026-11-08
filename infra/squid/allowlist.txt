@@ -20,3 +20,7 @@ github.com
 arxiv.org
 .arxiv.org
 export.arxiv.org
+
+# Antivirus Signatures
+database.clamav.net
+.clamav.net

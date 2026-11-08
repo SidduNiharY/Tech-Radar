@@ -2,15 +2,29 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import defusedxml.ElementTree as dET
 import feedparser
 import trafilatura
+from defusedxml.common import (
+    DTDForbidden,
+    EntitiesForbidden,
+    ExternalReferenceForbidden,
+)
 
 from techradar.schemas.pipeline import FeedEntry
 from techradar.security.text import sanitize_text
 
 
 def feed_to_entries(data: bytes, max_entries: int = 200) -> list[FeedEntry]:
-    """Parse RSS/Atom feed data and return sanitized feed entries."""
+    """Parse RSS/Atom feed data and return sanitized feed entries, rejecting XML entities/DTDs."""
+    try:
+        dET.fromstring(data, forbid_dtd=True)
+    except (DTDForbidden, EntitiesForbidden, ExternalReferenceForbidden) as exc:
+        raise ValueError(f"xml_entities: {exc}") from exc
+    except dET.ParseError, UnicodeDecodeError, ValueError:
+        # Non-XML or malformed XML handled gracefully by feedparser
+        pass
+
     try:
         parsed = feedparser.parse(data)
     except Exception:

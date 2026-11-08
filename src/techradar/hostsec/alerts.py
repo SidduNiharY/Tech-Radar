@@ -37,6 +37,7 @@ class Alert(BaseModel):
         "integrity",
         "resources",
         "gateway",
+        "parser",
         "alerter",
     ]
     rule: str = Field(max_length=80)

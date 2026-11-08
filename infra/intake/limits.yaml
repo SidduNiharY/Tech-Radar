@@ -1,0 +1,9 @@
+fetch:
+  feed: 5000000
+  page: 5000000
+  pdf: 5000000
+telegram:
+  page: 5000000
+  pdf: 20000000
+clipping:
+  md: 2000000

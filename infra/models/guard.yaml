@@ -1,0 +1,12 @@
+default:
+  repo: meta-llama/Llama-Prompt-Guard-2-86M
+  revision: 198bfdb55a297e20ec4eec7f37434fa368e7ec3f
+  injection_labels:
+    - INJECTION
+    - JAILBREAK
+
+challenger:
+  repo: protectai/deberta-v3-base-prompt-injection-v2
+  revision: 8bc59e9a4d46cf46c8e312932f91df25026df128
+  injection_labels:
+    - INJECTION

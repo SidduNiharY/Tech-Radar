@@ -71,3 +71,16 @@ rules:
       - pattern: httpx.put(..., verify=False, ...)
       - pattern: httpx.delete(..., verify=False, ...)
       - pattern: httpx.patch(..., verify=False, ...)
+
+  - id: tr-no-unsafe-xml
+    languages:
+      - python
+    severity: ERROR
+    message: "SEC-54: Unsafe XML parsing is forbidden; use defusedxml instead"
+    pattern-either:
+      - pattern: xml.etree.ElementTree.parse(...)
+      - pattern: xml.etree.ElementTree.fromstring(...)
+      - pattern: xml.dom.minidom.parse(...)
+      - pattern: xml.dom.minidom.parseString(...)
+      - pattern: lxml.etree.parse(...)
+      - pattern: lxml.etree.fromstring(...)

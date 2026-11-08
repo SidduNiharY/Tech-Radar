@@ -4,6 +4,7 @@ import os
 import time
 from pathlib import Path
 
+from techradar.intake.av import IntakeWait
 from techradar.parser.limits import run_with_limits
 from techradar.schemas.pipeline import ParseJob, ParseResult
 
@@ -37,6 +38,9 @@ def serve_once(jobs_dir: Path, raw_dir: Path, clean_dir: Path) -> int:
             content = job_file.read_text(encoding="utf-8")
             job = ParseJob.model_validate_json(content)
             result = run_with_limits(job, raw_dir)
+        except IntakeWait:
+            # When Intake Gateway requires waiting (e.g. clamd updating or down), leave job file
+            continue
         except Exception:
             fallback_id = _extract_fallback_job_id(job_file)
             result = ParseResult(job_id=fallback_id, kind="page", status="error")

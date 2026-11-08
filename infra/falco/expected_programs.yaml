@@ -2,6 +2,8 @@ services:
   bot: [python]
   fetcher: [python]
   parser: [python]
+  clamav: [clamd]
+  clamav-update: [freshclam]
   migrate: [alembic, python]
   postgres: [postgres, pg_isready, pg_dump, pg_restore, psql]
   squid: [squid, log_file_daemon]
@@ -19,6 +21,8 @@ no_network:
 root_start:
   - postgres
   - squid
+  - clamav
+  - clamav-update
 excluded_profiles:
   - ollama-pull
   - egress-probe

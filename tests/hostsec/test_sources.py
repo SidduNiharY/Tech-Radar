@@ -180,3 +180,20 @@ def test_journal_aide_and_integrity() -> None:
     a_res = from_journal(res_entry)
     assert a_res is not None
     assert (a_res.level, a_res.source) == (Level.WARNING, "resources")
+
+
+def test_from_parser_quarantine_and_reject() -> None:
+    from techradar.hostsec.sources import from_parser
+
+    q_alert = from_parser("INTAKE quarantine job123 reasons=[pdf_js]")
+    assert q_alert is not None
+    assert q_alert.level is Level.WARNING
+    assert q_alert.source == "parser"
+    assert q_alert.service == "parser"
+
+    r_alert = from_parser("INTAKE reject job456 reasons=[not_allowlisted]")
+    assert r_alert is not None
+    assert r_alert.level is Level.INFO
+    assert r_alert.source == "parser"
+
+    assert from_parser("normal log line") is None

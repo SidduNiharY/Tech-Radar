@@ -30,9 +30,14 @@ def parse_job(job: ParseJob, raw_dir: Path, max_chars: int = 100_000) -> ParseRe
 
     data = raw_path.read_bytes()
     if job.kind == "feed":
-        entries = feed_to_entries(data)
-        status = "ok" if entries else "empty"
-        return ParseResult(job_id=job.job_id, kind="feed", status=status, entries=entries)
+        try:
+            entries = feed_to_entries(data)
+            status = "ok" if entries else "empty"
+            return ParseResult(job_id=job.job_id, kind="feed", status=status, entries=entries)
+        except ValueError as exc:
+            if "xml_entities" in str(exc):
+                return ParseResult(job_id=job.job_id, kind="feed", status="rejected")
+            return ParseResult(job_id=job.job_id, kind="feed", status="error")
     if job.kind == "page":
         doc = html_to_doc(data, job.url, max_chars)
         status = "ok" if doc else "empty"

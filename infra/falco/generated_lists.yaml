@@ -1,6 +1,12 @@
 - list: tr_bot_programs
   items: [python]
 
+- list: tr_clamav_programs
+  items: [clamd]
+
+- list: tr_clamav-update_programs
+  items: [freshclam]
+
 - list: tr_fetcher_programs
   items: [python]
 
