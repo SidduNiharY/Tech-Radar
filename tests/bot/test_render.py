@@ -1,8 +1,9 @@
-from techradar.bot.render import START_TEXT, render_status
+from techradar.bot.render import START_TEXT, render_answer, render_status
 from techradar.ops.status import SystemStatus
+from techradar.rag.answer import NOT_FOUND, Answer, Citation
 
 
-def test_render_status_ok():
+def test_render_status_ok() -> None:
     s = SystemStatus(
         version="0.1.0",
         db_ok=True,
@@ -15,7 +16,7 @@ def test_render_status_ok():
     )
 
 
-def test_render_status_low_disk():
+def test_render_status_low_disk() -> None:
     s = SystemStatus(
         version="0.1.0",
         db_ok=True,
@@ -29,5 +30,55 @@ def test_render_status_low_disk():
     ]
 
 
-def test_start_text():
+def test_start_text() -> None:
     assert START_TEXT == "Hi. TechRadar Brain is running. Send /status to check it."
+
+
+def test_render_answer_answered() -> None:
+    cit = Citation(n=1, doc_path="d", title="RBI policy", heading="Rates", verified=True)
+    a = Answer(
+        text="It stayed at 5.5% [C1].",
+        citations=[cit],
+        status="answered",
+        used_unverified=False,
+        flags=[],
+    )
+    expected = "It stayed at 5.5% [C1].\n\nSources:\n[1] RBI policy › Rates (verified)"
+    assert render_answer(a) == expected
+
+
+def test_render_answer_not_found() -> None:
+    empty = Answer(
+        text=NOT_FOUND,
+        citations=[],
+        status="not_found",
+        used_unverified=False,
+        flags=[],
+    )
+    assert render_answer(empty) == NOT_FOUND
+
+
+def test_render_answer_needs_review() -> None:
+    a = Answer(
+        text="Suspicious output",
+        citations=[],
+        status="needs_review",
+        used_unverified=False,
+        flags=["bad_citation", "too_long"],
+    )
+    assert render_answer(a) == "I couldn't answer that safely. (bad_citation, too_long)"
+
+
+def test_render_answer_warnings() -> None:
+    a = Answer(
+        text="Draft fact [C1].",
+        citations=[
+            Citation(n=1, doc_path="d", title="Notes", heading="", verified=False),
+        ],
+        status="answered",
+        used_unverified=True,
+        flags=["used_flagged"],
+    )
+    rendered = render_answer(a)
+    assert "⚠️ Uses unverified notes." in rendered
+    assert "⚠️ Uses pages flagged by the Intake Gateway." in rendered

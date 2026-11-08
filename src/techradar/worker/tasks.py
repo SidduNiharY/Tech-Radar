@@ -3,11 +3,18 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
+
+from techradar.bot.render import render_answer
 from techradar.db.engine import make_session_factory
+from techradar.db.models import Answer as AnswerModel
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
+from techradar.messaging.outbox import Button, enqueue_message
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
+from techradar.pipeline.writer import slugify
+from techradar.rag.answer import answer_question
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -17,12 +24,22 @@ from techradar.rag.indexer import (
     scan_vault,
     sync_index,
 )
-from techradar.settings import settings
+from techradar.rag.rerank import CrossEncoderReranker
+from techradar.rag.retrieve import RagDeps
+from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
+
+
+def _get_settings() -> Settings:
+    try:
+        return get_settings()
+    except Exception:
+        return Settings(telegram_owner_chat_id=1)
 
 
 def get_pipeline_deps() -> PipelineDeps:
     """Build default pipeline dependencies from system settings and local models."""
+    settings = _get_settings()
     roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
     completer = LiteLLMCompleter(roles, "http://ollama:11434")
     embedder = LiteLLMEmbedder(roles, "http://ollama:11434")
@@ -81,6 +98,7 @@ async def retention() -> None:
 
 def get_index_deps() -> IndexDeps:
     """Build default RAG index dependencies from settings and embedder."""
+    settings = _get_settings()
     roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
     embedder = LiteLLMEmbedder(roles, "http://ollama:11434")
     session_factory = make_session_factory("app", settings)
@@ -102,6 +120,7 @@ def get_index_deps() -> IndexDeps:
 @app.task(queue="io")
 async def index_sync() -> None:
     """Run periodic vault and library indexing."""
+    settings = _get_settings()
     deps = get_index_deps()
     plan_library_jobs(
         deps.library_inbox,
@@ -113,3 +132,97 @@ async def index_sync() -> None:
     plan_clipping_jobs(deps.vault_root, scanned, deps.raw_dir, deps.jobs_dir)
     await collect_clipping_results(deps)
     await sync_index(deps)
+
+
+def get_rag_deps() -> RagDeps:
+    """Build default RAG dependencies for question answering."""
+    settings = _get_settings()
+    roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
+    completer = LiteLLMCompleter(roles, "http://ollama:11434")
+    embedder = LiteLLMEmbedder(roles, "http://ollama:11434")
+    ro_session_factory = make_session_factory("ro", settings)
+    reranker = CrossEncoderReranker(settings.reranker_path, settings.reranker_device)
+
+    return RagDeps(
+        ro_session_factory=ro_session_factory,
+        completer=completer,
+        embedder=embedder,
+        reranker=reranker,
+        settings=settings,
+    )
+
+
+@app.task(queue="llm", lock="ask", name="ask")
+async def ask_job(chat_id: int, question: str) -> None:
+    """Answer question using grounded RAG and enqueue response to outbox."""
+    settings = _get_settings()
+    deps = get_rag_deps()
+    answer = await answer_question(question, deps)
+
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        ans_row = AnswerModel(
+            question=question,
+            answer=answer.text,
+            citations=[c.model_dump() for c in answer.citations],
+            status=answer.status,
+            used_unverified=answer.used_unverified,
+            flags=answer.flags,
+        )
+        session.add(ans_row)
+        await session.flush()
+
+        buttons = None
+        if answer.status == "answered":
+            buttons = [[Button(text="Save to vault", data=f"save_answer:{ans_row.id}")]]
+
+        rendered = render_answer(answer)
+        await enqueue_message(
+            session,
+            chat_id=chat_id,
+            text=rendered,
+            purpose="answer",
+            buttons=buttons,
+            ref_id=ans_row.id,
+        )
+        await session.commit()
+
+
+@app.task(queue="llm", lock="ask", name="save_answer")
+async def save_answer_job(answer_id: int) -> None:
+    """Save answered Q&A to vault wiki/answers/YYYY/MM/<slug>.md and confirm via outbox."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        ans = await session.get(AnswerModel, answer_id)
+        if not ans:
+            return
+
+        now = datetime.now(UTC)
+        slug = slugify(ans.question[:60]) or f"answer-{answer_id}"
+        rel_path = f"wiki/answers/{now.strftime('%Y/%m')}/{slug}.md"
+        dest = settings.data_dir / "vault" / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        citation_paths = [
+            c["doc_path"] for c in (ans.citations or []) if isinstance(c, dict) and "doc_path" in c
+        ]
+        fm = {
+            "kind": "answer",
+            "generated": True,
+            "question": ans.question,
+            "citations": citation_paths,
+            "date": now.strftime("%Y-%m-%d"),
+        }
+        content = f"---\n{yaml.dump(fm, sort_keys=False)}---\n\n{ans.answer}\n"
+        dest.write_text(content, encoding="utf-8")
+
+        ans.saved_path = rel_path
+        await enqueue_message(
+            session,
+            chat_id=settings.telegram_owner_chat_id,
+            text=f"Saved: {rel_path}",
+            purpose="answer_saved",
+            ref_id=answer_id,
+        )
+        await session.commit()

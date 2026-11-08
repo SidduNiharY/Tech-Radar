@@ -1,8 +1,23 @@
-"""Message routing for owner-only Telegram bot."""
+"""Message routing for owner-only Telegram bot (Phase 2b Task 6).
+
+SEC: SEC-26.
+"""
+
+from __future__ import annotations
 
 from collections.abc import Set
+from typing import Literal, NamedTuple
 
 from techradar.bot.auth import is_allowed
+
+Action = Literal["start", "status", "ask", "ignore"]
+
+
+class Routed(NamedTuple):
+    """Result of update routing containing the target action and optional argument."""
+
+    action: Action
+    arg: str = ""
 
 
 def route_update(
@@ -10,26 +25,31 @@ def route_update(
     text: str | None,
     owner_id: int,
     group_ids: Set[int] = frozenset(),
-) -> str:
+) -> Routed:
     """Route an incoming Telegram message.
 
     Returns:
-        "status" for /status commands from authorized chats
-        "start" for /start commands from authorized chats
-        "ignore" for unauthorized chats or unknown/empty messages
+        Routed("status") for /status commands from authorized chats
+        Routed("start") for /start commands from authorized chats
+        Routed("ask", question) for /ask commands from authorized chats
+        Routed("ignore") for unauthorized chats or unknown/empty messages
     """
     if not is_allowed(chat_id, owner_id, group_ids):
-        return "ignore"
+        return Routed("ignore")
 
     if not text or not text.strip():
-        return "ignore"
+        return Routed("ignore")
 
-    first_word = text.strip().split()[0]
-    cmd = first_word.split("@")[0].lower()
+    cleaned = text.strip()
+    words = cleaned.split()
+    cmd = words[0].split("@")[0].lower()
 
-    if cmd == "/status":
-        return "status"
     if cmd == "/start":
-        return "start"
+        return Routed("start")
+    if cmd == "/status":
+        return Routed("status")
+    if cmd == "/ask":
+        arg = cleaned[len(words[0]) :].strip()
+        return Routed("ask", arg)
 
-    return "ignore"
+    return Routed("ignore")
