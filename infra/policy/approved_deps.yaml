@@ -81,4 +81,43 @@ python:
     why: ASGI server for FastAPI
     approved: "2026-11-08"
 
-npm: {}
+npm:
+  next:
+    why: React web application framework
+    approved: "2026-11-08"
+  react:
+    why: UI component library
+    approved: "2026-11-08"
+  react-dom:
+    why: React DOM renderer
+    approved: "2026-11-08"
+  typescript:
+    why: TypeScript compiler and type checking
+    approved: "2026-11-08"
+  "@types/react":
+    why: TypeScript type definitions for React
+    approved: "2026-11-08"
+  "@types/react-dom":
+    why: TypeScript type definitions for React DOM
+    approved: "2026-11-08"
+  "@types/node":
+    why: TypeScript type definitions for Node.js
+    approved: "2026-11-08"
+  tailwindcss:
+    why: Utility-first CSS framework
+    approved: "2026-11-08"
+  clsx:
+    why: Class name construction utility
+    approved: "2026-11-08"
+  tailwind-merge:
+    why: Tailwind class merger without conflicts
+    approved: "2026-11-08"
+  lucide-react:
+    why: Modern minimalist iconography
+    approved: "2026-11-08"
+  vitest:
+    why: Frontend unit testing framework
+    approved: "2026-11-08"
+  katex:
+    why: LaTeX math typesetting for technical & exam Q&A
+    approved: "2026-11-08"
