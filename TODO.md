@@ -380,8 +380,11 @@ The **Integration Verification Agent** continuously audits the deliverables of a
 
 #### Active Subagent Assignments (Sprint Batch 4)
 - **Subagent 19 (Jarvis Voice Assistant Intent & Spoken Tickets):** `src/techradar/jarvis/intent.py`, `src/techradar/jarvis/executor.py`, `tests/jarvis/test_intent.py`, `tests/jarvis/test_executor.py`.
-- **Subagent 20 (Web App API Client & Streamdown Spec):** `apps/web/lib/api/client.ts`, `apps/web/lib/api/types.ts`, `scripts/export_openapi.py`, `tests/api/test_openapi_export.py`.
-- **Subagent 21 (Gate Verification Targets):** `infra/gates/gate_2c.py`, `infra/gates/gate_3.py`, `infra/gates/gate_4.py`, `Makefile` targets (`make gate-2c`, `make gate-3`, `make gate-4`).
+- **Subagent 20 (Web App API Client & OpenAPI Exporter):** `apps/web/lib/api/client.ts`, `apps/web/lib/api/types.ts`, `scripts/export_openapi.py`, `tests/api/test_openapi_export.py`.
+- **Subagent 21 (Gate Verification Targets):** `infra/gates/gate_2c.py`, `infra/gates/gate_3.py`, `infra/gates/gate_4.py`, `tests/security/test_gates.py`, `Makefile` targets (`make gate-2c`, `make gate-3`, `make gate-4`).
+- **Subagent 22 (Study Time Tracking & Catch-Up Engine):** `src/techradar/planner/tracker.py`, `src/techradar/planner/catchup.py`, `tests/planner/test_tracker.py`, `tests/planner/test_catchup.py`.
+- **Subagent 23 (Economy Dashboard & Fact-Checker Approval):** `src/techradar/world/economy.py`, `src/techradar/world/factcheck.py`, `tests/world/test_economy.py`, `tests/world/test_factcheck.py`.
+- **Subagent 24 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
 ### Integration Checklist
 
