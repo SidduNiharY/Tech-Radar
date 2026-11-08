@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly TechRadar AIDE Integrity Check
+Requires=techradar-aide.service
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=TechRadar Container and Digest Integrity Check
+After=docker.service
+
+[Service]
+Type=oneshot
+User=techradar
+SupplementaryGroups=docker
+WorkingDirectory=/home/techradar/TechRadarBrain
+ExecStart=/home/techradar/TechRadarBrain/.venv/bin/python /home/techradar/TechRadarBrain/scripts/integrity_check.py
+SyslogIdentifier=techradar-integrity
+StandardOutput=journal
+StandardError=journal

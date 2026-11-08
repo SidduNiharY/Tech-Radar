@@ -16,7 +16,9 @@ x-hardened: &hardened-baseline
 services:
   postgres:
     <<: *hardened-baseline
-    image: pgvector/pgvector:0.8.0-pg18@sha256:a5b4c3d2e1f0a5b4c3d2e1f0a5b4c3d2e1f0a5b4c3d2e1f0a5b4c3d2e1f0a5b4
+    build:
+      context: .
+      dockerfile: infra/postgres/Dockerfile
     read_only: false
     mem_limit: 2g
     cpus: "2.0"
@@ -40,6 +42,18 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_superuser_password
       POSTGRES_DB: techradar
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pgaudit
+      - -c
+      - pgaudit.log=role,ddl
+      - -c
+      - pgaudit.role=tr_auditor
+      - -c
+      - pgaudit.log_relation=on
+      - -c
+      - log_connections=on
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s

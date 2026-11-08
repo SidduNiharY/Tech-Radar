@@ -1,0 +1,16 @@
+# TechRadar auditd rules for host integrity and honeytoken monitoring
+
+# Secrets directory watch (writes and attribute changes)
+-w /home/techradar/TechRadarBrain/secrets -p wa -k tr_secret_change
+
+# Privilege escalation watches
+-w /etc/sudoers -p wa -k tr_sudoers
+-w /etc/sudoers.d -p wa -k tr_sudoers
+
+# SSH authorized keys watch
+-w /home/techradar/.ssh/authorized_keys -p wa -k tr_ssh
+
+# Honeytoken file watches (read, write, attribute change)
+-w /home/techradar/TechRadarBrain/secrets/aws_root_key.txt -p rwa -k tr_honey
+-w /home/techradar/TechRadarBrain/.env.production -p rwa -k tr_honey
+-w /var/lib/techradar-honey -p rwa -k tr_honey

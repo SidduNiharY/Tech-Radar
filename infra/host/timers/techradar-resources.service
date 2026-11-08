@@ -1,0 +1,16 @@
+[Unit]
+Description=TechRadar Resource Watcher
+After=network.target
+
+[Service]
+Type=oneshot
+User=techradar
+SupplementaryGroups=docker systemd-journal adm
+WorkingDirectory=/home/techradar/TechRadarBrain
+ExecStart=/home/techradar/TechRadarBrain/.venv/bin/python -m techradar.hostsec.resources
+SyslogIdentifier=techradar-resources
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/var/lib/techradar-alerter

@@ -1,0 +1,11 @@
+[Unit]
+Description=TechRadar AIDE Host Integrity Check
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/aide --check --config /home/techradar/TechRadarBrain/infra/host/aide/techradar.conf
+SyslogIdentifier=aide
+StandardOutput=journal
+StandardError=journal

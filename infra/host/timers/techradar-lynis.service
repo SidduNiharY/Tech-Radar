@@ -1,0 +1,12 @@
+[Unit]
+Description=TechRadar Lynis Security Hardening Audit
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/techradar/TechRadarBrain
+ExecStart=/bin/sh -c 'mkdir -p docs/security/lynis && /usr/bin/lynis audit system --quick --no-colors > "docs/security/lynis/$$(date +%%Y-%%m).txt"'
+SyslogIdentifier=techradar-lynis
+StandardOutput=journal
+StandardError=journal

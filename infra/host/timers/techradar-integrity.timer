@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic TechRadar Integrity Check
+Requires=techradar-integrity.service
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+
+[Install]
+WantedBy=timers.target
