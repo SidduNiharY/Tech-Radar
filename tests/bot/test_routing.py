@@ -28,3 +28,56 @@ def test_route_update_ignores_non_text() -> None:
     assert route_update(42, "", 42) == Routed("ignore")
     assert route_update(42, "   ", 42) == Routed("ignore")
     assert route_update(42, "/help", 42) == Routed("ignore")
+
+
+def test_route_interactive_commands() -> None:
+    assert route_update(42, "/quiz", 42) == Routed("quiz")
+    assert route_update(42, "/cards", 42) == Routed("cards")
+    assert route_update(42, "/grammar", 42) == Routed("grammar")
+    assert route_update(42, "/inbox", 42) == Routed("inbox")
+    assert route_update(42, "/plan", 42) == Routed("plan")
+    assert route_update(42, "/quiz@bot", 42) == Routed("quiz")
+    assert route_update(42, "/cards@bot", 42) == Routed("cards")
+    assert route_update(42, "/grammar@bot", 42) == Routed("grammar")
+    assert route_update(42, "/inbox@bot", 42) == Routed("inbox")
+    assert route_update(42, "/plan@bot", 42) == Routed("plan")
+
+
+def test_route_interactive_commands_unauthorized() -> None:
+    assert route_update(7, "/quiz", 42) == Routed("ignore")
+    assert route_update(7, "/cards", 42) == Routed("ignore")
+    assert route_update(7, "/grammar", 42) == Routed("ignore")
+    assert route_update(7, "/inbox", 42) == Routed("ignore")
+    assert route_update(7, "/plan", 42) == Routed("ignore")
+
+
+def test_route_briefing_take() -> None:
+    res = route_update(
+        42,
+        "My take on the market",
+        42,
+        reply_to_message_id=101,
+        active_briefing_message_ids={101, 102},
+    )
+    assert res == Routed("take", "My take on the market")
+
+    res_flag = route_update(42, "Another take", 42, is_briefing_reply=True)
+    assert res_flag == Routed("take", "Another take")
+
+    res_unrelated = route_update(
+        42,
+        "Random reply",
+        42,
+        reply_to_message_id=999,
+        active_briefing_message_ids={101, 102},
+    )
+    assert res_unrelated == Routed("ignore")
+
+    res_unauth = route_update(
+        7,
+        "Stranger take",
+        42,
+        reply_to_message_id=101,
+        active_briefing_message_ids={101, 102},
+    )
+    assert res_unauth == Routed("ignore")
