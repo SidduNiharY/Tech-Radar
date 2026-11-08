@@ -31,8 +31,12 @@ services:
       - FOWNER
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     secrets:
       - pg_superuser_password
+      - tr_migrator_password
+      - tr_app_password
+      - tr_ro_password
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_superuser_password
       POSTGRES_DB: techradar
@@ -41,6 +45,26 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  migrate:
+    <<: *hardened-baseline
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: migrate
+    mem_limit: 512m
+    cpus: "1.0"
+    user: "1000:1000"
+    networks:
+      - db
+    secrets:
+      - tr_migrator_password
+    environment:
+      TR_SECRETS_DIR: /run/secrets
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   ollama:
     <<: *hardened-baseline
@@ -137,3 +161,9 @@ volumes:
 secrets:
   pg_superuser_password:
     file: ./secrets/pg_superuser_password
+  tr_migrator_password:
+    file: ./secrets/tr_migrator_password
+  tr_app_password:
+    file: ./secrets/tr_app_password
+  tr_ro_password:
+    file: ./secrets/tr_ro_password
