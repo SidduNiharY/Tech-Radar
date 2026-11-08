@@ -1,0 +1,83 @@
+name: CI
+
+"on":
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test and Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1edb5228c4a334253305108847c2c754a093a65b # v5.3.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint with Ruff
+        run: uv run ruff check .
+
+      - name: Check formatting with Ruff
+        run: uv run ruff format --check .
+
+      - name: Run unit tests
+        run: uv run pytest
+
+  semgrep:
+    name: Semgrep Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1edb5228c4a334253305108847c2c754a093a65b # v5.3.0
+
+      - name: Test custom Semgrep rules
+        run: uvx semgrep --test security/semgrep
+
+      - name: Scan codebase with Semgrep
+        run: uvx semgrep scan --error --config security/semgrep/rules.yaml src
+
+  secrets:
+    name: Secret Leak Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks scan
+        run: |
+          curl -sSL -o /tmp/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.24.0/gitleaks_8.24.0_linux_x64.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp
+          /tmp/gitleaks detect --verbose --redact
+
+  config:
+    name: Configuration and Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Run shellcheck
+        run: |
+          scripts=$(find . -name "*.sh" -not -path "./.venv/*" -not -path "./.git/*")
+          if [ -n "$scripts" ]; then
+            shellcheck $scripts
+          else
+            echo "No shell scripts found to check"
+          fi
