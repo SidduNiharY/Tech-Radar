@@ -81,3 +81,30 @@ jobs:
           else
             echo "No shell scripts found to check"
           fi
+
+  policy:
+    name: Policy and Allowlists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1edb5228c4a334253305108847c2c754a093a65b # v5.3.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Check dependencies allowlist
+        run: uv run python scripts/check_deps.py
+
+      - name: Check MCP servers allowlist
+        run: uv run python scripts/check_mcp.py
+
+      - name: Check skills and plugins allowlist
+        run: uv run python scripts/check_skills.py

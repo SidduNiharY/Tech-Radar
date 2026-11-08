@@ -20,7 +20,7 @@ TechRadar Brain is a local-first learning system and personal AI second brain th
 8. **Approved Model Formats:** Models only from Ollama library or approved Hugging Face orgs in GGUF or safetensors format. `trust_remote_code` disabled; no pickle/`torch.load` of untrusted files (SEC-23).
 9. **Reader Isolation:** The reader model has zero tool bindings; the writer is plain deterministic code and never directly processes raw untrusted text (SEC-16, SEC-22).
 10. **Compose Policy Gate:** Every new or modified Compose service must pass `tests/security/test_compose_policy.py`.
-11. **Dependency Gate:** Never add a dependency to `pyproject.toml` or `package.json` without pre-approval in `infra/policy/approved_deps.yaml` (SEC-52).
+11. **Dependency Gate:** Never add a dependency to `pyproject.toml` or `package.json` without pre-approval in `infra/policy/approved_deps.yaml` (SEC-52). `exclude-newer` in `pyproject.toml` is moved forward only on purpose, when I update dependencies.
 12. **Agent Capability Restriction:** Use only the MCP servers, skills, and plugins listed in the allowlists below, pinned to exact versions or commits (SEC-53). Never install unvetted tools.
 13. **Integrity:** Never disable, bypass, or weaken a security test to make it pass.
 

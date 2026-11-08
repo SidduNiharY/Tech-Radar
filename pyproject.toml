@@ -72,3 +72,6 @@ markers = [
     "slow: slow running tests",
 ]
 addopts = "-m 'not db and not egress and not live and not slow'"
+
+[tool.uv]
+exclude-newer = "2026-11-07T00:00:00Z"

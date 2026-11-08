@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "shady-tools": {
+      "command": "uvx",
+      "args": [
+        "shady@1.0.0"
+      ]
+    }
+  }
+}

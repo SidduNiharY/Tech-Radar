@@ -1,0 +1,75 @@
+python:
+  alembic:
+    why: Database migration tool
+    approved: "2026-11-07"
+  docling:
+    why: Document and PDF parsing
+    approved: "2026-11-07"
+  feedparser:
+    why: RSS/Atom feed parsing
+    approved: "2026-11-07"
+  hatchling:
+    why: Python build backend
+    approved: "2026-11-07"
+  httpx:
+    why: Async HTTP client for intake
+    approved: "2026-11-07"
+  import-linter:
+    why: Architectural boundary enforcement
+    approved: "2026-11-07"
+  jinja2:
+    why: Prompt template engine
+    approved: "2026-11-07"
+  langgraph:
+    why: Multi-agent workflow orchestration
+    approved: "2026-11-07"
+  litellm:
+    why: Unified LLM proxy client
+    approved: "2026-11-07"
+  pgvector:
+    why: Vector similarity search for PostgreSQL
+    approved: "2026-11-07"
+  pre-commit:
+    why: Git hook management
+    approved: "2026-11-07"
+  procrastinate:
+    why: PostgreSQL-backed task queue
+    approved: "2026-11-07"
+  psycopg:
+    why: PostgreSQL database driver
+    approved: "2026-11-07"
+  pydantic:
+    why: Data validation and settings management
+    approved: "2026-11-07"
+  pydantic-settings:
+    why: Hierarchical environment configuration
+    approved: "2026-11-07"
+  pytest:
+    why: Unit and integration test runner
+    approved: "2026-11-07"
+  pytest-asyncio:
+    why: Async test support for pytest
+    approved: "2026-11-07"
+  python-telegram-bot:
+    why: Telegram bot interface
+    approved: "2026-11-07"
+  pyyaml:
+    why: YAML parsing for configs and policies
+    approved: "2026-11-07"
+  respx:
+    why: Mock HTTP responses for httpx
+    approved: "2026-11-07"
+  ruff:
+    why: Python linter and formatter
+    approved: "2026-11-07"
+  sqlalchemy:
+    why: SQL toolkit and ORM
+    approved: "2026-11-07"
+  tldextract:
+    why: URL domain extraction
+    approved: "2026-11-07"
+  trafilatura:
+    why: Web content extraction
+    approved: "2026-11-07"
+
+npm: {}
