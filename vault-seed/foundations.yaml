@@ -1,0 +1,33 @@
+foundations:
+  economy:
+    - title: "GDP"
+    - title: "Inflation"
+    - title: "Interest rates"
+    - title: "Budget and deficit"
+    - title: "Taxes"
+    - title: "The rupee"
+  finance:
+    - title: "Banks"
+    - title: "Stock market"
+    - title: "Bonds"
+    - title: "Mutual funds"
+    - title: "How money moves around the world"
+  politics:
+    - title: "Parliament"
+    - title: "States"
+    - title: "Courts"
+    - title: "Elections"
+    - title: "How laws are made"
+    - title: "Constitution basics"
+  world:
+    - title: "Geopolitics"
+    - title: "Trade"
+    - title: "Oil"
+    - title: "The dollar"
+    - title: "UN"
+    - title: "IMF"
+    - title: "WTO"
+  gk:
+    - title: "History"
+    - title: "Geography"
+    - title: "Science basics"

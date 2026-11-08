@@ -430,3 +430,24 @@ Run the verification:
 ```bash
 sudo OWNER="$USER" bash infra/host/check_host.sh
 ```
+
+---
+
+## 21. Private Vault Sync (Syncthing)
+
+Obsidian vault syncing between the TUF server and the macOS client occurs strictly peer-to-peer over encrypted Tailscale without public relays or discovery servers.
+
+### Configuration
+1. Install Syncthing on both host and Mac.
+2. Web GUI bound strictly to `127.0.0.1:8384` protected with administrative password.
+3. Sync protocol listen address bound exclusively to `tcp://<server-tailscale-ip>:22000`.
+4. Disable global discovery, local discovery (broadcasts), relays, and UPnP / NAT traversal.
+5. Explicitly configure device address to the partner's Tailscale IPv4/IPv6 address.
+6. Share `data/vault` to the Mac Obsidian folder.
+7. Add `.stignore` in `data/vault/`:
+   ```text
+   .obsidian/workspace*
+   passwords.md
+   ```
+8. Set the Obsidian Web Clipper destination to `Clippings/`.
+

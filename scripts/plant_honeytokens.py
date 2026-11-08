@@ -111,17 +111,48 @@ def plant_db(db_conn: Any) -> None:
     print("Planted table techradar.bank_credentials (5 rows)")
 
 
+def plant_vault(vault_path: Path, repo_root: Path | None = None) -> None:
+    """Plant honeytoken in Obsidian vault: passwords.md with 0600, .stignore and TR_INDEX_SKIP."""
+    vault_path.mkdir(parents=True, exist_ok=True)
+    passwords_file = vault_path / "passwords.md"
+    pw1 = secrets.token_urlsafe(16)
+    pw2 = secrets.token_urlsafe(16)
+    passwords_file.write_text(
+        f"# Master Passwords & Credentials\n\n- admin_root: {pw1}\n- db_superuser: {pw2}\n"
+    )
+    os.chmod(passwords_file, 0o600)
+    print(f"Planted {passwords_file}")
+
+    stignore = vault_path / ".stignore"
+    existing_ignore = stignore.read_text(encoding="utf-8") if stignore.exists() else ""
+    if "passwords.md" not in existing_ignore:
+        with stignore.open("a", encoding="utf-8") as f:
+            f.write("\npasswords.md\n")
+    print(f"Updated {stignore}")
+
+    if repo_root:
+        env_file = repo_root / ".env"
+        if env_file.exists():
+            env_content = env_file.read_text(encoding="utf-8")
+            if "TR_INDEX_SKIP" not in env_content:
+                with env_file.open("a", encoding="utf-8") as f:
+                    f.write('\nTR_INDEX_SKIP="passwords.md"\n')
+
+
 def plant(
     repo_root: Path,
     db_conn: Any = None,
     files: bool = True,
     db: bool = True,
+    vault: Path | None = None,
 ) -> None:
     """Plant honeytoken files and database entities."""
     if files:
         plant_files(repo_root)
     if db:
         plant_db(db_conn)
+    if vault:
+        plant_vault(vault, repo_root)
 
 
 def verify(repo_root: Path) -> bool:
@@ -167,6 +198,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Plant honeytokens for intrusion detection.")
     parser.add_argument("--files", action="store_true", help="Plant honeytoken files on host")
     parser.add_argument("--db", action="store_true", help="Plant honeytoken database objects")
+    parser.add_argument("--vault", type=Path, help="Plant honeytoken note in vault")
     parser.add_argument(
         "--verify",
         action="store_true",
@@ -181,14 +213,14 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if not (args.files or args.db or args.verify):
+    if not (args.files or args.db or args.vault or args.verify):
         parser.print_help()
         sys.exit(1)
 
     if args.verify and not verify(args.repo_root):
         sys.exit(1)
 
-    if args.files or args.db:
+    if args.files or args.db or args.vault:
         db_conn = None
         if args.db:
             try:
@@ -205,7 +237,7 @@ def main() -> None:
                 print(f"Database connection not available: {e}", file=sys.stderr)
                 sys.exit(1)
 
-        plant(args.repo_root, db_conn, files=args.files, db=args.db)
+        plant(args.repo_root, db_conn, files=args.files, db=args.db, vault=args.vault)
 
 
 if __name__ == "__main__":

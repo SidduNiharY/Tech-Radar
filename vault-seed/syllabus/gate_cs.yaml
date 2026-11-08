@@ -1,0 +1,13 @@
+exam: gate_cs
+subjects:
+  - title: "General Aptitude"
+  - title: "Engineering Mathematics"
+  - title: "Digital Logic"
+  - title: "Computer Organization and Architecture"
+  - title: "Programming and Data Structures"
+  - title: "Algorithms"
+  - title: "Theory of Computation"
+  - title: "Compiler Design"
+  - title: "Operating System"
+  - title: "Databases"
+  - title: "Computer Networks"

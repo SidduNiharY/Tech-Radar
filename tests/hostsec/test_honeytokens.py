@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.plant_honeytokens import plant, plant_files, verify  # noqa: E402
+from scripts.plant_honeytokens import plant, plant_files, plant_vault, verify  # noqa: E402
 
 
 class FakeDB:
@@ -83,3 +83,14 @@ def test_audit_rules_contain_honeytokens() -> None:
     assert "tr_sudoers" in rules
     assert "tr_ssh" in rules
     assert "tr_honey" in rules
+
+
+def test_plant_vault_honeytokens(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    plant_vault(vault, repo_root=tmp_path)
+    passwords_file = vault / "passwords.md"
+    assert passwords_file.exists()
+    assert (os.stat(passwords_file).st_mode & 0o777) == 0o600
+    stignore = vault / ".stignore"
+    assert stignore.exists()
+    assert "passwords.md" in stignore.read_text()

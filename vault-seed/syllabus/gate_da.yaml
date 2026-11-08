@@ -1,0 +1,10 @@
+exam: gate_da
+subjects:
+  - title: "General Aptitude"
+  - title: "Probability and Statistics"
+  - title: "Linear Algebra"
+  - title: "Calculus and Optimization"
+  - title: "Programming, Data Structures and Algorithms"
+  - title: "Database Management and Warehousing"
+  - title: "Machine Learning"
+  - title: "Artificial Intelligence"
