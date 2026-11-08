@@ -347,7 +347,9 @@ The **Integration Verification Agent** continuously audits the deliverables of a
 - **Subagent 7 (Library Summaries & Starter Packs):** `src/techradar/library/summarizer.py`, `src/techradar/library/starter_packs.py`, `infra/sources/exam_packs.yaml`, `tests/library/test_summarizer.py`, `tests/library/test_starter_packs.py`.
 - **Subagent 8 (Predictions & Practice Loops):** `src/techradar/practice/predictions.py`, `src/techradar/practice/chapter_cards.py`, `src/techradar/practice/mistakes.py`, `tests/practice/test_predictions.py`, `tests/practice/test_chapter_cards.py`, `tests/practice/test_mistakes.py`.
 - **Subagent 9 (Uploads & Scoped RAG):** `src/techradar/api/uploads.py`, `src/techradar/rag/scoped_ask.py`, `tests/api/test_uploads.py`, `tests/rag/test_scoped_ask.py`.
-- **Subagent 10 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
+- **Subagent 10 (Planner & Revision Calendar):** `src/techradar/planner/schedule.py`, `src/techradar/planner/revision.py`, `tests/planner/test_schedule.py`, `tests/planner/test_revision.py`.
+- **Subagent 11 (Exams Syllabus & Aptitude Drills):** `src/techradar/exams/syllabus.py`, `src/techradar/exams/aptitude.py`, `tests/exams/test_syllabus.py`, `tests/exams/test_aptitude.py`.
+- **Subagent 12 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
 ### Integration Checklist
 
