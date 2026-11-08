@@ -3,7 +3,7 @@ UV ?= /opt/homebrew/bin/uv
 UV_PYTHON ?= /opt/homebrew/bin/python3
 UV_RUN := UV_PYTHON=$(UV_PYTHON) $(UV) run --no-sync
 
-.PHONY: all lint format test test-db test-egress security simulate-1 simulate-2 guard-eval redteam-live gate-1 gate-2 rag-eval gate-2b
+.PHONY: all lint format test test-db test-egress security simulate-1 simulate-2 guard-eval redteam-live gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4
 
 all: lint test security
 
@@ -66,5 +66,19 @@ gate-2b: gate-2
 	$(UV_RUN) pytest tests/rag tests/security/test_rag_redteam.py -v
 	$(MAKE) rag-eval
 	@echo "GATE 2b: automated checks passed. Sign docs/security/gates.md."
+
+gate-2c: gate-2b
+	$(UV_RUN) lint-imports
+	$(UV_RUN) pytest tests/library tests/rag/test_scoped_ask.py -v
+	@echo "GATE 2c: automated checks passed. Sign docs/security/gates.md."
+
+gate-3:
+	$(UV_RUN) pytest tests/briefing tests/practice tests/exams/test_watcher.py tests/bot -v
+	@echo "GATE 3: automated checks passed. Sign docs/security/gates.md."
+
+gate-4:
+	$(UV_RUN) pytest tests/api -v
+	@echo "GATE 4: automated checks passed. Sign docs/security/gates.md."
+
 
 
