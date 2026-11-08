@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-08T13:38:35.981210+00:00",
+  "total_attacks_tested": 31,
+  "attacks_detected": 26,
+  "detection_rate": 0.8387,
+  "clean_samples_tested": 5,
+  "false_alarms": 0,
+  "false_alarm_rate": 0.0
+}

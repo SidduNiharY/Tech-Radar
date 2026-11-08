@@ -77,10 +77,14 @@ def skill_problems(repo: Path, allow: Mapping[str, AllowedExtension]) -> list[st
     """Identify unlisted or modified skills and unlisted plugins."""
     problems: list[str] = []
 
-    # 1. Scan for skills (folders with SKILL.md, excluding tests/security/fixtures)
+    # 1. Scan for skills (folders with SKILL.md, excluding tests/security/fixtures, .venv, .git)
     for skill_file in sorted(repo.rglob("SKILL.md")):
         rel = skill_file.relative_to(repo)
-        if "tests/security/fixtures" in rel.as_posix():
+        if (
+            "tests/security/fixtures" in rel.as_posix()
+            or ".venv" in rel.parts
+            or ".git" in rel.parts
+        ):
             continue
 
         folder = skill_file.parent

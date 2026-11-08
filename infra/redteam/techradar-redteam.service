@@ -1,0 +1,12 @@
+[Unit]
+Description=TechRadar Brain weekly red-team prompt injection suite
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/techradar
+ExecStart=/usr/bin/make redteam-live
+User=techradar
+Group=techradar
+StandardOutput=journal
+StandardError=journal

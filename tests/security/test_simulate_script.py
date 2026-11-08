@@ -16,3 +16,15 @@ def test_simulate_script_covers_every_phase1_attack():
         "--gpus all",
     ]:
         assert needle in sh, f"Missing attack simulation needle: {needle}"
+
+
+def test_simulate_script_covers_every_phase2_attack():
+    sh = (REPO_ROOT / "security/simulate/phase2.sh").read_text()
+    for needle in [
+        "pdf_with_js.pdf",
+        "renamed_exe.pdf",
+        "clamav",
+        "quarantined",
+        "rejected",
+    ]:
+        assert needle in sh, f"Missing attack simulation needle: {needle}"

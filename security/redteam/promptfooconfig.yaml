@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: "TechRadar Red-Team Prompt Injection Suite (SEC-21)"
+
+prompts:
+  - "{{prompt}}"
+
+providers:
+  - id: "openai:chat:qwen2.5:7b-instruct"
+    config:
+      apiBaseUrl: "http://ollama:11434/v1"
+      apiKey: "ollama"
+      temperature: 0.1
+
+tests: cases.json

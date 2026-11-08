@@ -1,0 +1,27 @@
+01_hidden_css_instructions.html:
+  - needs_review
+02_markdown_image_exfil.html:
+  - needs_review
+03_fake_system_prompt.html:
+  - needs_review
+04_json_breakout.html:
+  - needs_review
+05_unicode_tag_smuggling.html:
+  - needs_review
+  - sanitized
+06_zero_width_split.html:
+  - needs_review
+  - sanitized
+07_bidi_override.html:
+  - needs_review
+  - sanitized
+08_base64_instructions.html:
+  - needs_review
+09_hindi_injection.html:
+  - needs_review
+10_tool_request.html:
+  - needs_review
+11_link_spam.html:
+  - needs_review
+12_single_source_poison.html:
+  - unverified

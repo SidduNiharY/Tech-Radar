@@ -324,6 +324,25 @@ services:
       HTTP_PROXY: "http://squid:3128"
       HTTPS_PROXY: "http://squid:3128"
 
+  redteam:
+    <<: *hardened-baseline
+    profiles:
+      - test
+    image: ghcr.io/promptfoo/promptfoo:0.111.0@sha256:7f4d2f098516aa8749725f77864468f7fbe2b1920803405786195c64c8c7d0e3
+    mem_limit: 1g
+    cpus: "1.0"
+    pids_limit: 100
+    user: "1000:1000"
+    networks:
+      - llm
+    volumes:
+      - ./security/redteam:/app/redteam:ro
+    environment:
+      PROMPTFOO_DISABLE_TELEMETRY: "true"
+      PROMPTFOO_CONFIG_DIR: /tmp
+    command: ["eval", "-c", "/app/redteam/promptfooconfig.yaml"]
+
+
 
 networks:
   db:

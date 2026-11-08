@@ -1,0 +1,10 @@
+[Unit]
+Description=Run TechRadar red-team suite weekly
+Requires=techradar-redteam.service
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
