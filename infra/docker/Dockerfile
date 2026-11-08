@@ -9,3 +9,9 @@ COPY alembic.ini ./
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev
 CMD ["uv", "run", "alembic", "upgrade", "head"]
+
+FROM base AS bot
+COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
+RUN uv sync --frozen --no-dev --extra bot
+CMD ["uv", "run", "python", "-m", "techradar.bot.main"]
