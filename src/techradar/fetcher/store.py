@@ -8,7 +8,7 @@ from typing import Literal
 from techradar.schemas.pipeline import ParseJob
 
 
-def store_raw(body: bytes, raw_dir: Path, ext: Literal["xml", "html", "pdf"]) -> str:
+def store_raw(body: bytes, raw_dir: Path, ext: Literal["xml", "html", "pdf", "md"]) -> str:
     """Store raw downloaded bytes content-addressed with mode 0o640."""
     sha256 = hashlib.sha256(body).hexdigest()
     name = f"{sha256}.{ext}"

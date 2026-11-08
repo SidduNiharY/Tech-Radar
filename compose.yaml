@@ -162,6 +162,7 @@ services:
     user: "1000:1000"
     volumes:
       - ./data/raw:/data/raw:ro
+      - ./data/library/originals:/data/library/originals:ro
       - ./data/parse-jobs:/data/parse-jobs
       - ./data/clean:/data/clean
       - ./data/quarantine:/data/quarantine
@@ -190,6 +191,8 @@ services:
       - ./data/raw:/data/raw
       - ./data/parse-jobs:/data/parse-jobs
       - ./data/vault:/data/vault
+      - ./data/library-inbox:/data/library-inbox
+      - ./data/library:/data/library
       - ./infra/sources:/infra/sources:ro
       - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro
       - ./infra/models/roles.yaml:/infra/models/roles.yaml:ro

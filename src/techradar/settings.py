@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,6 +81,14 @@ class Settings(BaseSettings):
     alert_log: Path = Path("/var/lib/techradar-alerter/alerts.jsonl")
     incidents_dir: Path = Path("data/incidents")
     evidence_pubkey: Path = Path("infra/host/evidence.pub")
+    index_skip: list[str] = []
+
+    @field_validator("index_skip", mode="before")
+    @classmethod
+    def _parse_index_skip(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v or []
 
 
 @lru_cache
