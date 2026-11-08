@@ -1,0 +1,17 @@
+- list: tr_bot_programs
+  items: [python]
+
+- list: tr_migrate_programs
+  items: [alembic, python]
+
+- list: tr_ollama_programs
+  items: [ollama]
+
+- list: tr_postgres_programs
+  items: [postgres, pg_isready, pg_dump, pg_restore, psql]
+
+- list: tr_squid_programs
+  items: [squid, log_file_daemon]
+
+- macro: tr_app_container
+  condition: (container.name startswith "techradar-" and not (container.name startswith "techradar-ollama-pull" or container.name startswith "techradar-egress-probe" or container.name startswith "techradar-evals" or container.name startswith "techradar-redteam" or container.name startswith "techradar-zap"))

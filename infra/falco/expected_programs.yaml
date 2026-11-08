@@ -1,0 +1,25 @@
+services:
+  bot: [python]
+  migrate: [alembic, python]
+  postgres: [postgres, pg_isready, pg_dump, pg_restore, psql]
+  squid: [squid, log_file_daemon]
+  ollama: [ollama]
+internal_only:
+  - worker
+  - jarvis
+  - api
+  - postgres
+  - ollama
+  - voice-worker
+no_network:
+  - parser
+  - clamav
+root_start:
+  - postgres
+  - squid
+excluded_profiles:
+  - ollama-pull
+  - egress-probe
+  - evals
+  - redteam
+  - zap
