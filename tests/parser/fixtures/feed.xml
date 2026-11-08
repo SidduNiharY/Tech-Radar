@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>TechRadar Feed</title>
+    <link>https://example.com/feed</link>
+    <description>Test feed description</description>
+    <item>
+      <title>Item one</title>
+      <link>https://example.com/articles/item-one</link>
+      <description><![CDATA[<p>First test article summary content.</p>]]></description>
+      <pubDate>Sun, 08 Nov 2026 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Item two</title>
+      <link>https://example.com/articles/item-two</link>
+      <description><![CDATA[<p>Second test article summary content.</p>]]></description>
+      <pubDate>Sun, 08 Nov 2026 11:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

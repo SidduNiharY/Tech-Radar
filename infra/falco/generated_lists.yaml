@@ -1,11 +1,17 @@
 - list: tr_bot_programs
   items: [python]
 
+- list: tr_fetcher_programs
+  items: [python]
+
 - list: tr_migrate_programs
   items: [alembic, python]
 
 - list: tr_ollama_programs
   items: [ollama]
+
+- list: tr_parser_programs
+  items: [python]
 
 - list: tr_postgres_programs
   items: [postgres, pg_isready, pg_dump, pg_restore, psql]

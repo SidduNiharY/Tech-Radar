@@ -15,3 +15,15 @@ COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev --extra bot
 CMD ["uv", "run", "python", "-m", "techradar.bot.main"]
+
+FROM base AS fetcher
+COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
+RUN uv sync --frozen --no-dev --extra fetcher
+CMD ["uv", "run", "python", "-m", "techradar.fetcher.main"]
+
+FROM base AS parser
+COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
+RUN uv sync --frozen --no-dev --extra parser
+CMD ["uv", "run", "python", "-m", "techradar.parser.main"]

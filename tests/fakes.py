@@ -79,3 +79,18 @@ class FakeResolver:
         if self.error is not None:
             raise self.error
         return list(self.ips)
+
+
+class FakeClock:
+    """Fake clock for deterministic rate limiter and timeout testing."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.current = start
+        self.slept: list[float] = []
+
+    def now(self) -> float:
+        return self.current
+
+    async def sleep(self, s: float) -> None:
+        self.slept.append(s)
+        self.current += s

@@ -1,5 +1,7 @@
 services:
   bot: [python]
+  fetcher: [python]
+  parser: [python]
   migrate: [alembic, python]
   postgres: [postgres, pg_isready, pg_dump, pg_restore, psql]
   squid: [squid, log_file_daemon]
