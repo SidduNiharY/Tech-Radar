@@ -1,0 +1,9 @@
+[Unit]
+Description=TechRadar Daily Security Heartbeat Timer
+
+[Timer]
+OnCalendar=*-*-* 06:25:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -72,6 +72,13 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.briefing_time == "06:30"
     assert s.misfire_grace_s == 21600
     assert s.user_agent == "TechRadarBrain/0.1 (personal, non-commercial)"
+    assert s.alert_chat_id is None
+    assert s.containment == "alert-only"
+    assert s.heartbeat_time == "06:25"
+    assert s.quiet_hours == "23:00-06:00"
+    assert s.alert_log == Path("/var/lib/techradar-alerter/alerts.jsonl")
+    assert s.incidents_dir == Path("data/incidents")
+    assert s.evidence_pubkey == Path("infra/host/evidence.pub")
 
     get_settings.cache_clear()
     cached = get_settings()

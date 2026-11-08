@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     briefing_time: str = "06:30"
     misfire_grace_s: int = 21600
     user_agent: str = "TechRadarBrain/0.1 (personal, non-commercial)"
+    alert_chat_id: int | None = None
+    containment: Literal["alert-only", "on"] = "alert-only"
+    heartbeat_time: str = "06:25"
+    quiet_hours: str = "23:00-06:00"
+    alert_log: Path = Path("/var/lib/techradar-alerter/alerts.jsonl")
+    incidents_dir: Path = Path("data/incidents")
+    evidence_pubkey: Path = Path("infra/host/evidence.pub")
 
 
 @lru_cache
