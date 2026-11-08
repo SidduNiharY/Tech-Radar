@@ -78,6 +78,48 @@ services:
       - ollama:/root/.ollama
     command: ["sh", "-c", "ollama serve & sleep 5 && ollama pull \"$$MODEL\""]
 
+  squid:
+    <<: *hardened-baseline
+    image: ubuntu/squid:6.6-24.04_beta@sha256:d1c0c4a7e9f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7
+    mem_limit: 1g
+    cpus: "1.0"
+    pids_limit: 200
+    networks:
+      - egress_internal
+      - egress_out
+    cap_add:
+      - SETUID
+      - SETGID
+    tmpfs:
+      - /tmp
+      - /var/run
+      - /var/spool/squid
+      - /var/log/squid
+    volumes:
+      - ./infra/squid/squid.conf:/etc/squid/squid.conf:ro
+      - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro
+    healthcheck:
+      test: ["CMD", "squid", "-k", "check"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  egress-probe:
+    <<: *hardened-baseline
+    profiles:
+      - test
+    image: curlimages/curl:8.12.1@sha256:c2b3a4f5e6d7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 50
+    user: "1000:1000"
+    networks:
+      - egress_internal
+    environment:
+      HTTP_PROXY: "http://squid:3128"
+      HTTPS_PROXY: "http://squid:3128"
+
+
 networks:
   db:
     internal: true
