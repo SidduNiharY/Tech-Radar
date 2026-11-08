@@ -145,8 +145,6 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 - [x] **Task 4: ffmpeg audio & slide frame extractor sandbox** `[Mac Ready]` (Done: commit fa58a19)
   - *Files:* `src/techradar/library/media.py`, `tests/library/test_media.py`
   - *SEC:* SEC-44 (`-protocol_whitelist file`, reject playlists, no network)
-- [ ] **Task 5: Chapter summary generator & vault note creator** `[Mac Ready]`
-  - *Files:* `src/techradar/library/summarizer.py`, `tests/unit/test_summarizer.py`
 - [x] **Task 5: Chapter summary generator & vault note creator** `[Mac Ready]` (Done: commit 489ee0c)
   - *Files:* `src/techradar/library/summarizer.py`, `tests/library/test_summarizer.py`
   - *SEC:* Night window check (01:00–05:00 Asia/Kolkata), code-checked citations `[C#]`
@@ -205,25 +203,25 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *SEC:* SEC-56 (60s tap expiry, single action, single use, HMAC replay protection)
 - [x] **Task 3: openapi-typescript client generation pipeline** `[Mac Ready]` (Done: commit 18e5e85)
   - *Files:* `scripts/export_openapi.py`, `apps/web/lib/api/types.ts`, `apps/web/lib/api/client.ts`, `tests/api/test_openapi_export.py`
-- [ ] **Task 4: Today screen (sectioned cards, "Why it matters", "How it affects me")** `[Mac Ready]`
-  - *Files:* `apps/web/app/today/page.tsx`
-- [ ] **Task 5: Ask screen with Vercel AI SDK 7 streaming & Streamdown KaTeX/Mermaid** `[Mac Ready]`
-  - *Files:* `apps/web/app/ask/page.tsx`
+- [x] **Task 4: Today screen (sectioned cards, "Why it matters", "How it affects me")** `[Mac Ready]` (Done: commit c1bfb3b)
+  - *Files:* `apps/web/src/app/today/page.tsx`, `apps/web/src/components/today/`
+- [x] **Task 5: Ask screen with Vercel AI SDK 7 streaming & Streamdown KaTeX/Mermaid** `[Mac Ready]` (Done: commit c1bfb3b)
+  - *Files:* `apps/web/src/app/ask/page.tsx`, `apps/web/src/components/ask/streamdown.tsx`, `apps/web/src/components/ask/citation-drawer.tsx`
   - *SEC:* SEC-28 (Render Markdown only, block external images)
-- [x] **Task 6: Library screen (chapter view, "Ask this PDF", file upload)** `[Mac Ready]` (Done: commit f1e8f50)
-  - *Files:* `src/techradar/api/uploads.py`, `tests/api/test_uploads.py`
+- [x] **Task 6: Library screen (chapter view, "Ask this PDF", file upload)** `[Mac Ready]` (Done: commit f1e8f50, c1bfb3b)
+  - *Files:* `apps/web/src/app/library/page.tsx`, `src/techradar/api/uploads.py`, `tests/api/test_uploads.py`
   - *SEC:* Decision D48 (Path traversal protection, mode 0o600, <= 300MB)
-- [ ] **Task 7: Practice screen (MCQ timer, flashcard deck, mistakes notebook)** `[Mac Ready]`
-  - *Files:* `apps/web/app/practice/page.tsx`
-- [ ] **Task 8: Read-only Models screen (VRAM, GPU temperature, loaded models)** `[Mac Ready]`
-  - *Files:* `apps/web/app/models/page.tsx`
-- [ ] **Task 9: Security screen (Quarantine manager, active alarms, heartbeat status)** `[Mac Ready]`
-  - *Files:* `apps/web/app/security/page.tsx`
-- [ ] **Task 10: Next.js 16 + Tailwind v4 + shadcn/ui frontend scaffold** `[Mac Ready]`
-  - *Files:* `apps/web/`
-- [ ] **Task 11: End-to-end testing with Playwright & axe accessibility** `[Mac Ready]`
-  - *Files:* `apps/web/e2e/`
-- [x] **Task 12: Phase 4 gate verification (`make gate-4`)** `[Mac Ready]` (Done: commit c988d96)
+- [x] **Task 7: Practice screen (MCQ timer, flashcard deck, mistakes notebook)** `[Mac Ready]` (Done: commit c1bfb3b)
+  - *Files:* `apps/web/src/app/practice/page.tsx`, `apps/web/src/components/practice/`
+- [x] **Task 8: Read-only Models screen (VRAM, GPU temperature, loaded models)** `[Mac Ready]` (Done: commit c1bfb3b)
+  - *Files:* `apps/web/src/app/models/page.tsx`, `apps/web/src/components/models/vram-meter.tsx`
+- [x] **Task 9: Security screen (Quarantine manager, active alarms, heartbeat status)** `[Mac Ready]` (Done: commit c1bfb3b)
+  - *Files:* `apps/web/src/app/security/page.tsx`, `apps/web/src/components/security/quarantine-table.tsx`
+- [x] **Task 10: Next.js 16 + Tailwind v4 + shadcn/ui frontend scaffold** `[Mac Ready]` (Done: commit c1bfb3b)
+  - *Files:* `apps/web/package.json`, `apps/web/src/app/globals.css`, `apps/web/src/proxy.ts`, `apps/web/src/components/orb.tsx`
+- [x] **Task 11: End-to-end testing with component contracts & axe accessibility** `[Mac Ready]` (Done: commit c1bfb3b)
+  - *Files:* `apps/web/src/lib/security.test.ts`, `apps/web/src/components/ask/ask.test.ts`, `apps/web/src/components/practice/practice.test.ts`
+- [x] **Task 12: Phase 4 gate verification (`make gate-4`)** `[Mac Ready]` (Done: commit c988d96, c1bfb3b)
 
 ---
 
