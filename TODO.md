@@ -343,13 +343,11 @@ An **Integration Verification Agent** continuously audits the deliverables of al
 
 The **Integration Verification Agent** continuously audits the deliverables of all parallel subagents before merging and pushing to ensure zero regressions and strict architectural compliance.
 
-#### Active Subagent Assignments
-- **Subagent 1 (Library & Media Engine):** `src/techradar/library/bulk.py`, `src/techradar/library/media.py`, `tests/library/test_bulk.py`, `tests/library/test_media.py`.
-- **Subagent 2 (Practice Engine & Briefing):** `src/techradar/briefing/compose.py`, `src/techradar/practice/quiz.py`, `tests/briefing/test_compose.py`, `tests/practice/test_quiz.py`.
-- **Subagent 3 (Web API & Security):** `src/techradar/api/main.py`, `src/techradar/api/deps.py`, `tests/api/test_auth.py`.
-- **Subagent 4 (Exam Watcher):** `src/techradar/exams/watcher.py`, `tests/exams/test_watcher.py`.
-- **Subagent 5 (Grammar & Vocab Practice):** `src/techradar/practice/grammar.py`, `src/techradar/practice/vocab.py`, `tests/practice/test_grammar.py`, `tests/practice/test_vocab.py`.
-- **Subagent 6 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
+#### Active Subagent Assignments (Sprint Batch 2)
+- **Subagent 7 (Library Summaries & Starter Packs):** `src/techradar/library/summarizer.py`, `src/techradar/library/starter_packs.py`, `infra/sources/exam_packs.yaml`, `tests/library/test_summarizer.py`, `tests/library/test_starter_packs.py`.
+- **Subagent 8 (Predictions & Practice Loops):** `src/techradar/practice/predictions.py`, `src/techradar/practice/chapter_cards.py`, `src/techradar/practice/mistakes.py`, `tests/practice/test_predictions.py`, `tests/practice/test_chapter_cards.py`, `tests/practice/test_mistakes.py`.
+- **Subagent 9 (Uploads & Scoped RAG):** `src/techradar/api/uploads.py`, `src/techradar/rag/scoped_ask.py`, `tests/api/test_uploads.py`, `tests/rag/test_scoped_ask.py`.
+- **Subagent 10 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
 ### Integration Checklist
 
