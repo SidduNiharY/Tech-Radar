@@ -347,7 +347,9 @@ The **Integration Verification Agent** continuously audits the deliverables of a
 - **Subagent 1 (Library & Media Engine):** `src/techradar/library/bulk.py`, `src/techradar/library/media.py`, `tests/library/test_bulk.py`, `tests/library/test_media.py`.
 - **Subagent 2 (Practice Engine & Briefing):** `src/techradar/briefing/compose.py`, `src/techradar/practice/quiz.py`, `tests/briefing/test_compose.py`, `tests/practice/test_quiz.py`.
 - **Subagent 3 (Web API & Security):** `src/techradar/api/main.py`, `src/techradar/api/deps.py`, `tests/api/test_auth.py`.
-- **Subagent 4 (Integration Verification):** Orchestrates boundary validation, end-to-end regression testing, commit gating, and GitHub pushes.
+- **Subagent 4 (Exam Watcher):** `src/techradar/exams/watcher.py`, `tests/exams/test_watcher.py`.
+- **Subagent 5 (Grammar & Vocab Practice):** `src/techradar/practice/grammar.py`, `src/techradar/practice/vocab.py`, `tests/practice/test_grammar.py`, `tests/practice/test_vocab.py`.
+- **Subagent 6 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
 ### Integration Checklist
 
