@@ -63,13 +63,15 @@ class FakeRunner:
         self.calls.append(list(args))
         stdout = ""
         if len(args) >= 2 and args[0] == "docker" and args[1] == "inspect":
-            stdout = json.dumps([
-                {
-                    "NetworkSettings": {
-                        "Networks": {net: {} for net in self.networks},
-                    },
-                }
-            ])
+            stdout = json.dumps(
+                [
+                    {
+                        "NetworkSettings": {
+                            "Networks": {net: {} for net in self.networks},
+                        },
+                    }
+                ]
+            )
         elif len(args) >= 2 and args[0] == "docker" and args[1] == "diff":
             stdout = "C /etc/shadow\nA /tmp/evil\n"
         elif len(args) >= 3 and args[0:3] == ["docker", "compose", "logs"]:
@@ -100,9 +102,7 @@ def test_evidence_saved_before_stop(fake_runner: FakeRunner, tmp_path: Path) -> 
     assert res == "contained after saving evidence"
     calls = fake_runner.calls
     diff_at = next(i for i, c in enumerate(calls) if c[1] == "diff")
-    first_disconnect = next(
-        i for i, c in enumerate(calls) if c[1:3] == ["network", "disconnect"]
-    )
+    first_disconnect = next(i for i, c in enumerate(calls) if c[1:3] == ["network", "disconnect"])
     assert diff_at < first_disconnect and calls[-1][-2:] == ["stop", "parser"]
 
 

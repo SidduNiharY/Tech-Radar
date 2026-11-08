@@ -11,10 +11,7 @@ def test_render_status_ok():
         disk_free_pct=72.4,
     )
     assert render_status(s) == (
-        "TechRadar Brain v0.1.0\n"
-        "Database: ok\n"
-        "Models: ok (loaded: qwen3.5:4b)\n"
-        "Disk free: 72%"
+        "TechRadar Brain v0.1.0\nDatabase: ok\nModels: ok (loaded: qwen3.5:4b)\nDisk free: 72%"
     )
 
 

@@ -115,9 +115,7 @@ def contain(service: str, run: Runner) -> list[list[str]]:
         try:
             data = json.loads(inspect_res.stdout)
             if isinstance(data, list) and data:
-                net_dict = (
-                    data[0].get("NetworkSettings", {}).get("Networks", {})
-                )
+                net_dict = data[0].get("NetworkSettings", {}).get("Networks", {})
                 networks = list(net_dict.keys())
         except (json.JSONDecodeError, KeyError, TypeError, IndexError) as exc:
             logger.debug("Failed parsing networks from docker inspect: %s", exc)

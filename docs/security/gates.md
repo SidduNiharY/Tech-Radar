@@ -1,0 +1,20 @@
+# Security Validation Gates
+
+Record of verification gates and external exposure reviews across system deployment phases.
+
+| Gate | Target Phase | Date | Git Commit | nmap LAN Result | nmap Tailnet Result | Heartbeat Verified | Status | Signed Off |
+|---|---|---|---|---|---|---|---|---|
+| Gate 1 | Phase 1: Hardened Foundation | 2026-11-08 | `c8d6021` | No open ports | Port 22/tcp (Tailscale SSH) only | ✅ Received via Alert Bot | PASS | SidduNiharY |
+| Gate 2 | Phase 2: Ingest & Markdown Vault | Pending | | | | | | |
+| Gate 3 | Phase 3: Offline Sandbox Parser | Pending | | | | | | |
+| Gate 4 | Phase 4: Hybrid RAG Pipeline | Pending | | | | | | |
+| Gate 5 | Phase 5: Active Practice Engine | Pending | | | | | | |
+| Gate 6 | Phase 6: Jarvis Voice Assistant | Pending | | | | | | |
+| Gate 7 | Phase 7: Web Dashboard & Ops | Pending | | | | | | |
+| Gate 8 | Phase 8: Automation Engine | Pending | | | | | | |
+| Gate 9 | Phase 9: Peer Practice Network | Pending | | | | | | |
+| Gate 10 | Phase 10: Multi-Agent Deep Research | Pending | | | | | | |
+| Gate 11 | Phase 11: Local Knowledge Distillation | Pending | | | | | | |
+| Gate 12 | Phase 12: Continuous Adversarial Defense | Pending | | | | | | |
+| Gate 13 | Phase 13: Distributed Backup & DR | Pending | | | | | | |
+| Gate 14 | Phase 14: Mobile Companion & PWA | Pending | | | | | | |

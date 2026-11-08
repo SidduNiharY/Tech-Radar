@@ -112,9 +112,7 @@ def check_integrity(
     Returns:
         tuple of (exit_code, list of output lines)
     """
-    tmpfs_map, volumes_map, pinned_map = extract_mounts_and_pins(
-        compose_file, built_images_file
-    )
+    tmpfs_map, volumes_map, pinned_map = extract_mounts_and_pins(compose_file, built_images_file)
     if pinned_overrides:
         pinned_map.update(pinned_overrides)
 

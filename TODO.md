@@ -64,37 +64,37 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `evals/fit/fit.py`, `tests/evals/test_fit.py`, `infra/models/README.md`
   - *SEC:* SEC-23, Decision D6
   - *Verify:* Evaluates context limits, VRAM projections, and speed thresholds. (Done: commit b6db3dd, 6 tests pass)
-- [ ] **Task 10: Owner-only Telegram bot skeleton & `/status`** `[Mac Ready]`
-  - *Files:* `src/techradar/bot/`, `tests/unit/test_bot_router.py`
+- [x] **Task 10: Owner-only Telegram bot skeleton & `/status`** `[Mac Ready]`
+  - *Files:* `src/techradar/bot/`, `src/techradar/ops/status.py`, `tests/bot/`
   - *SEC:* SEC-26 (Strict owner chat ID check; strangers get zero response)
-  - *Verify:* Non-owner messages ignored; `/status` returns clean system summary.
-- [ ] **Task 11: Encrypted backup scripts with restic** `[Mac Ready (Scripts) / Linux (Cron)]`
-  - *Files:* `infra/backup/backup.sh`, `tests/unit/test_backup_script.py`
+  - *Verify:* Non-owner messages ignored; `/status` returns clean system summary. (Done: commit 8fed414)
+- [x] **Task 11: Encrypted backup scripts with restic** `[Mac Ready (Scripts) / Linux (Cron)]`
+  - *Files:* `infra/backup/backup.sh`, `infra/backup/restore_test.sh`, `tests/infra/test_backup_script.py`
   - *SEC:* SEC-14 (Encrypted snapshots, exclude honeytokens)
-  - *Verify:* Dry-run backup script generates valid restic commands.
-- [ ] **Task 12: CI security workflow and static analysis** `[Mac Ready]`
-  - *Files:* `.github/workflows/ci.yml`, `Makefile`, `security/semgrep/`
+  - *Verify:* Dry-run backup script generates valid restic commands. (Done: commit c1ce98b)
+- [x] **Task 12: CI security workflow and static analysis** `[Mac Ready]`
+  - *Files:* `.github/workflows/ci.yml`, `Makefile`, `security/semgrep/`, `infra/host/RUNBOOK.md`, `infra/host/check_host.sh`
   - *SEC:* SEC-33 (Pinned GitHub Actions commit SHAs, gitleaks, ruff, semgrep)
-  - *Verify:* `make lint` and `make security` execute without errors.
+  - *Verify:* `make lint` and `make security` execute without errors. (Done: commit 59be5f7)
 - [x] **Task 13: Dependency approval and MCP allowlists** `[Mac Ready]`
   - *Files:* `infra/policy/approved_deps.yaml`, `scripts/check_deps.py`, `scripts/check_mcp.py`, `scripts/check_skills.py`
   - *SEC:* SEC-52, SEC-53 (Blocks typosquatting, slopsquatting, unvetted agent plugins)
   - *Verify:* CI script fails if an unapproved package is added to `pyproject.toml`. (Done: commit fa64e9d, 8 tests pass)
-- [ ] **Task 14: Host Alerter daemon, heartbeat, and egress alarms** `[Mac Ready (Scripts) / Linux (Host)]`
-  - *Files:* `infra/host/alerter.py`, `tests/unit/test_alerter.py`
+- [x] **Task 14: Host Alerter daemon, heartbeat, and egress alarms** `[Mac Ready (Scripts) / Linux (Host)]`
+  - *Files:* `src/techradar/hostsec/alerter.py`, `src/techradar/hostsec/contain.py`, `tests/hostsec/test_alerts.py`, `tests/hostsec/test_contain.py`
   - *SEC:* SEC-59, SEC-66 (Separate bot token, daily 06:25 AM heartbeat, deduplication)
-  - *Verify:* Alerter formats alarms, dedupes bursts, and logs to append-only file.
-- [ ] **Task 15: Honeytokens, host integrity checks & auditing** `[Mac Ready (Templates) / Linux (Host)]`
-  - *Files:* `infra/host/plant_honeytokens.sh`, `infra/host/integrity_check.sh`, `tests/unit/test_integrity.py`
+  - *Verify:* Alerter formats alarms, dedupes bursts, and logs to append-only file. (Done: commit 0ae6bd0)
+- [x] **Task 15: Honeytokens, host integrity checks & auditing** `[Mac Ready (Templates) / Linux (Host)]`
+  - *Files:* `scripts/plant_honeytokens.py`, `scripts/integrity_check.py`, `src/techradar/hostsec/integrity.py`, `tests/hostsec/test_integrity.py`, `tests/hostsec/test_honeytokens.py`
   - *SEC:* SEC-60, SEC-61, SEC-62, SEC-63 (AIDE, auditd, pgaudit, fake credentials)
-  - *Verify:* Scripts correctly configure honeytoken paths and exclude them from backups.
-- [ ] **Task 16: Falco configuration and containment rules** `[Mac Ready (Rules) / Linux (Host eBPF)]`
-  - *Files:* `infra/falco/falco_rules.local.yaml`, `tests/unit/test_falco_rules.py`
+  - *Verify:* Scripts correctly configure honeytoken paths and exclude them from backups. (Done: commit cb8bab8)
+- [x] **Task 16: Falco configuration and containment rules** `[Mac Ready (Rules) / Linux (Host eBPF)]`
+  - *Files:* `infra/falco/`, `scripts/build_falco_lists.py`, `src/techradar/hostsec/resources.py`, `tests/security/test_falco_rules.py`, `tests/hostsec/test_resources.py`
   - *SEC:* SEC-58, SEC-65 (Alert on unexpected shells, container isolation)
-  - *Verify:* Rule syntax passes linter; containment logic isolates containers safely.
-- [ ] **Task 17: Phase 1 gate verification (`make gate-1`)** `[Mac Ready]`
-  - *Files:* `scripts/gate_1_check.py`
-  - *Verify:* Full automated pass of all unit, security, and policy tests.
+  - *Verify:* Rule syntax passes linter; containment logic isolates containers safely. (Done: commit 3a71c23)
+- [x] **Task 17: Phase 1 gate verification (`make gate-1`)** `[Mac Ready]`
+  - *Files:* `Makefile`, `docs/security/gates.md`, `security/simulate/phase1.sh`, `tests/security/test_simulate_script.py`
+  - *Verify:* Full automated pass of all unit, security, and policy tests. (Done: commit pending Gate 1)
 
 ---
 

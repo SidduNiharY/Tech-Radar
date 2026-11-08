@@ -133,4 +133,3 @@ async def test_run_fit_bench_writes_daily_file(tmp_path: Path) -> None:
     assert "qwen3.5:4b" in results
     assert results["qwen3.5:4b"].fit == "fits"
     _verify_output_files(tmp_path)
-

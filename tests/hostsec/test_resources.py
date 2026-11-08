@@ -19,11 +19,7 @@ def test_parse_gpu_apps() -> None:
     assert parse_gpu_apps("4242, ollama, 3200\n") == [
         GpuApp(pid=4242, name="ollama", used_mib=3200)
     ]
-    multi = (
-        "101, ollama, 4096\n"
-        "102, python, 1024\n"
-        "\n"
-    )
+    multi = "101, ollama, 4096\n102, python, 1024\n\n"
     assert parse_gpu_apps(multi) == [
         GpuApp(pid=101, name="ollama", used_mib=4096),
         GpuApp(pid=102, name="python", used_mib=1024),
@@ -37,7 +33,8 @@ def test_service_of_pid() -> None:
         "1234567890ab": "voice-worker",
     }
     cgroup_v2 = (
-        "0::/system.slice/docker-abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.scope\n"
+        "0::/system.slice/docker-abcdef1234567890"
+        "abcdef1234567890abcdef1234567890abcdef1234567890.scope\n"
     )
     assert service_of_pid(42, cgroup_v2, containers) == "ollama"
 
@@ -94,9 +91,7 @@ def test_outbound_bytes() -> None:
         "api.telegram.org:443 - DIRECT/- -"
     )
     client_map = {"172.28.0.5": "bot"}
-    assert check_outbound_bytes([line], client_map) == [
-        "WARNING bot sent 250 MB in an hour"
-    ]
+    assert check_outbound_bytes([line], client_map) == ["WARNING bot sent 250 MB in an hour"]
 
     # Under 200MB limit: no alert
     under_limit_line = (

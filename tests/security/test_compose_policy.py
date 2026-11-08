@@ -44,9 +44,8 @@ def test_cap_drop_all_and_no_new_privileges(compose_data):
 def test_no_privileged_no_host_network(compose_data, exceptions_data):
     for name, svc in compose_data.get("services", {}).items():
         assert not svc.get("privileged"), f"{name} must not be privileged"
-        assert (
-            svc.get("network_mode") != "host"
-            or name in exceptions_data.get("host_network", {})
+        assert svc.get("network_mode") != "host" or name in exceptions_data.get(
+            "host_network", {}
         ), f"{name} must not use host network without exception"
 
 
@@ -60,25 +59,25 @@ def test_no_dangerous_mounts(compose_data):
 
 def test_limits_present(compose_data):
     for name, svc in compose_data.get("services", {}).items():
-        assert {"mem_limit", "cpus", "pids_limit"} <= svc.keys(), (
-            f"{name} missing resource limits"
-        )
+        assert {"mem_limit", "cpus", "pids_limit"} <= svc.keys(), f"{name} missing resource limits"
 
 
 def test_read_only_or_excepted(compose_data, exceptions_data):
     for name, svc in compose_data.get("services", {}).items():
-        assert (
-            svc.get("read_only") is True
-            or name in exceptions_data.get("writable_root", {})
-        ), f"{name} must be read_only or excepted"
+        assert svc.get("read_only") is True or name in exceptions_data.get("writable_root", {}), (
+            f"{name} must be read_only or excepted"
+        )
 
 
 def test_non_root_or_excepted(compose_data, exceptions_data):
     for name, svc in compose_data.get("services", {}).items():
-        assert (
-            str(svc.get("user", "root")) not in {"root", "0", "0:0"}
-            or name in exceptions_data.get("root_start", {})
-        ), f"{name} must not run as root without exception"
+        assert str(svc.get("user", "root")) not in {
+            "root",
+            "0",
+            "0:0",
+        } or name in exceptions_data.get("root_start", {}), (
+            f"{name} must not run as root without exception"
+        )
 
 
 def test_image_pinned_by_digest(compose_data):
@@ -92,9 +91,9 @@ def test_image_pinned_by_digest(compose_data):
 def test_healthchecks_use_exec_form(compose_data):
     for name, svc in compose_data.get("services", {}).items():
         hc = svc.get("healthcheck")
-        assert hc is None or (
-            isinstance(hc.get("test"), list) and hc["test"][0] == "CMD"
-        ), f"{name} healthcheck must use exec form ['CMD', ...]"
+        assert hc is None or (isinstance(hc.get("test"), list) and hc["test"][0] == "CMD"), (
+            f"{name} healthcheck must use exec form ['CMD', ...]"
+        )
 
 
 def test_dockerfile_from_pinned_by_digest():
@@ -130,9 +129,8 @@ def test_only_allowed_services_on_internet_networks(compose_data):
         n for n, cfg in compose_data.get("networks", {}).items() if not (cfg or {}).get("internal")
     }
     for name, svc in compose_data.get("services", {}).items():
-        if (
-            set(svc.get("networks", [])) & open_nets
-            or (not svc.get("networks") and svc.get("network_mode") != "none")
+        if set(svc.get("networks", [])) & open_nets or (
+            not svc.get("networks") and svc.get("network_mode") != "none"
         ):
             assert name in {"squid", "ollama-pull", "egress-probe"}, (
                 f"{name} cannot be on non-internal network"

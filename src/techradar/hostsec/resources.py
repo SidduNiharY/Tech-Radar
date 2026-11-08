@@ -43,7 +43,7 @@ def parse_gpu_apps(csv_text: str) -> list[GpuApp]:
             name = row[1].strip()
             used_mib = int(row[2].strip())
             apps.append(GpuApp(pid=pid, name=name, used_mib=used_mib))
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             continue
     return apps
 

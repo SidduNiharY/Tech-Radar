@@ -10,20 +10,22 @@ from techradar.hostsec.sources import (
     from_squid,
 )
 
-FALCO_SHELL_IN_PARSER = json.dumps({
-    "priority": "Critical",
-    "rule": "Run shell in container",
-    "output": "Shell spawned in parser container",
-    "time": "2026-11-08T10:00:00Z",
-    "output_fields": {
-        "container.name": "techradar-parser-1",
-    },
-})
+FALCO_SHELL_IN_PARSER = json.dumps(
+    {
+        "priority": "Critical",
+        "rule": "Run shell in container",
+        "output": "Shell spawned in parser container",
+        "time": "2026-11-08T10:00:00Z",
+        "output_fields": {
+            "container.name": "techradar-parser-1",
+        },
+    }
+)
 
 AUDIT_HONEY_ENTRY = {
     "SYSLOG_IDENTIFIER": "audit",
     "MESSAGE": (
-        'type=SYSCALL msg=audit(1762590000.000:1): arch=c000003e syscall=2 '
+        "type=SYSCALL msg=audit(1762590000.000:1): arch=c000003e syscall=2 "
         'key="tr_honey" comm="cat"'
     ),
 }
@@ -36,8 +38,7 @@ ROLE_AUDIT_LINE = (
 
 def deny_line(ip: str) -> str:
     return (
-        f"1762590000.123 10 {ip} TCP_DENIED/403 3982 GET http://evil.com/ - "
-        "HIER_NONE/- text/html"
+        f"1762590000.123 10 {ip} TCP_DENIED/403 3982 GET http://evil.com/ - HIER_NONE/- text/html"
     )
 
 
@@ -50,11 +51,13 @@ def test_falco_critical_maps_service() -> None:
 
 
 def test_falco_warning_level() -> None:
-    line = json.dumps({
-        "priority": "Warning",
-        "rule": "Unexpected connection",
-        "output_fields": {"container.name": "techradar-fetcher-1"},
-    })
+    line = json.dumps(
+        {
+            "priority": "Warning",
+            "rule": "Unexpected connection",
+            "output_fields": {"container.name": "techradar-fetcher-1"},
+        }
+    )
     a = from_falco(line)
     assert a is not None
     assert (a.level, a.service) == (Level.WARNING, "fetcher")

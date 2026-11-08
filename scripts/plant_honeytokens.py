@@ -48,9 +48,7 @@ def plant_files(repo_root: Path) -> None:
 
     # 3. Excludes file listing honeytoken paths
     excludes_content = (
-        "secrets/aws_root_key.txt\n"
-        ".env.production\n"
-        "/var/lib/techradar-honey/excludes.txt\n"
+        "secrets/aws_root_key.txt\n.env.production\n/var/lib/techradar-honey/excludes.txt\n"
     )
     system_honey_dir = Path("/var/lib/techradar-honey")
     try:
@@ -58,7 +56,7 @@ def plant_files(repo_root: Path) -> None:
         sys_excludes = system_honey_dir / "excludes.txt"
         sys_excludes.write_text(excludes_content)
         print(f"Planted {sys_excludes}")
-    except (PermissionError, OSError):
+    except PermissionError, OSError:
         local_honey_dir = repo_root / "var" / "lib" / "techradar-honey"
         local_honey_dir.mkdir(parents=True, exist_ok=True)
         local_excludes = local_honey_dir / "excludes.txt"

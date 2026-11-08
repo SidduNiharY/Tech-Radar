@@ -102,10 +102,12 @@ def test_warnings_grouped_per_hour() -> None:
 
 
 def test_warnings_different_keys_not_grouped() -> None:
-    msgs = feed_alerter([
-        warning("rule-1", at=NOW),
-        warning("rule-2", at=NOW + timedelta(minutes=5)),
-    ])
+    msgs = feed_alerter(
+        [
+            warning("rule-1", at=NOW),
+            warning("rule-2", at=NOW + timedelta(minutes=5)),
+        ]
+    )
     assert len(msgs) == 2
 
 
@@ -138,10 +140,7 @@ def test_parse_quiet_hours_invalid() -> None:
 
 
 def test_heartbeat_texts() -> None:
-    assert (
-        render_heartbeat([])
-        == "✅ All quiet: 0 critical, 0 warnings in the last 24 h."
-    )
+    assert render_heartbeat([]) == "✅ All quiet: 0 critical, 0 warnings in the last 24 h."
     assert render_heartbeat([critical()]).startswith("⚠️ 1 critical, 0 warnings")
     assert "Check the Security screen or the alert log." in render_heartbeat([critical()])
 

@@ -45,9 +45,7 @@ def test_generated_lists_up_to_date() -> None:
 def test_rules_file_has_required_rules() -> None:
     rules_data = yaml.safe_load(RULES_PATH.read_text())
     rules_by_name = {
-        item["rule"]: item
-        for item in rules_data
-        if isinstance(item, dict) and "rule" in item
+        item["rule"]: item for item in rules_data if isinstance(item, dict) and "rule" in item
     }
 
     for name, priority in REQUIRED_RULES.items():

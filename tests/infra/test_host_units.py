@@ -99,9 +99,9 @@ def test_check_host_bash_syntax_valid() -> None:
 
 def test_check_host_supports_owner_variable() -> None:
     content = CHECK_HOST_SCRIPT.read_text(encoding="utf-8")
-    assert (
-        'OWNER="${OWNER:-' in content
-    ), "check_host.sh must support OWNER environment variable override"
+    assert 'OWNER="${OWNER:-' in content, (
+        "check_host.sh must support OWNER environment variable override"
+    )
 
 
 def test_check_host_contains_all_12_checks_in_order() -> None:

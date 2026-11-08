@@ -111,11 +111,7 @@ class AlertLog:
             return
 
         for i in range(self.backup_count, 0, -1):
-            src = (
-                self.path.with_name(f"{self.path.name}.{i - 1}")
-                if i > 1
-                else self.path
-            )
+            src = self.path.with_name(f"{self.path.name}.{i - 1}") if i > 1 else self.path
             dst = self.path.with_name(f"{self.path.name}.{i}")
             if src.exists():
                 if i == self.backup_count and dst.exists():
@@ -173,9 +169,7 @@ class AlertLog:
                     continue
 
                 alert_aware = (
-                    alert.at
-                    if alert.at.tzinfo is not None
-                    else alert.at.replace(tzinfo=UTC)
+                    alert.at if alert.at.tzinfo is not None else alert.at.replace(tzinfo=UTC)
                 )
                 if alert_aware >= t_aware:
                     alerts.append(alert)
