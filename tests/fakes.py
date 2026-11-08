@@ -94,3 +94,21 @@ class FakeClock:
     async def sleep(self, s: float) -> None:
         self.slept.append(s)
         self.current += s
+
+
+class FakeReranker:
+    """Fake reranker for deterministic cross-encoder testing."""
+
+    def __init__(
+        self,
+        scores: dict[str, float] | None = None,
+        default: float = 0.5,
+    ) -> None:
+        self.scores = scores or {}
+        self.default = default
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def score(self, query: str, passages: Sequence[str]) -> list[float]:
+        passage_list = list(passages)
+        self.calls.append((query, passage_list))
+        return [self.scores.get(p, self.default) for p in passage_list]

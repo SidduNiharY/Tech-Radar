@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     incidents_dir: Path = Path("data/incidents")
     evidence_pubkey: Path = Path("infra/host/evidence.pub")
     index_skip: list[str] = []
+    rag_min_score: float = 0.30
+    rag_k_candidates: int = 30
+    rag_k_final: int = 6
+    max_question_chars: int = 500
+    reranker_path: Path = Path("/opt/models/reranker")
+    reranker_device: Literal["cpu", "cuda"] = "cpu"
+    library_dir: Path = Path("/data/library")
 
     @field_validator("index_skip", mode="before")
     @classmethod

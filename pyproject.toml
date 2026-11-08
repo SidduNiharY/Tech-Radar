@@ -38,6 +38,9 @@ worker = [
     "jinja2",
     "tldextract",
 ]
+rag = [
+    "sentence-transformers",
+]
 
 [dependency-groups]
 dev = [

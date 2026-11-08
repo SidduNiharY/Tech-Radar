@@ -62,6 +62,9 @@ python:
   ruff:
     why: Python linter and formatter
     approved: "2026-11-07"
+  sentence-transformers:
+    why: Cross-encoder reranker for RAG hybrid search
+    approved: "2026-11-08"
   sqlalchemy:
     why: SQL toolkit and ORM
     approved: "2026-11-07"
