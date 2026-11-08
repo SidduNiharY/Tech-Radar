@@ -1,0 +1,48 @@
+rbi.repo_rate:
+  label: "Repo rate"
+  aliases:
+    - "repo rate"
+    - "policy repo rate"
+    - "rbi repo rate"
+
+rbi.sdf_rate:
+  label: "Standing Deposit Facility rate"
+  aliases:
+    - "standing deposit facility rate"
+    - "sdf rate"
+
+rbi.msf_rate:
+  label: "Marginal Standing Facility rate"
+  aliases:
+    - "marginal standing facility rate"
+    - "msf rate"
+
+rbi.crr:
+  label: "Cash Reserve Ratio"
+  aliases:
+    - "cash reserve ratio"
+    - "crr"
+
+rbi.slr:
+  label: "Statutory Liquidity Ratio"
+  aliases:
+    - "statutory liquidity ratio"
+    - "slr"
+
+india.cpi_inflation:
+  label: "CPI Inflation"
+  aliases:
+    - "cpi inflation"
+    - "retail inflation"
+
+india.wpi_inflation:
+  label: "WPI Inflation"
+  aliases:
+    - "wpi inflation"
+    - "wholesale inflation"
+
+india.gdp_growth:
+  label: "GDP Growth"
+  aliases:
+    - "gdp growth"
+    - "gdp growth rate"
