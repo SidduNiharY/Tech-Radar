@@ -42,6 +42,10 @@ worker = [
 rag = [
     "sentence-transformers",
 ]
+api = [
+    "fastapi",
+    "uvicorn",
+]
 
 [dependency-groups]
 dev = [

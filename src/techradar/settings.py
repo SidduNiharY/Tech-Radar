@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     reranker_path: Path = Path("/opt/models/reranker")
     reranker_device: Literal["cpu", "cuda"] = "cpu"
     library_dir: Path = Path("/data/library")
+    owner_login: str = "owner@local"
+    library_inbox: Path = Path("/data/library-inbox")
+    library_packs_dir: Path = Path("/data/library-packs")
+    library_part_pages: int = 25
+    max_video_s: int = 14_400
+    pack_max_bytes: int = 200_000_000
 
     @field_validator("index_skip", mode="before")
     @classmethod

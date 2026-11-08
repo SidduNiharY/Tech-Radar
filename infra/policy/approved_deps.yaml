@@ -5,6 +5,9 @@ python:
   docling:
     why: Document and PDF parsing
     approved: "2026-11-07"
+  fastapi:
+    why: REST API framework for TechRadar web backend
+    approved: "2026-11-08"
   feedparser:
     why: RSS/Atom feed parsing
     approved: "2026-11-07"
@@ -74,5 +77,8 @@ python:
   trafilatura:
     why: Web content extraction
     approved: "2026-11-07"
+  uvicorn:
+    why: ASGI server for FastAPI
+    approved: "2026-11-08"
 
 npm: {}
