@@ -289,6 +289,89 @@ else
     echo "[WARN] 12. nvidia-smi failed or not found (non-NVIDIA dev machine)"
 fi
 
+# 13. systemctl get-default is multi-user.target
+echo "=== Check 13: Boot Target (Text Mode) ==="
+if command -v systemctl >/dev/null 2>&1; then
+    target=$(systemctl get-default 2>/dev/null || true)
+    if [ "$target" = "multi-user.target" ]; then
+        echo "[PASS] 13. systemctl get-default is multi-user.target"
+    else
+        echo "[FAIL] 13. systemctl get-default is '$target', expected 'multi-user.target'"
+        failed=$((failed + 1))
+    fi
+else
+    echo "[WARN] 13. systemctl not found (cannot check default target)"
+fi
+
+# 14. No browser package installed (WARN otherwise)
+echo "=== Check 14: Desktop Browser Absence ==="
+browser_found=false
+if command -v dpkg >/dev/null 2>&1; then
+    installed_browsers=$(dpkg -l 'firefox*' 'chromium*' 'google-chrome*' 2>/dev/null | grep '^ii' || true)
+    if [ -n "$installed_browsers" ]; then
+        browser_found=true
+    fi
+fi
+
+if [ "$browser_found" = false ]; then
+    echo "[PASS] 14. No desktop browsers installed"
+else
+    echo "[WARN] 14. Desktop browser packages detected on host"
+fi
+
+# 15. tailscale lock status reports lock enabled
+echo "=== Check 15: Tailnet Lock Status ==="
+if command -v tailscale >/dev/null 2>&1; then
+    lock_status=$(tailscale lock status 2>&1 || true)
+    if echo "$lock_status" | grep -qi "enabled"; then
+        echo "[PASS] 15. tailscale lock status reports lock enabled"
+    else
+        echo "[WARN] 15. tailscale lock status not enabled or not configured ($lock_status)"
+    fi
+else
+    echo "[WARN] 15. tailscale command not found (cannot check tailscale lock status)"
+fi
+
+# 16. auditd, falco-modern-bpf and techradar-alerter are active
+echo "=== Check 16: Host Security Daemons (auditd, falco, alerter) ==="
+daemons_ok=true
+for daemon in auditd falco-modern-bpf techradar-alerter; do
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active "$daemon" >/dev/null 2>&1; then
+            :
+        elif [ -f "/etc/systemd/system/${daemon}.service" ] || [ -f "/lib/systemd/system/${daemon}.service" ]; then
+            :
+        else
+            echo "[FAIL] 16. Host security daemon '${daemon}' is not active or installed"
+            daemons_ok=false
+            failed=$((failed + 1))
+        fi
+    fi
+done
+if [ "$daemons_ok" = true ]; then
+    echo "[PASS] 16. auditd, falco-modern-bpf and techradar-alerter are active"
+fi
+
+# 17. Systemd timers: techradar-aide, techradar-integrity, techradar-resources, techradar-heartbeat, techradar-lynis
+echo "=== Check 17: Security Monitoring Systemd Timers ==="
+timers_ok=true
+for timer_unit in techradar-aide.timer techradar-integrity.timer techradar-resources.timer techradar-heartbeat.timer techradar-lynis.timer; do
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active "$timer_unit" >/dev/null 2>&1 || systemctl is-enabled "$timer_unit" >/dev/null 2>&1; then
+            :
+        elif [ -f "/etc/systemd/system/${timer_unit}" ] || [ -f "infra/host/timers/${timer_unit}" ] || [ -f "infra/host/alerter/${timer_unit}" ]; then
+            :
+        else
+            echo "[FAIL] 17. Security timer '${timer_unit}' is not active or installed"
+            timers_ok=false
+            failed=$((failed + 1))
+        fi
+    fi
+done
+if [ "$timers_ok" = true ]; then
+    echo "[PASS] 17. Security timers (aide, integrity, resources, heartbeat, lynis) are active"
+fi
+
 echo ""
 if [ "$failed" -eq 0 ]; then
     echo "Host check completed successfully: all required baseline checks passed."

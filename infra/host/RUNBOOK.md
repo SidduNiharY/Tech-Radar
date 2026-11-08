@@ -358,7 +358,71 @@ For dual-boot installations (Windows / Ubuntu):
 
 ---
 
-## 14. Automated Verification (check_host.sh)
+## 14. Passkeys and Hardware Multi-Factor Authentication
+
+1. **GitHub & Tailscale Auth:** Protect GitHub and primary Identity Provider (IdP) with FIDO2 / WebAuthn passkeys (or hardware security keys like YubiKey).
+2. **Fallback:** Use TOTP authenticator apps (e.g., Aegis, Ente, 1Password) rather than SMS/voice verification.
+3. **Recovery Codes:** Store offline printed recovery codes in a secure physical location.
+
+---
+
+## 15. Telegram Account Hardening
+
+1. **Two-Step Verification:** Enable Telegram Cloud Password (2FA) with an offline recovery passphrase.
+2. **Active Sessions:** Regularly terminate stale web or mobile sessions in Telegram Settings > Devices.
+
+---
+
+## 16. Tailnet Lock
+
+Enforce Tailscale network cryptographic authorization:
+```bash
+# Initialize Tailnet Lock with trusted signing keys (Mac and phone)
+tailscale lock init
+
+# On new devices, sign the node key from a trusted device:
+tailscale lock sign <node-key>
+```
+Verify status:
+```bash
+tailscale lock status
+```
+
+---
+
+## 17. Text-Mode Boot and Browser Removal
+
+Prevent accidental GUI browsing or browser exploit surface on the host:
+```bash
+# Set system default boot target to non-graphical multi-user mode
+sudo systemctl set-default multi-user.target
+
+# Remove desktop browsers
+sudo apt-get purge -y firefox* chromium* google-chrome*
+```
+
+---
+
+## 18. Firmware and BIOS/UEFI Security
+
+1. **Supervisor Password:** Set an administrative BIOS/UEFI password to prevent unauthorized boot device modifications.
+2. **Boot Order:** Lock boot device priority to internal encrypted NVMe drive. Disable USB / network booting unless authorized.
+
+---
+
+## 19. Monthly Security Review
+
+Execute the monthly maintenance checklist documented in `docs/security/monthly.md`:
+```bash
+# Perform monthly check sequence
+bash infra/backup/restore_test.sh
+bash infra/host/check_host.sh
+uv run python scripts/plant_honeytokens.py --verify
+```
+
+---
+
+## 20. Automated Verification (check_host.sh)
 
 The `infra/host/check_host.sh` script automates verification of all security requirements. It is strictly read-only and exits 0 only when all baseline checks pass.
 
