@@ -72,6 +72,10 @@ async def collect_results(deps: PipelineDeps) -> dict[str, int]:
                 counts["rejected"] += 1
                 continue
 
+            # Library and clipping results are indexed by the RAG indexer
+            if result.purpose != "news":
+                continue
+
             # Record intake audit log if present
             if result.intake is not None:
                 intake_entry = IntakeLog(

@@ -71,6 +71,7 @@ class ParseJob(BasePipelineModel):
     source_id: int
     raw_item_id: int | None = None
     origin: Origin = "fetch"
+    purpose: Literal["news", "library", "clipping"] = "news"
 
 
 class FeedEntry(BasePipelineModel):
@@ -117,6 +118,7 @@ class ParseResult(BasePipelineModel):
     job_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
     kind: JobKind
     status: ParseStatus
+    purpose: Literal["news", "library", "clipping"] = "news"
     doc: CleanDoc | None = None
     entries: Annotated[list[FeedEntry], Field(max_length=200)] = Field(default_factory=list)
     intake: IntakeVerdict | None = None

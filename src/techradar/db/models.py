@@ -9,6 +9,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Computed,
     Date,
     DateTime,
     Float,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -263,3 +264,114 @@ class Note(Base):
     written_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class Chunk(Base):
+    """Structured text chunk for semantic vector and full-text search."""
+
+    __tablename__ = "chunks"
+    __table_args__ = (
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("ix_chunks_tsv_gin", "tsv", postgresql_using="gin"),
+        Index("ix_chunks_doc_path", "doc_path"),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    doc_path: Mapped[str] = mapped_column(Text, nullable=False)
+    doc_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    heading_path: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", default=list, nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    lang: Mapped[str] = mapped_column(Text, nullable=False)
+    section: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exam_tags: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", default=list, nullable=False
+    )
+    verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    generated: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+    flagged: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+    source_domains: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", default=list, nullable=False
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
+    tsv: Mapped[Any] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('simple', text)", persisted=True), nullable=True
+    )
+    indexed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DocsIndex(Base):
+    """Document hash tracking for incremental vault and library indexing."""
+
+    __tablename__ = "docs_index"
+    __table_args__ = {"schema": "techradar"}
+
+    doc_path: Mapped[str] = mapped_column(Text, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    indexed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Answer(Base):
+    """History of generated RAG answers and their citations."""
+
+    __tablename__ = "answers"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    question: Mapped[str] = mapped_column(String(500), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default="[]", default=list, nullable=False
+    )
+    used_unverified: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+    flags: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", default=list, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    saved_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Outbox(Base):
+    """Queue of outgoing Telegram messages, voice clips, or documents."""
+
+    __tablename__ = "outbox"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(String(4096), nullable=False)
+    buttons: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0", default=0, nullable=False)
+    ref_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

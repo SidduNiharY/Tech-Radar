@@ -130,3 +130,24 @@ def test_parse_result_structure():
     )
     assert res.status == "ok"
     assert res.doc.lang == "en"
+
+
+def test_parse_job_purpose_defaults_to_news():
+    job = ParseJob(
+        job_id="a" * 32,
+        kind="pdf",
+        raw_name="b" * 64 + ".pdf",
+        url="https://example.com/test.pdf",
+        source_id=0,
+        raw_item_id=None,
+    )
+    assert job.purpose == "news"
+
+
+def test_parse_result_purpose_defaults_to_news():
+    res = ParseResult(
+        job_id="a" * 32,
+        kind="page",
+        status="ok",
+    )
+    assert res.purpose == "news"
