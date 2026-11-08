@@ -6,6 +6,7 @@ Record of verification gates and external exposure reviews across system deploym
 |---|---|---|---|---|---|---|---|---|
 | Gate 1 | Phase 1: Hardened Foundation | 2026-11-08 | `c8d6021` | No open ports | Port 22/tcp (Tailscale SSH) only | ✅ Received via Alert Bot | PASS | SidduNiharY |
 | Gate 2 | Phase 2: Ingest & Markdown Vault | 2026-11-08 | `89dc8f0` | No network leak (parser/clamav isolated) | 12/12 Redteam Contained | ✅ Gate 2 automated suite passed | PASS | SidduNiharY |
+| Gate 2b | Phase 2b: RAG Knowledge Index & Ask | 2026-11-08 | `HEAD` | RAG isolation (no httpx/subprocess) | 4/4 Poisoned Notes Contained | ✅ Gate 2b automated suite passed | PASS | SidduNiharY |
 | Gate 3 | Phase 3: Offline Sandbox Parser | Pending | | | | | | |
 | Gate 4 | Phase 4: Hybrid RAG Pipeline | Pending | | | | | | |
 | Gate 5 | Phase 5: Active Practice Engine | Pending | | | | | | |

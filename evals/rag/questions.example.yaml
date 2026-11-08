@@ -1,0 +1,23 @@
+# Example question set for RAG retrieval and citation evaluation (Phase 2b Task 7)
+# Real question set lives in evals/rag/questions.yaml (git-ignored)
+questions:
+  - id: en-01
+    lang: en
+    question: "What was the latest repo rate decision by the Reserve Bank of India?"
+    expected_docs:
+      - "notes/rbi_policy.md"
+  - id: hi-01
+    lang: hi
+    question: "भारतीय रिजर्व बैंक द्वारा रेपो दर पर क्या निर्णय लिया गया था?"
+    expected_docs:
+      - "notes/rbi_policy_hi.md"
+  - id: te-01
+    lang: te
+    question: "భారత రిజర్వ్ బ్యాంక్ తాజా రెపో రేటు నిర్ణయం ఏమిటి?"
+    expected_docs:
+      - "notes/rbi_policy_te.md"
+
+out_of_scope:
+  - "What is the traditional recipe for French chocolate soufflé?"
+  - "Who won the men's singles title at Wimbledon in 1980?"
+  - "Explain quantum chromodynamics and gluon self-interaction in detail."

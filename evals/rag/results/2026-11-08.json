@@ -1,0 +1,65 @@
+{
+  "date": "2026-11-08T16:25:54.480267+00:00",
+  "questions_source": "/Users/siddumanju/Desktop/Resume Projects/TechRadarBrain/evals/rag/questions.example.yaml",
+  "mode": "mock",
+  "embedder": "default",
+  "metrics": {
+    "recall@5": {
+      "en": 1.0,
+      "hi": 1.0,
+      "te": 1.0,
+      "overall": 1.0
+    },
+    "mrr": {
+      "overall": 1.0
+    },
+    "invalid_citations": 0,
+    "out_of_scope_total": 3,
+    "out_of_scope_not_found": 3,
+    "out_of_scope_not_found_rate": 1.0
+  },
+  "thresholds": {
+    "recall_at_5_en": 0.8,
+    "recall_at_5_hi": 0.6,
+    "recall_at_5_te": 0.6,
+    "max_invalid_citations": 0,
+    "min_out_of_scope_not_found_rate": 0.9
+  },
+  "thresholds_passed": true,
+  "checks": {
+    "recall_en": true,
+    "recall_hi": true,
+    "recall_te": true,
+    "citations_valid": true,
+    "out_of_scope_rejection": true
+  },
+  "details": [
+    {
+      "id": "en-01",
+      "lang": "en",
+      "question": "What was the latest repo rate decision by the Reserve Bank of India?",
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "status": "answered",
+      "citations_valid": true
+    },
+    {
+      "id": "hi-01",
+      "lang": "hi",
+      "question": "\u092d\u093e\u0930\u0924\u0940\u092f \u0930\u093f\u091c\u0930\u094d\u0935 \u092c\u0948\u0902\u0915 \u0926\u094d\u0935\u093e\u0930\u093e \u0930\u0947\u092a\u094b \u0926\u0930 \u092a\u0930 \u0915\u094d\u092f\u093e \u0928\u093f\u0930\u094d\u0923\u092f \u0932\u093f\u092f\u093e \u0917\u092f\u093e \u0925\u093e?",
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "status": "answered",
+      "citations_valid": true
+    },
+    {
+      "id": "te-01",
+      "lang": "te",
+      "question": "\u0c2d\u0c3e\u0c30\u0c24 \u0c30\u0c3f\u0c1c\u0c30\u0c4d\u0c35\u0c4d \u0c2c\u0c4d\u0c2f\u0c3e\u0c02\u0c15\u0c4d \u0c24\u0c3e\u0c1c\u0c3e \u0c30\u0c46\u0c2a\u0c4b \u0c30\u0c47\u0c1f\u0c41 \u0c28\u0c3f\u0c30\u0c4d\u0c23\u0c2f\u0c02 \u0c0f\u0c2e\u0c3f\u0c1f\u0c3f?",
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "status": "answered",
+      "citations_valid": true
+    }
+  ]
+}

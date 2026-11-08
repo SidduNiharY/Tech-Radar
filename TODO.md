@@ -359,3 +359,47 @@ digraph subagent_domains {
   * Subagent 4: Task 8 (Squid configuration & allowlist validator).
 * **Batch 4 (Integration Gate):**
   * Run `make gate-1` on the combined codebase.
+
+---
+
+## 4. Cross-Subagent Integration Checklist & Contract Verification
+
+An **Integration Verification Agent** continuously audits the deliverables of all parallel subagents before merging and pushing to ensure zero regressions and strict architectural compliance.
+
+### Integration Checklist
+
+- [x] **1. Architectural Boundary Isolation (`lint-imports`)**
+  - [x] Contract 1: `techradar.parser` does NOT import `httpx`, `techradar.db`, or `techradar.llm`.
+  - [x] Contract 2: `techradar.pipeline.reader` does NOT import `writer`, `db`, `vault`, `httpx`, or `subprocess`.
+  - [x] Contract 3: `techradar.pipeline.writer` does NOT import `llm` or `httpx`.
+  - [x] Contract 4: `techradar.fetcher` does NOT import `llm`, `pipeline`, or `vault`.
+  - [x] Contract 5: `pipeline`, `worker`, `rag`, `bot`, and `api` do NOT import parser submodules directly (SEC-57 One Door).
+  - [x] Contract 6: `techradar.intake` does NOT import `httpx`, `db`, or `llm`.
+  - [x] Contract 7: `techradar.rag` does NOT import `httpx` or `subprocess`.
+  - [x] New subsystems (`library`, `practice`, `api`) remain strictly decoupled and do not violate existing boundaries.
+
+- [x] **2. Dependency Allowlist & Policy Audit (SEC-52)**
+  - [x] `scripts/check_deps.py` passes with zero unapproved packages in `pyproject.toml`.
+  - [x] `scripts/check_mcp.py` and `scripts/check_skills.py` confirm zero unvetted plugins/MCP tools.
+  - [x] Every pinned Docker image retains its immutable `@sha256:` digest in `compose.yaml` and `infra/docker/Dockerfile`.
+
+- [x] **3. Compose Policy & Host Hardening (SEC-01–SEC-07, SEC-55)**
+  - [x] `tests/security/test_compose_policy.py` passes all checks (127.0.0.1 bindings, non-root, read-only, tmpfs, cap_drop ALL).
+  - [x] `tests/security/test_falco_rules.py` validates eBPF process baselines.
+
+- [x] **4. Subsystem Interoperability & Data Contract Checks**
+  - [x] **RAG & Security (Agent 1):** Poisoned notes in `security/redteam/notes/` remain strictly contained (marked `needs_review`, zero link exfiltration, unicode tag characters stripped).
+  - [x] **Library & Indexing (Agent 2):** PDF page ranges chunk into 25-page parts; TOC extraction accurately maps chapter start/end pages and slugs into `Chapter` and `BookMeta` models.
+  - [x] **Practice & Models (Agent 3):** FSRS v5 algorithm correctly calculates retention decay and state transitions; MCQ generator enforces 4 unique options, valid answer index [0, 3], and `NoLinks` compliance.
+  - [x] **API & Security Tickets (Agent 4):** Action tickets enforce single-use execution, 60s TTL expiration, HMAC-SHA256 tampering detection, and replay prevention (SEC-56).
+
+- [x] **5. Code Quality & Formatting Gate**
+  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/`.
+  - [x] `make test` executes all unit test suites without failures.
+  - [x] `make security` runs all automated security audits green.
+
+- [ ] **6. Git Discipline & Push Readiness**
+  - [ ] One task, one commit with clear conventional commit messages.
+  - [ ] No uncommitted scratch files or untracked debris left in the working tree.
+  - [ ] Commits pushed cleanly to `git@github.com:SidduNiharY/Tech-Radar.git` on `main`.
+

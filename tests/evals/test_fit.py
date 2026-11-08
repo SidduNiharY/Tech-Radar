@@ -1,18 +1,9 @@
-import sys
 from pathlib import Path
 
 import pytest
 import respx
 
-# Ensure repo root is at the front of sys.path
-_repo_root = str(Path(__file__).resolve().parents[2])
-if _repo_root in sys.path:
-    sys.path.remove(_repo_root)
-sys.path.insert(0, _repo_root)
-if "evals" in sys.modules and not hasattr(sys.modules["evals"], "fit"):
-    del sys.modules["evals"]
-
-from evals.fit.fit import (  # noqa: E402
+from evals.fit.fit import (
     FitResult,
     choose_worker,
     classify_fit,

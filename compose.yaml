@@ -345,6 +345,30 @@ services:
       PROMPTFOO_CONFIG_DIR: /tmp
     command: ["eval", "-c", "/app/redteam/promptfooconfig.yaml"]
 
+  evals:
+    <<: *hardened-baseline
+    profiles:
+      - test
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: worker
+    mem_limit: 2g
+    cpus: "2.0"
+    user: "1000:1000"
+    networks:
+      - db
+      - llm
+    volumes:
+      - ./evals:/app/evals:ro
+      - ./data/vault:/data/vault:ro
+    environment:
+      TR_SECRETS_DIR: /run/secrets
+    secrets:
+      - tr_ro_password
+    command: ["uv", "run", "python", "evals/rag/run.py"]
+
+
 
 
 networks:
