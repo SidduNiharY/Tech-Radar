@@ -185,8 +185,8 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/practice/grammar.py`, `src/techradar/practice/vocab.py`, `tests/practice/test_grammar.py`, `tests/practice/test_vocab.py`
 - [x] **Task 8: changedetection.io exam notification watcher integration** `[Mac Ready]` (Done: commit 03b46f4)
   - *Files:* `src/techradar/exams/watcher.py`, `tests/exams/test_watcher.py`
-- [ ] **Task 9: Bot interactive quiz & card review session handlers** `[Mac Ready]`
-  - *Files:* `src/techradar/bot/commands/quiz.py`, `src/techradar/bot/commands/cards.py`
+- [x] **Task 9: Bot interactive quiz & card review session handlers** `[Mac Ready]` (Done: commit aff208f)
+  - *Files:* `src/techradar/bot/commands.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py`
 - [ ] **Task 10: Phase 3 gate verification (`make gate-3`)** `[Mac Ready]`
 
 ---
@@ -240,9 +240,11 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 
 ### Phase 6: Voice Coach v1 & English Practice (`docs/superpowers/plans/2026-11-07-techradar-phase6-voice-english.md`)
 - [ ] Telegram voice note receiver and faster-whisper transcription
-- [ ] LanguageTool `en-GB` grammar analysis
+- [x] LanguageTool `en-GB` grammar analysis `[Mac Ready]` (Done: commit c360b9d)
+  - *Files:* `src/techradar/voice/grammar.py`, `tests/voice/test_grammar.py`
 - [ ] CTC Viterbi forced alignment pronunciation scoring
-- [ ] Fluency & filler words ("um/uh") frequency counter
+- [x] Fluency & filler words ("um/uh") frequency counter `[Mac Ready]` (Done: commit c360b9d)
+  - *Files:* `src/techradar/voice/fluency.py`, `tests/voice/test_fluency.py`
 - [ ] Web audio waveform session report (wavesurfer.js)
 - [ ] Library lecture video transcription with timestamp alignment
 
@@ -252,8 +254,10 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 - [ ] Night model batch orchestrator (Gemma 4 12B QAT, 01:00–05:00 AM)
 - [ ] Foundation pages generator (Economy, Finance, Politics, World, GK)
 - [ ] Weekly 20–30 minute deep-dive essay generator
-- [ ] Cause-and-effect chain graph builder
-- [ ] Dynamic terminology glossary
+- [x] Cause-and-effect chain graph builder `[Mac Ready]` (Done: commit 200fb41)
+  - *Files:* `src/techradar/world/causality.py`, `tests/world/test_causality.py`
+- [x] Dynamic terminology glossary `[Mac Ready]` (Done: commit 200fb41)
+  - *Files:* `src/techradar/world/glossary.py`, `tests/world/test_glossary.py`
 - [ ] Economy dashboard (RBI rates, GDP, CPI inflation, currency)
 - [ ] SearXNG forward fact-checker with Telegram approval gate
 
@@ -286,16 +290,22 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ### Phase 10: Models Admin & FastMCP Server (`docs/superpowers/plans/2026-11-07-techradar-phase10-models-extras.md`)
 - [ ] Full Models Admin UI (model downloads, fit checks, test bench)
 - [ ] A/B test voting suite for candidate models
-- [ ] Read-only FastMCP server for Claude Code on macOS (`vault/` search)
+- [x] Read-only FastMCP server for Claude Code on macOS (`vault/` search) `[Mac Ready]` (Done: commit 8ae0a1e)
+  - *Files:* `src/techradar/mcp/server.py`, `tests/mcp/test_server.py`
+- [x] Models Admin VRAM fit and config evaluator `[Mac Ready]` (Done: commit 8ae0a1e)
+  - *Files:* `src/techradar/llm/admin.py`, `tests/llm/test_admin.py`
 - [ ] Tech stack release digest & "Rising fast" tool analyzer
 - [ ] Optional cloud fallback toggle with strict spend limits
 
 ---
 
 ### Phase 11: Feedback & Self-Improvement (`docs/superpowers/plans/2026-11-08-techradar-phase11-feedback.md`)
-- [ ] User feedback action buttons (👍, 👎, "Too long", "Wrong fact")
-- [ ] Bounded topic and source weights (0.2 to 2.0 with exam floors)
-- [ ] Automatic regression test generator (`regression_cases`)
+- [x] User feedback action buttons & types (👍, 👎, "Too long", "Wrong fact") `[Mac Ready]` (Done: commit c742ca8)
+  - *Files:* `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`
+- [x] Bounded topic and source weights (0.2 to 2.0 with exam floors) `[Mac Ready]` (Done: commit c742ca8)
+  - *Files:* `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`
+- [x] Automatic regression test generator (`regression_cases`) `[Mac Ready]` (Done: commit c742ca8)
+  - *Files:* `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`
 - [ ] "Answers in my way" style profile engine per exam/goal mode
 - [ ] Sunday weekly improvement report generator
 - [ ] "My Profile" transparency dashboard
@@ -360,13 +370,18 @@ The **Integration Verification Agent** continuously audits the deliverables of a
 - **Subagent 11 (Exams Syllabus & Aptitude Drills):** `src/techradar/exams/syllabus.py`, `src/techradar/exams/aptitude.py`, `tests/exams/test_syllabus.py`, `tests/exams/test_aptitude.py` (Done: commit 1bce07b).
 - **Subagent 12 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes (Done: commit 6dcd45b).
 
-#### Active Subagent Assignments (Sprint Batch 3)
-- **Subagent 13 (Bot Interactive Commands):** `src/techradar/bot/commands/quiz.py`, `src/techradar/bot/commands/cards.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py`.
-- **Subagent 14 (Voice Coach Engine):** `src/techradar/voice/fluency.py`, `src/techradar/voice/grammar.py`, `tests/voice/test_fluency.py`, `tests/voice/test_grammar.py`.
-- **Subagent 15 (World Understanding & Causality):** `src/techradar/world/glossary.py`, `src/techradar/world/causality.py`, `tests/world/test_glossary.py`, `tests/world/test_causality.py`.
-- **Subagent 16 (FastMCP & Models Admin):** `src/techradar/mcp/server.py`, `src/techradar/llm/admin.py`, `tests/mcp/test_server.py`, `tests/llm/test_admin.py`.
-- **Subagent 17 (Feedback & Improvement Engine):** `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`.
+#### Completed Subagent Assignments (Sprint Batch 3)
+- **Subagent 13 (Bot Interactive Commands):** `src/techradar/bot/commands/quiz.py`, `src/techradar/bot/commands/cards.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py` (Done: commit aff208f).
+- **Subagent 14 (Voice Coach Engine):** `src/techradar/voice/fluency.py`, `src/techradar/voice/grammar.py`, `tests/voice/test_fluency.py`, `tests/voice/test_grammar.py` (Done: commit c360b9d).
+- **Subagent 15 (World Understanding & Causality):** `src/techradar/world/glossary.py`, `src/techradar/world/causality.py`, `tests/world/test_glossary.py`, `tests/world/test_causality.py` (Done: commit 200fb41).
+- **Subagent 16 (FastMCP & Models Admin):** `src/techradar/mcp/server.py`, `src/techradar/llm/admin.py`, `tests/mcp/test_server.py`, `tests/llm/test_admin.py` (Done: commit 8ae0a1e).
+- **Subagent 17 (Feedback & Improvement Engine):** `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py` (Done: commit c742ca8).
 - **Subagent 18 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
+
+#### Active Subagent Assignments (Sprint Batch 4)
+- **Subagent 19 (Jarvis Voice Assistant Intent & Spoken Tickets):** `src/techradar/jarvis/intent.py`, `src/techradar/jarvis/executor.py`, `tests/jarvis/test_intent.py`, `tests/jarvis/test_executor.py`.
+- **Subagent 20 (Web App API Client & Streamdown Spec):** `apps/web/lib/api/client.ts`, `apps/web/lib/api/types.ts`, `scripts/export_openapi.py`, `tests/api/test_openapi_export.py`.
+- **Subagent 21 (Gate Verification Targets):** `infra/gates/gate_2c.py`, `infra/gates/gate_3.py`, `infra/gates/gate_4.py`, `Makefile` targets (`make gate-2c`, `make gate-3`, `make gate-4`).
 
 ### Integration Checklist
 
@@ -378,7 +393,7 @@ The **Integration Verification Agent** continuously audits the deliverables of a
   - [x] Contract 5: `pipeline`, `worker`, `rag`, `bot`, and `api` do NOT import parser submodules directly (SEC-57 One Door).
   - [x] Contract 6: `techradar.intake` does NOT import `httpx`, `db`, or `llm`.
   - [x] Contract 7: `techradar.rag` does NOT import `httpx` or `subprocess`.
-  - [x] New subsystems (`library`, `briefing`, `practice`, `exams`, `api`) remain strictly decoupled and do not violate existing boundaries.
+  - [x] New subsystems (`library`, `briefing`, `practice`, `exams`, `api`, `voice`, `world`, `mcp`) remain strictly decoupled and do not violate existing boundaries.
 
 - [x] **2. Dependency Allowlist & Policy Audit (SEC-52)**
   - [x] `scripts/check_deps.py` passes with zero unapproved packages in `pyproject.toml`.
@@ -400,14 +415,19 @@ The **Integration Verification Agent** continuously audits the deliverables of a
   - [x] **Uploads & Scoped RAG (Subagent 9):** Path traversal prevention enforces files stay within `data/library-uploads/` with mode `0o600` and <= 300MB limit; scoped retrieval constrains search to specific document chunks ("Ask this PDF").
   - [x] **Planner & Revision Calendar (Subagent 10):** Matches daily study blocks to energy levels (HIGH/MEDIUM/LOW); calculates +1, +7, +30, and +90 day spaced revision checkpoints.
   - [x] **Syllabus & Aptitude Engine (Subagent 11):** Hierarchical syllabus tree parser with coverage calculation; algorithmic math/reasoning drill generator with code-verified ground truth (SEC-20).
+  - [x] **Bot Interactive Commands (Subagent 13):** Formats quiz and grammar inline cards matching Telegram callback regex `^[a-z_]{1,20}(:[0-9]{1,12}){1,2}$`; implements reveal/rating states for flashcards; routes interactive commands and active briefing takes with strict unauthorized chat rejection (SEC-26).
+  - [x] **Voice Fluency & Grammar (Subagent 14):** Fully offline speech fluency analysis and filler-word counter (`um`, `uh`, `like`); detects stutters, double comparatives, double negatives, and subject-verb mismatches without network dependency.
+  - [x] **World Glossary & Causality (Subagent 15):** Curated baseline terms with wiki-link regex cross-referencing `[[term]]`; DAG causal graph engine with 3-color DFS cycle detection and root-cause tracing.
+  - [x] **FastMCP & Models Admin (Subagent 16):** Read-only Obsidian vault MCP server for Claude Code on macOS with SEC-24 traversal and symlink escape rejection; models admin parses role configs and computes concurrent VRAM fit with headroom/overflow detection.
+  - [x] **Feedback & Improvement (Subagent 17):** Bounded topic/source weights ($0.2$ to $2.0$) with official domain floors ($1.0$); records user feedback records and stores automatic regression cases.
 
 - [x] **5. Code Quality & Formatting Gate**
-  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/` (226 files verified).
-  - [x] `make test` executes all unit test suites without failures (544 passed).
+  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/` (246 files verified).
+  - [x] `make test` executes all unit test suites without failures (602 passed).
   - [x] `make security` runs all automated security audits green.
 
 - [x] **6. Git Discipline & Push Readiness**
-  - [x] One task, one commit with clear conventional commit messages (`489ee0c`, `112f25b`, `f1e8f50`, `9028f05`, `1bce07b`).
+  - [x] One task, one commit with clear conventional commit messages (`aff208f`, `c360b9d`, `200fb41`, `8ae0a1e`, `c742ca8`).
   - [x] No uncommitted scratch files or untracked debris left in the working tree.
   - [x] Commits pushed cleanly to `git@github.com:SidduNiharY/Tech-Radar.git` on `main`.
 
