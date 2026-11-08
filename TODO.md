@@ -44,10 +44,10 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/logs.py`, `tests/test_logs.py`
   - *SEC:* SEC-32 (Redact tokens, DB passwords, exact secrets, PII)
   - *Verify:* JSON logs with ISO8601 timestamps and regex token redaction. (Done: commit 673a69a, 8 tests pass)
-- [ ] **Task 5: Model routing and LiteLLM abstraction** `[Mac Ready]`
-  - *Files:* `src/techradar/models/router.py`, `tests/unit/test_model_router.py`
+- [x] **Task 8: Model roles and LiteLLM abstraction** `[Mac Ready]`
+  - *Files:* `src/techradar/llm/roles.py`, `src/techradar/llm/client.py`, `infra/models/roles.yaml`, `tests/fakes.py`
   - *SEC:* SEC-23 (GGUF/safetensors validation, no pickle, no trust_remote_code)
-  - *Verify:* Worker/checker routing correctly separates model families.
+  - *Verify:* Worker/checker routing correctly separates model families. (Done: commit 19424e9, 12 tests pass)
 - [ ] **Task 6: Local model fit test bench** `[Mac Ready (Mac models) / Linux (GPU)]`
   - *Files:* `evals/fit/test_fit.py`, `infra/models/approved_models.yaml`
   - *SEC:* SEC-23, Decision D6
@@ -76,10 +76,10 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `.github/workflows/ci.yml`, `Makefile`, `security/semgrep/`
   - *SEC:* SEC-33 (Pinned GitHub Actions commit SHAs, gitleaks, ruff, semgrep)
   - *Verify:* `make lint` and `make security` execute without errors.
-- [ ] **Task 13: Dependency approval and MCP allowlists** `[Mac Ready]`
-  - *Files:* `infra/policy/approved_deps.yaml`, `infra/policy/check_deps.py`, `infra/policy/check_mcp.py`
+- [x] **Task 13: Dependency approval and MCP allowlists** `[Mac Ready]`
+  - *Files:* `infra/policy/approved_deps.yaml`, `scripts/check_deps.py`, `scripts/check_mcp.py`, `scripts/check_skills.py`
   - *SEC:* SEC-52, SEC-53 (Blocks typosquatting, slopsquatting, unvetted agent plugins)
-  - *Verify:* CI script fails if an unapproved package is added to `pyproject.toml`.
+  - *Verify:* CI script fails if an unapproved package is added to `pyproject.toml`. (Done: commit fa64e9d, 8 tests pass)
 - [ ] **Task 14: Host Alerter daemon, heartbeat, and egress alarms** `[Mac Ready (Scripts) / Linux (Host)]`
   - *Files:* `infra/host/alerter.py`, `tests/unit/test_alerter.py`
   - *SEC:* SEC-59, SEC-66 (Separate bot token, daily 06:25 AM heartbeat, deduplication)
