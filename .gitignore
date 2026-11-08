@@ -1,0 +1,15 @@
+secrets/
+data/
+.env
+.env.production
+.venv/
+__pycache__/
+evals/fit/results/*.tmp
+apps/web/node_modules/
+infra/host/evidence.pub
+.superpowers/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
