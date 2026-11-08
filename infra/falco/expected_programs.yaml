@@ -2,6 +2,7 @@ services:
   bot: [python]
   fetcher: [python]
   parser: [python]
+  worker: [python]
   clamav: [clamd]
   clamav-update: [freshclam]
   migrate: [alembic, python]

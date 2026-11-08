@@ -27,3 +27,10 @@ COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev --extra parser
 CMD ["uv", "run", "python", "-m", "techradar.parser.main"]
+
+FROM base AS worker
+COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
+RUN uv sync --frozen --no-dev --extra worker
+CMD ["uv", "run", "procrastinate", "--app=techradar.worker.app.app", "worker", "--queues=llm,io", "--concurrency=1"]
+

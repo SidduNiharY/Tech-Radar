@@ -173,6 +173,44 @@ services:
       retries: 3
     restart: unless-stopped
 
+  worker:
+    <<: *hardened-baseline
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: worker
+    mem_limit: 2g
+    cpus: "2.0"
+    user: "1000:1000"
+    networks:
+      - db
+      - llm
+    volumes:
+      - ./data/clean:/data/clean
+      - ./data/raw:/data/raw
+      - ./data/parse-jobs:/data/parse-jobs
+      - ./data/vault:/data/vault
+      - ./infra/sources:/infra/sources:ro
+      - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro
+      - ./infra/models/roles.yaml:/infra/models/roles.yaml:ro
+      - ./vault-seed:/vault-seed:ro
+    secrets:
+      - tr_app_password
+    environment:
+      TR_SECRETS_DIR: /run/secrets
+      TZ: Asia/Kolkata
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
   clamav:
     <<: *hardened-baseline
     image: clamav/clamav:1.4.1@sha256:7f4955b29bfa50f8373b9e4d5fb0d12e7530be90805c6d3bc8f2780e0c384812
