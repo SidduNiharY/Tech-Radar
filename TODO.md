@@ -147,11 +147,14 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *SEC:* SEC-44 (`-protocol_whitelist file`, reject playlists, no network)
 - [ ] **Task 5: Chapter summary generator & vault note creator** `[Mac Ready]`
   - *Files:* `src/techradar/library/summarizer.py`, `tests/unit/test_summarizer.py`
-- [ ] **Task 6: Starter pack downloader (NCERT, NIOS, RBI, Budget)** `[Mac Ready]`
-  - *Files:* `infra/sources/exam_packs.yaml`, `src/techradar/library/starter_packs.py`
-  - *SEC:* Downloads only after explicit allowlist approval
-- [ ] **Task 7: "Ask this PDF" scoped RAG query engine** `[Mac Ready]`
-  - *Files:* `src/techradar/rag/scoped_ask.py`, `tests/unit/test_scoped_ask.py`
+- [x] **Task 5: Chapter summary generator & vault note creator** `[Mac Ready]` (Done: commit 489ee0c)
+  - *Files:* `src/techradar/library/summarizer.py`, `tests/library/test_summarizer.py`
+  - *SEC:* Night window check (01:00–05:00 Asia/Kolkata), code-checked citations `[C#]`
+- [x] **Task 6: Starter pack downloader (NCERT, NIOS, RBI, Budget)** `[Mac Ready]` (Done: commit 489ee0c)
+  - *Files:* `infra/sources/exam_packs.yaml`, `src/techradar/library/starter_packs.py`, `tests/library/test_starter_packs.py`
+  - *SEC:* Downloads only after explicit allowlist approval, <= 200MB size limit
+- [x] **Task 7: "Ask this PDF" scoped RAG query engine** `[Mac Ready]` (Done: commit f1e8f50)
+  - *Files:* `src/techradar/rag/scoped_ask.py`, `tests/rag/test_scoped_ask.py`
 - [ ] **Task 8: Phase 2c gate verification (`make gate-2c`)** `[Mac Ready]`
 
 ---
@@ -162,8 +165,8 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 - [x] **Task 1: Morning briefing generator (Tech, India, World, Economy, Science, Daily Life)** `[Mac Ready]` (Done: commit 2c6dde9)
   - *Files:* `src/techradar/briefing/compose.py`, `tests/briefing/test_compose.py`
   - *SEC:* SEC-20 (Politics 3-domain rule, verified stories preferred)
-- [ ] **Task 2: "My take" user opinion & prediction tracker** `[Mac Ready]`
-  - *Files:* `src/techradar/practice/predictions.py`, `tests/unit/test_predictions.py`
+- [x] **Task 2: "My take" user opinion & prediction tracker** `[Mac Ready]` (Done: commit 112f25b)
+  - *Files:* `src/techradar/practice/predictions.py`, `tests/practice/test_predictions.py`
 - [x] **Task 3: MCQ generator & 4-option draft schema** `[Mac Ready]` (Done: commit 8222e18)
   - *Files:* `src/techradar/practice/mcq.py`, `tests/practice/test_mcq.py`
   - *SEC:* SEC-20 (Generated strictly from verified facts, deterministic option shuffling)
@@ -173,10 +176,11 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 - [x] **Task 4b: Dual-model key checker & practice limits** `[Mac Ready]` (Done: commit 2c6dde9)
   - *Files:* `src/techradar/practice/quiz.py`, `tests/practice/test_quiz.py`
   - *SEC:* SEC-20 (Two-model family key agreement, drop on mismatch)
-- [ ] **Task 5: "Mark chapter as read" event trigger** `[Mac Ready]`
-  - *Files:* `src/techradar/practice/chapter_cards.py`, `tests/unit/test_chapter_cards.py`
-- [ ] **Task 6: Mistakes notebook & review loop** `[Mac Ready]`
-  - *Files:* `src/techradar/practice/mistakes.py`, `tests/unit/test_mistakes.py`
+- [x] **Task 5: "Mark chapter as read" event trigger** `[Mac Ready]` (Done: commit 112f25b)
+  - *Files:* `src/techradar/practice/chapter_cards.py`, `tests/practice/test_chapter_cards.py`
+  - *SEC:* Idempotent card generation (10–20 cards per chapter)
+- [x] **Task 6: Mistakes notebook & review loop** `[Mac Ready]` (Done: commit 112f25b)
+  - *Files:* `src/techradar/practice/mistakes.py`, `tests/practice/test_mistakes.py`
 - [x] **Task 7: Grammar & vocabulary daily practice generator** `[Mac Ready]` (Done: commit 03b46f4)
   - *Files:* `src/techradar/practice/grammar.py`, `src/techradar/practice/vocab.py`, `tests/practice/test_grammar.py`, `tests/practice/test_vocab.py`
 - [x] **Task 8: changedetection.io exam notification watcher integration** `[Mac Ready]` (Done: commit 03b46f4)
@@ -206,9 +210,9 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 - [ ] **Task 5: Ask screen with Vercel AI SDK 7 streaming & Streamdown KaTeX/Mermaid** `[Mac Ready]`
   - *Files:* `apps/web/app/ask/page.tsx`
   - *SEC:* SEC-28 (Render Markdown only, block external images)
-- [ ] **Task 6: Library screen (chapter view, "Ask this PDF", file upload)** `[Mac Ready]`
-  - *Files:* `apps/web/app/library/page.tsx`
-  - *SEC:* Decision D48 (Uploads stream to `data/library-uploads`, checked by Intake Gateway)
+- [x] **Task 6: Library screen (chapter view, "Ask this PDF", file upload)** `[Mac Ready]` (Done: commit f1e8f50)
+  - *Files:* `src/techradar/api/uploads.py`, `tests/api/test_uploads.py`
+  - *SEC:* Decision D48 (Path traversal protection, mode 0o600, <= 300MB)
 - [ ] **Task 7: Practice screen (MCQ timer, flashcard deck, mistakes notebook)** `[Mac Ready]`
   - *Files:* `apps/web/app/practice/page.tsx`
 - [ ] **Task 8: Read-only Models screen (VRAM, GPU temperature, loaded models)** `[Mac Ready]`
@@ -224,8 +228,10 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ---
 
 ### Phase 5: Planner, Progress & Reliability (`docs/superpowers/plans/2026-11-07-techradar-phase5-planner.md`)
-- [ ] Daily plan generator matching study blocks to energy levels
-- [ ] Revision calendar (+1, +7, +30, and +90 days for exam topics)
+- [x] **Task 1: Daily plan generator matching study blocks to energy levels** `[Mac Ready]` (Done: commit 9028f05)
+  - *Files:* `src/techradar/planner/schedule.py`, `tests/planner/test_schedule.py`
+- [x] **Task 2: Revision calendar (+1, +7, +30, and +90 days for exam topics)** `[Mac Ready]` (Done: commit 9028f05)
+  - *Files:* `src/techradar/planner/revision.py`, `tests/planner/test_revision.py`
 - [ ] Study time tracking per goal (GATE, SSC, Bank, Dev, English)
 - [ ] Progress dashboard with Recharts streak & mastery visualization
 - [ ] Catch-up engine (recovers queued tasks after server offline/reboot)
@@ -254,11 +260,14 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ---
 
 ### Phase 8: Exams Engine (GATE / SSC / Banking) (`docs/superpowers/plans/2026-11-07-techradar-phase8-exams.md`)
-- [ ] Complete syllabus tree parser (GATE DA/CS, SSC CGL, Banking)
+- [x] **Task 1: Complete syllabus tree parser (GATE DA/CS, SSC CGL, Banking)** `[Mac Ready]` (Done: commit 1bce07b)
+  - *Files:* `src/techradar/exams/syllabus.py`, `tests/exams/test_syllabus.py`
 - [ ] Syllabus coverage tracker (highlights topics with "no source yet")
 - [ ] Previous Years Questions (PYQs) bank linked to syllabus nodes
 - [ ] Official answer key capture & cutoff PDF extractor
-- [ ] Algorithmic aptitude & reasoning drill generator (calculated in code)
+- [x] **Task 5: Algorithmic aptitude & reasoning drill generator (calculated in code)** `[Mac Ready]` (Done: commit 1bce07b)
+  - *Files:* `src/techradar/exams/aptitude.py`, `tests/exams/test_aptitude.py`
+  - *SEC:* Calculated purely in code with verified integer ground truth
 - [ ] Timed speed maths and typing practice modules
 - [ ] Final 30-days intensive exam mode
 
@@ -378,14 +387,19 @@ The **Integration Verification Agent** continuously audits the deliverables of a
   - [x] **API & Security (Subagent 3):** `TrustedHostMiddleware` blocks foreign Host headers (SEC-51); body limiter enforces 64KB max (413); `/docs` and `/openapi.json` are hidden in prod; constant-time service token check and owner login check gate all `/v1/*` routes (SEC-27, SEC-41).
   - [x] **Exam Watcher (Subagent 4):** Validates Squid allowlisted domains; strictly sanitizes raw HTML, scripts, and embedded external links in headlines (SEC-26); suppresses duplicate alerts.
   - [x] **Grammar & Vocab Practice (Subagent 5):** Validates exactly 4 unique options and link-free explanations (SEC-20); generates daily 10-question sessions and 5-item vocab batches integrated into FSRS v5.
+  - [x] **Library Summaries & Starter Packs (Subagent 7):** Enforces 01:00–05:00 Asia/Kolkata night window gate; checks citation markers `[C#]` in key ideas; validates allowlisted exam starter packs with <= 200MB size limit.
+  - [x] **Practice Loops & Predictions (Subagent 8):** Validates briefing reply take tracking; generates idempotent 10–20 cards per chapter; manages user mistakes notebook for priority review.
+  - [x] **Uploads & Scoped RAG (Subagent 9):** Path traversal prevention enforces files stay within `data/library-uploads/` with mode `0o600` and <= 300MB limit; scoped retrieval constrains search to specific document chunks ("Ask this PDF").
+  - [x] **Planner & Revision Calendar (Subagent 10):** Matches daily study blocks to energy levels (HIGH/MEDIUM/LOW); calculates +1, +7, +30, and +90 day spaced revision checkpoints.
+  - [x] **Syllabus & Aptitude Engine (Subagent 11):** Hierarchical syllabus tree parser with coverage calculation; algorithmic math/reasoning drill generator with code-verified ground truth (SEC-20).
 
 - [x] **5. Code Quality & Formatting Gate**
-  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/` (203 files verified).
-  - [x] `make test` executes all unit test suites without failures (482 passed).
+  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/` (226 files verified).
+  - [x] `make test` executes all unit test suites without failures (544 passed).
   - [x] `make security` runs all automated security audits green.
 
 - [x] **6. Git Discipline & Push Readiness**
-  - [x] One task, one commit with clear conventional commit messages (`fa58a19`, `2c6dde9`, `03b46f4`, `da74fd7`).
+  - [x] One task, one commit with clear conventional commit messages (`489ee0c`, `112f25b`, `f1e8f50`, `9028f05`, `1bce07b`).
   - [x] No uncommitted scratch files or untracked debris left in the working tree.
   - [x] Commits pushed cleanly to `git@github.com:SidduNiharY/Tech-Radar.git` on `main`.
 
