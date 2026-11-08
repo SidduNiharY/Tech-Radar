@@ -28,22 +28,22 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ### Phase 1: Secure Foundation (`docs/superpowers/plans/2026-11-07-techradar-phase1-foundation.md`)
 **Gate Criteria:** `make gate-1` passes (lint, tests, policy checks, fake bot, config validation)
 
-- [ ] **Task 1: Repository skeleton, tooling and agent rules** `[Mac Ready]`
+- [x] **Task 1: Repository skeleton, tooling and agent rules** `[Mac Ready]`
   - *Files:* `pyproject.toml`, `.python-version`, `.gitignore`, `.pre-commit-config.yaml`, `AGENTS.md`, `README.md`, `.env.example`, `secrets.example/`, `src/techradar/__init__.py`, `tests/test_smoke.py`
   - *SEC:* SEC-11, SEC-34
-  - *Verify:* `git init`, `uv run pytest tests/test_smoke.py` passes.
-- [ ] **Task 2: Testing harness, fakes and unit baseline** `[Mac Ready]`
-  - *Files:* `tests/fakes.py`, `tests/conftest.py`, `tests/unit/test_fakes.py`
-  - *SEC:* Protocol abstractions (`Completer`, `Embedder`, `Resolver`, `Clock`)
-  - *Verify:* Unit tests verify fake models without network or real GPUs.
-- [ ] **Task 3: Settings, secrets reader and environment validation** `[Mac Ready]`
-  - *Files:* `src/techradar/config.py`, `tests/unit/test_config.py`
+  - *Verify:* `git init`, `uv run pytest tests/test_smoke.py` passes. (Done: commit 4ad3187)
+- [x] **Task 2: CI security pipeline and custom semgrep rules** `[Mac Ready]`
+  - *Files:* `security/semgrep/rules.yaml`, `security/semgrep/rules.py`, `.github/workflows/ci.yml`, `.github/dependabot.yml`
+  - *SEC:* SEC-22, SEC-23, SEC-33
+  - *Verify:* All 7 custom rules defined with test cases; syntax clean. (Done: commit 5adb7b2)
+- [x] **Task 3: Settings, secrets reader and environment validation** `[Mac Ready]`
+  - *Files:* `src/techradar/settings.py`, `tests/test_settings.py`
   - *SEC:* SEC-10, SEC-35 (`TR_ALLOW_CLOUD_LLM=false`, strip whitespace from secrets)
-  - *Verify:* Secret reading strips CRLF/spaces; invalid environments fail fast.
-- [ ] **Task 4: Database schema, least-privilege roles and migrations** `[Mac Ready / Linux Integration]`
-  - *Files:* `alembic.ini`, `migrations/`, `src/techradar/db/`, `tests/unit/test_db_models.py`
-  - *SEC:* SEC-12 (Separate app, migrator, and read-only roles)
-  - *Verify:* SQLAlchemy 2 models validate cleanly with psycopg 3 types.
+  - *Verify:* Secret reading strips CRLF/spaces; invalid environments fail fast. (Done: commit 77ea1ea, 7 tests pass)
+- [x] **Task 4: JSON logs with secret redaction** `[Mac Ready]`
+  - *Files:* `src/techradar/logs.py`, `tests/test_logs.py`
+  - *SEC:* SEC-32 (Redact tokens, DB passwords, exact secrets, PII)
+  - *Verify:* JSON logs with ISO8601 timestamps and regex token redaction. (Done: commit 673a69a, 8 tests pass)
 - [ ] **Task 5: Model routing and LiteLLM abstraction** `[Mac Ready]`
   - *Files:* `src/techradar/models/router.py`, `tests/unit/test_model_router.py`
   - *SEC:* SEC-23 (GGUF/safetensors validation, no pickle, no trust_remote_code)
