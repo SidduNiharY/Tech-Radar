@@ -352,13 +352,21 @@ An **Integration Verification Agent** continuously audits the deliverables of al
 
 The **Integration Verification Agent** continuously audits the deliverables of all parallel subagents before merging and pushing to ensure zero regressions and strict architectural compliance.
 
-#### Active Subagent Assignments (Sprint Batch 2)
-- **Subagent 7 (Library Summaries & Starter Packs):** `src/techradar/library/summarizer.py`, `src/techradar/library/starter_packs.py`, `infra/sources/exam_packs.yaml`, `tests/library/test_summarizer.py`, `tests/library/test_starter_packs.py`.
-- **Subagent 8 (Predictions & Practice Loops):** `src/techradar/practice/predictions.py`, `src/techradar/practice/chapter_cards.py`, `src/techradar/practice/mistakes.py`, `tests/practice/test_predictions.py`, `tests/practice/test_chapter_cards.py`, `tests/practice/test_mistakes.py`.
-- **Subagent 9 (Uploads & Scoped RAG):** `src/techradar/api/uploads.py`, `src/techradar/rag/scoped_ask.py`, `tests/api/test_uploads.py`, `tests/rag/test_scoped_ask.py`.
-- **Subagent 10 (Planner & Revision Calendar):** `src/techradar/planner/schedule.py`, `src/techradar/planner/revision.py`, `tests/planner/test_schedule.py`, `tests/planner/test_revision.py`.
-- **Subagent 11 (Exams Syllabus & Aptitude Drills):** `src/techradar/exams/syllabus.py`, `src/techradar/exams/aptitude.py`, `tests/exams/test_syllabus.py`, `tests/exams/test_aptitude.py`.
-- **Subagent 12 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
+#### Completed Subagent Assignments (Sprint Batch 2)
+- **Subagent 7 (Library Summaries & Starter Packs):** `src/techradar/library/summarizer.py`, `src/techradar/library/starter_packs.py`, `infra/sources/exam_packs.yaml`, `tests/library/test_summarizer.py`, `tests/library/test_starter_packs.py` (Done: commit 489ee0c).
+- **Subagent 8 (Predictions & Practice Loops):** `src/techradar/practice/predictions.py`, `src/techradar/practice/chapter_cards.py`, `src/techradar/practice/mistakes.py`, `tests/practice/test_predictions.py`, `tests/practice/test_chapter_cards.py`, `tests/practice/test_mistakes.py` (Done: commit 112f25b).
+- **Subagent 9 (Uploads & Scoped RAG):** `src/techradar/api/uploads.py`, `src/techradar/rag/scoped_ask.py`, `tests/api/test_uploads.py`, `tests/rag/test_scoped_ask.py` (Done: commit f1e8f50).
+- **Subagent 10 (Planner & Revision Calendar):** `src/techradar/planner/schedule.py`, `src/techradar/planner/revision.py`, `tests/planner/test_schedule.py`, `tests/planner/test_revision.py` (Done: commit 9028f05).
+- **Subagent 11 (Exams Syllabus & Aptitude Drills):** `src/techradar/exams/syllabus.py`, `src/techradar/exams/aptitude.py`, `tests/exams/test_syllabus.py`, `tests/exams/test_aptitude.py` (Done: commit 1bce07b).
+- **Subagent 12 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes (Done: commit 6dcd45b).
+
+#### Active Subagent Assignments (Sprint Batch 3)
+- **Subagent 13 (Bot Interactive Commands):** `src/techradar/bot/commands/quiz.py`, `src/techradar/bot/commands/cards.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py`.
+- **Subagent 14 (Voice Coach Engine):** `src/techradar/voice/fluency.py`, `src/techradar/voice/grammar.py`, `tests/voice/test_fluency.py`, `tests/voice/test_grammar.py`.
+- **Subagent 15 (World Understanding & Causality):** `src/techradar/world/glossary.py`, `src/techradar/world/causality.py`, `tests/world/test_glossary.py`, `tests/world/test_causality.py`.
+- **Subagent 16 (FastMCP & Models Admin):** `src/techradar/mcp/server.py`, `src/techradar/llm/admin.py`, `tests/mcp/test_server.py`, `tests/llm/test_admin.py`.
+- **Subagent 17 (Feedback & Improvement Engine):** `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`.
+- **Subagent 18 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
 ### Integration Checklist
 
