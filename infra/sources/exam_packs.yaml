@@ -1,0 +1,27 @@
+ncert_polity_class_11:
+  title: "NCERT Class 11 Political Science: Indian Constitution at Work"
+  exam: "UPSC/Govt"
+  approved: true
+  url: "https://ncert.nic.in/textbook/pdf/keps2dd.zip"
+  max_bytes: 200000000
+
+nios_economics:
+  title: "NIOS Senior Secondary Economics (318)"
+  exam: "Govt"
+  approved: true
+  url: "https://nios.ac.in/media/documents/srsec318new/318_Economy_Eng/ch1.pdf"
+  max_bytes: 200000000
+
+rbi_annual_report:
+  title: "Reserve Bank of India Annual Report"
+  exam: "Banking"
+  approved: true
+  url: "https://rbi.org.in/Scripts/AnnualReportPublications.aspx"
+  max_bytes: 200000000
+
+unapproved_sample:
+  title: "Unapproved Coaching Study Material Sample"
+  exam: "UPSC/Govt"
+  approved: false
+  url: "https://example.com/unapproved_sample.pdf"
+  max_bytes: 200000000

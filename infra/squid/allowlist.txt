@@ -11,6 +11,8 @@ indiabudget.gov.in
 ssc.gov.in
 ibps.in
 sbi.co.in
+ncert.nic.in
+nios.ac.in
 un.org
 .un.org
 
