@@ -3,7 +3,7 @@ UV ?= /opt/homebrew/bin/uv
 UV_PYTHON ?= /opt/homebrew/bin/python3
 UV_RUN := UV_PYTHON=$(UV_PYTHON) $(UV) run --no-sync
 
-.PHONY: all lint format test test-db test-egress security simulate-1 simulate-2 guard-eval redteam-live gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4
+.PHONY: all lint format test test-db test-egress security simulate-1 simulate-2 guard-eval redteam-live gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4 gate-5
 
 all: lint test security
 
@@ -79,6 +79,10 @@ gate-3:
 gate-4:
 	$(UV_RUN) pytest tests/api -v
 	@echo "GATE 4: automated checks passed. Sign docs/security/gates.md."
+
+gate-5:
+	$(UV_RUN) pytest tests/planner tests/ops -v
+	@echo "GATE 5: automated checks passed. Sign docs/security/gates.md."
 
 
 

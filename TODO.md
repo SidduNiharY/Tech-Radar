@@ -232,8 +232,9 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/planner/revision.py`, `tests/planner/test_revision.py`
 - [x] **Task 3: Study time tracking per goal (GATE, SSC, Bank, Dev, English)** `[Mac Ready]` (Done: commit 5b624d2)
   - *Files:* `src/techradar/planner/tracker.py`, `tests/planner/test_tracker.py`
-- [ ] Progress dashboard with Recharts streak & mastery visualization
-- [x] **Task 4: Catch-up engine (recovers queued tasks after server offline/reboot)** `[Mac Ready]` (Done: commit 5b624d2)
+- [x] **Task 4: Progress dashboard & weekly review with streak, mastery, and pattern** `[Mac Ready]`
+  - *Files:* `src/techradar/planner/progress.py`, `src/techradar/vault/frontmatter.py`, `src/techradar/ops/alerts.py`, `src/techradar/ops/health.py`, `apps/web/src/app/progress/page.tsx`
+- [x] **Task 5: Catch-up engine (recovers queued tasks after server offline/reboot)** `[Mac Ready]` (Done: commit 5b624d2)
   - *Files:* `src/techradar/planner/catchup.py`, `tests/planner/test_catchup.py`
 
 ---
@@ -315,7 +316,8 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ---
 
 ### Phase 12: Jarvis System-Wide Voice Assistant (`docs/superpowers/plans/2026-11-08-techradar-phase12-jarvis.md`)
-- [ ] openWakeWord local wake word detection ("Hey Jarvis")
+- [x] openWakeWord local wake word detection ("Hey Jarvis") `[Mac Ready]`
+  - *Files:* `apps/web/src/lib/wakeword/`, `apps/web/src/components/jarvis/`, `apps/web/src/app/jarvis/page.tsx`, `scripts/fetch_wakeword_models.py`, `infra/models/wakeword.yaml`
 - [x] Unified conversational intent router (Qwen3.5-4B) `[Mac Ready]` (Done: commit c988d96)
   - *Files:* `src/techradar/jarvis/intent.py`, `tests/jarvis/test_intent.py`
 - [x] 10-second spoken confirmation ticket evaluator (SEC-56) `[Mac Ready]` (Done: commit c988d96)

@@ -10,7 +10,7 @@ Record of verification gates and external exposure reviews across system deploym
 | Gate 2c | Phase 2c: The Library (Large PDFs, Videos) | 2026-11-08 | `c988d96` | No network in parser; media sandbox protocol_whitelist=file | 54/54 Library suite passed | ✅ Gate 2c automated suite passed | PASS | SidduNiharY |
 | Gate 3 | Phase 3: Daily Briefing, Practice & Alerts | 2026-11-08 | `c988d96` | Squid allowlist checked; dual-model quiz key agreement | 90/90 Briefing & Practice passed | ✅ Gate 3 automated suite passed | PASS | SidduNiharY |
 | Gate 4 | Phase 4: Web Application v1 API & Client | 2026-11-08 | `c988d96` | 127.0.0.1 trusted host only; HMAC tickets; 64KB max | 29/29 API suite passed | ✅ Gate 4 automated suite passed | PASS | SidduNiharY |
-| Gate 5 | Phase 5: Planner & Progress Tracking | 2026-11-08 | `c988d96` | In-memory & SQLite isolation; energy scheduling | 38/38 Planner suite passed | ✅ Spaced revision calendar passed | PASS | SidduNiharY |
+| Gate 5 | Phase 5: Planner & Progress Tracking | 2026-11-08 | Pending | In-memory & DB isolation; sleep correlation pattern | 54/54 Planner & Ops passed | ✅ Gate 5 automated suite passed | PASS | SidduNiharY |
 | Gate 6 | Phase 6: Jarvis Voice Assistant | Pending | | | | | | |
 | Gate 7 | Phase 7: Web Dashboard & Ops | Pending | | | | | | |
 | Gate 8 | Phase 8: Automation Engine | Pending | | | | | | |

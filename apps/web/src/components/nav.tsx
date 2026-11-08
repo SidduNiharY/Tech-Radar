@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Cpu,
   Radio,
+  TrendingUp,
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -52,6 +53,18 @@ export const NAV_ITEMS: NavItem[] = [
     href: "/planner",
     icon: ListTodo,
     description: "Study milestones & agenda",
+  },
+  {
+    name: "Progress",
+    href: "/progress",
+    icon: TrendingUp,
+    description: "Weekly review & skill map",
+  },
+  {
+    name: "Jarvis",
+    href: "/jarvis",
+    icon: Radio,
+    description: "Live voice assistant & orb",
   },
   {
     name: "Security",

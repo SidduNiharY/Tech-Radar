@@ -1,0 +1,15 @@
+version: "0.5.1"
+source_url_base: "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
+models:
+  melspectrogram:
+    filename: "melspectrogram.onnx"
+    sha256: "7b47e5fb25d48a60be6ecba9da9fcfcaec1d6006f155f8fd0b1f2e60438cf78d"
+    size_bytes: 202868
+  embedding_model:
+    filename: "embedding_model.onnx"
+    sha256: "f40f3b0eecab334b07fb8d70df81e5b9d3bdfd92f58e658097d7ee4ba6db4d2d"
+    size_bytes: 4761408
+  hey_jarvis:
+    filename: "hey_jarvis_v0.1.onnx"
+    sha256: "2d59ae718e2bb7fa17b4458f33878b277dafa46c4fdf4c749ebce377755eb1e4"
+    size_bytes: 384812
