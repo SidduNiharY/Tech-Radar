@@ -1,0 +1,55 @@
+- name: PIB Press Releases
+  url: https://pib.gov.in/rss.xml
+  section: india
+  trust_tier: official
+  interval_min: 120
+  enabled: false
+
+- name: RBI Press Releases
+  url: https://rbi.org.in/pressreleases_rss.xml
+  section: economy
+  trust_tier: official
+  interval_min: 120
+  enabled: false
+
+- name: UN News All Stories
+  url: https://news.un.org/feed/subscribe/en/news/all/rss.xml
+  section: world
+  trust_tier: official
+  interval_min: 120
+  enabled: false
+
+- name: GitHub Releases Ollama
+  url: https://github.com/ollama/ollama/releases.atom
+  section: tech
+  trust_tier: community
+  interval_min: 120
+  enabled: false
+
+- name: GitHub Releases LangGraph
+  url: https://github.com/langchain-ai/langgraph/releases.atom
+  section: tech
+  trust_tier: community
+  interval_min: 120
+  enabled: false
+
+- name: GitHub Releases Next.js
+  url: https://github.com/vercel/next.js/releases.atom
+  section: tech
+  trust_tier: community
+  interval_min: 120
+  enabled: false
+
+- name: GitHub Releases FastAPI
+  url: https://github.com/fastapi/fastapi/releases.atom
+  section: tech
+  trust_tier: community
+  interval_min: 120
+  enabled: false
+
+- name: arXiv Artificial Intelligence
+  url: https://export.arxiv.org/rss/cs.AI
+  section: science
+  trust_tier: community
+  interval_min: 120
+  enabled: false

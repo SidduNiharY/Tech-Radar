@@ -60,3 +60,22 @@ class FakeEmbedder(Embedder):
             else:
                 results.append([0.0] * self.dim)
         return results
+
+
+class FakeResolver:
+    """Fake DNS resolver for testing SSRF / URL validation."""
+
+    def __init__(
+        self,
+        ips: list[str] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.ips = ips or []
+        self.error = error
+        self.calls: list[str] = []
+
+    async def resolve(self, host: str) -> list[str]:
+        self.calls.append(host)
+        if self.error is not None:
+            raise self.error
+        return list(self.ips)
