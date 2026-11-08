@@ -1,0 +1,5 @@
+worker:  {ollama_tag: "qwen3.5:4b",        family: qwen,  num_ctx: 8192, think: false}
+checker: {ollama_tag: "gemma4:e2b-it-qat", family: gemma, num_ctx: 8192, think: false}
+night:   {ollama_tag: "gemma4:12b-it-qat", family: gemma, num_ctx: 8192, think: false}
+embed:   {ollama_tag: "bge-m3",            family: bge,   num_ctx: 8192, think: false}
+vision:  {ollama_tag: "qwen3.5:4b",        family: qwen,  num_ctx: 8192, think: false}
