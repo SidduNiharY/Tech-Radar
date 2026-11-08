@@ -1,0 +1,35 @@
+---
+{{ front_matter }}---
+
+# {{ title }}
+
+{{ summary }}
+
+## What happened
+
+{{ what_happened }}
+
+## Why
+
+{{ why }}
+
+## What changes
+
+{{ what_changes }}
+
+## How it affects me
+
+{{ how_it_affects_me }}
+
+## Facts
+{% if is_flagged %}
+⚠️ Flagged by the Intake Gateway: read with care.
+{% endif %}
+{% for f in facts %}
+- {{ "✅ verified" if f.status == "verified" else "⚠️ unverified" }} · {{ f.statement }} ({{ f.source_count }} sources)
+{% endfor %}
+
+## Sources
+{% for s in sources %}
+- {{ s.domain }}: {{ s.url }}
+{% endfor %}
