@@ -44,26 +44,26 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/logs.py`, `tests/test_logs.py`
   - *SEC:* SEC-32 (Redact tokens, DB passwords, exact secrets, PII)
   - *Verify:* JSON logs with ISO8601 timestamps and regex token redaction. (Done: commit 673a69a, 8 tests pass)
+- [x] **Task 5: Docker Compose architecture and policy tests** `[Mac Ready]`
+  - *Files:* `compose.yaml`, `compose.dev.yaml`, `infra/policy/compose_exceptions.yaml`, `tests/security/test_compose_policy.py`
+  - *SEC:* SEC-01, SEC-02, SEC-06, SEC-07, SEC-55 (Pinned SHA-256 digests, 127.0.0.1 bindings)
+  - *Verify:* Policy test asserts zero ports bound to 0.0.0.0 and all digests present. (Done: commit 9882043, 16 tests pass)
+- [x] **Task 6: Squid egress proxy configuration and allowlists** `[Mac Ready / Linux Integration]`
+  - *Files:* `infra/squid/squid.conf`, `infra/squid/allowlist.txt`, `tests/security/test_egress.py`
+  - *SEC:* SEC-05, SEC-25, SEC-59 (Outbound allowlist only; logging deny alarms)
+  - *Verify:* Configuration blocks internal IP access and non-allowlisted domains. (Done: commit 88f0619)
+- [x] **Task 7: Database roles, Dockerfile and baseline migration** `[Mac Ready / Linux Integration]`
+  - *Files:* `infra/postgres/init/01-roles.sh`, `infra/docker/Dockerfile`, `alembic.ini`, `src/techradar/db/`, `tests/db/test_engine.py`, `tests/db/test_roles.py`
+  - *SEC:* SEC-12 (Separate app, migrator, and read-only roles)
+  - *Verify:* SQLAlchemy 2 models validate cleanly with psycopg 3 types. (Done: commit b92f526, 21 tests pass)
 - [x] **Task 8: Model roles and LiteLLM abstraction** `[Mac Ready]`
   - *Files:* `src/techradar/llm/roles.py`, `src/techradar/llm/client.py`, `infra/models/roles.yaml`, `tests/fakes.py`
   - *SEC:* SEC-23 (GGUF/safetensors validation, no pickle, no trust_remote_code)
   - *Verify:* Worker/checker routing correctly separates model families. (Done: commit 19424e9, 12 tests pass)
-- [ ] **Task 6: Local model fit test bench** `[Mac Ready (Mac models) / Linux (GPU)]`
-  - *Files:* `evals/fit/test_fit.py`, `infra/models/approved_models.yaml`
+- [x] **Task 9: Model downloads and fit test bench** `[Mac Ready (Mac models) / Linux (GPU)]`
+  - *Files:* `evals/fit/fit.py`, `tests/evals/test_fit.py`, `infra/models/README.md`
   - *SEC:* SEC-23, Decision D6
-  - *Verify:* Evaluates context limits, VRAM projections, and speed thresholds.
-- [ ] **Task 7: Docker Compose architecture and policy tests** `[Mac Ready]`
-  - *Files:* `docker-compose.yml`, `tests/security/test_compose_policy.py`
-  - *SEC:* SEC-01, SEC-02, SEC-06, SEC-07, SEC-55 (Pinned SHA-256 digests, 127.0.0.1 bindings)
-  - *Verify:* Policy test asserts zero ports bound to 0.0.0.0 and all digests present.
-- [ ] **Task 8: Squid egress proxy configuration and allowlists** `[Mac Ready / Linux Integration]`
-  - *Files:* `infra/squid/squid.conf`, `infra/squid/allowlist.txt`, `tests/unit/test_squid_conf.py`
-  - *SEC:* SEC-05, SEC-25, SEC-59 (Outbound allowlist only; logging deny alarms)
-  - *Verify:* Configuration blocks internal IP access and non-allowlisted domains.
-- [ ] **Task 9: Logging and PII redaction** `[Mac Ready]`
-  - *Files:* `src/techradar/logging.py`, `tests/unit/test_logging.py`
-  - *SEC:* SEC-32 (Redact tokens, chat IDs, emails, auth headers)
-  - *Verify:* Formatter scrubs credentials before output.
+  - *Verify:* Evaluates context limits, VRAM projections, and speed thresholds. (Done: commit b6db3dd, 6 tests pass)
 - [ ] **Task 10: Owner-only Telegram bot skeleton & `/status`** `[Mac Ready]`
   - *Files:* `src/techradar/bot/`, `tests/unit/test_bot_router.py`
   - *SEC:* SEC-26 (Strict owner chat ID check; strangers get zero response)
