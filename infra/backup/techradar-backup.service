@@ -1,0 +1,8 @@
+[Unit]
+Description=TechRadar Brain Nightly Backup and Weekly Restic Snapshot
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/techradar
+ExecStart=/bin/bash infra/backup/backup.sh

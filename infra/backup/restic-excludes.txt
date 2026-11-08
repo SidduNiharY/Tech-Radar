@@ -1,0 +1,14 @@
+# Cache and temporary files
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.cache/
+tmp/
+*.tmp
+*.temp
+*.log
+data/cache/
+data/tmp/
+data/library/media/
