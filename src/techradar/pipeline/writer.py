@@ -1,0 +1,1 @@
+"""TechRadar note writer module."""

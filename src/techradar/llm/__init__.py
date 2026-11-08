@@ -1,11 +1,15 @@
+"""TechRadar LLM package."""
+
 from techradar.llm.client import (
     Completer,
     Embedder,
-    LiteLLMCompleter,
-    LiteLLMEmbedder,
     LLMOutputError,
     complete_json,
     strip_thinking,
+)
+from techradar.llm.litellm import (
+    LiteLLMCompleter,
+    LiteLLMEmbedder,
 )
 from techradar.llm.roles import Role, RoleConfigError, RoleModel, load_roles
 

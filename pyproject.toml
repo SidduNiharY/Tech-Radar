@@ -76,3 +76,44 @@ addopts = "-m 'not db and not egress and not live and not slow'"
 
 [tool.uv]
 exclude-newer = "2026-11-07T00:00:00Z"
+
+[tool.importlinter]
+root_packages = ["techradar"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Contract 1: parser isolation"
+type = "forbidden"
+source_modules = ["techradar.parser"]
+forbidden_modules = ["httpx", "techradar.db", "techradar.llm"]
+
+[[tool.importlinter.contracts]]
+name = "Contract 2: reader isolation"
+type = "forbidden"
+source_modules = ["techradar.pipeline.reader"]
+forbidden_modules = ["techradar.pipeline.writer", "techradar.db", "techradar.vault", "httpx", "subprocess"]
+
+[[tool.importlinter.contracts]]
+name = "Contract 3: writer isolation"
+type = "forbidden"
+source_modules = ["techradar.pipeline.writer"]
+forbidden_modules = ["techradar.llm", "httpx"]
+
+[[tool.importlinter.contracts]]
+name = "Contract 4: fetcher isolation"
+type = "forbidden"
+source_modules = ["techradar.fetcher"]
+forbidden_modules = ["techradar.llm", "techradar.pipeline", "techradar.vault"]
+
+[[tool.importlinter.contracts]]
+name = "Contract 5: one door (SEC-57)"
+type = "forbidden"
+source_modules = ["techradar.pipeline", "techradar.worker", "techradar.rag", "techradar.bot", "techradar.api"]
+forbidden_modules = ["techradar.parser.html", "techradar.parser.feed", "techradar.parser.pdf"]
+
+[[tool.importlinter.contracts]]
+name = "Contract 6: intake isolation"
+type = "forbidden"
+source_modules = ["techradar.intake"]
+forbidden_modules = ["httpx", "techradar.db", "techradar.llm"]
+

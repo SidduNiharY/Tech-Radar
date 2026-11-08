@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from techradar.llm.client import LiteLLMCompleter, complete_json
+from techradar.llm import LiteLLMCompleter, complete_json
 from techradar.llm.roles import Role, load_roles
 
 
