@@ -1,0 +1,11 @@
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:55432:5432"
+    networks:
+      - db
+      - dev_host
+
+networks:
+  dev_host:
+    internal: false

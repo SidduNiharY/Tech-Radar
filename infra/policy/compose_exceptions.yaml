@@ -1,0 +1,17 @@
+root_start:
+  postgres:
+    reason: "official entrypoint starts as root to fix ownership, then drops to the postgres user"
+  squid:
+    reason: "official entrypoint starts as root to configure network devices, then drops privileges"
+  ollama:
+    reason: "official entrypoint starts as root to configure GPU runtime, then runs as ollama user"
+  ollama-pull:
+    reason: "one-off pull container runs as root to interact with model volume storage cleanly"
+
+writable_root:
+  postgres:
+    reason: "postgres entrypoint modifies dynamic configuration and database runtime state"
+  ollama:
+    reason: "ollama runtime dynamically writes model downloads and temporary context cache"
+  ollama-pull:
+    reason: "one-off pull container dynamically writes model downloads to storage cache"

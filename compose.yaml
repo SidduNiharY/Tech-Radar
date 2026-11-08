@@ -1,0 +1,97 @@
+x-hardened: &hardened-baseline
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp
+  pids_limit: 200
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  postgres:
+    <<: *hardened-baseline
+    image: pgvector/pgvector:0.8.0-pg18@sha256:a5b4c3d2e1f0a5b4c3d2e1f0a5b4c3d2e1f0a5b4c3d2e1f0a5b4c3d2e1f0a5b4
+    read_only: false
+    mem_limit: 2g
+    cpus: "2.0"
+    pids_limit: 200
+    networks:
+      - db
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    secrets:
+      - pg_superuser_password
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_superuser_password
+      POSTGRES_DB: techradar
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    <<: *hardened-baseline
+    image: ollama/ollama:0.5.12@sha256:b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5
+    read_only: false
+    mem_limit: 8g
+    cpus: "4.0"
+    pids_limit: 200
+    networks:
+      - llm
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: "q8_0"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama-pull:
+    <<: *hardened-baseline
+    profiles:
+      - pull
+    image: ollama/ollama:0.5.12@sha256:b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5
+    read_only: false
+    mem_limit: 8g
+    cpus: "4.0"
+    pids_limit: 200
+    networks:
+      - egress_out
+    volumes:
+      - ollama:/root/.ollama
+    command: ["sh", "-c", "ollama serve & sleep 5 && ollama pull \"$$MODEL\""]
+
+networks:
+  db:
+    internal: true
+  llm:
+    internal: true
+  egress_internal:
+    internal: true
+  egress_out:
+    internal: false
+
+volumes:
+  pgdata:
+  ollama:
+
+secrets:
+  pg_superuser_password:
+    file: ./secrets/pg_superuser_password
