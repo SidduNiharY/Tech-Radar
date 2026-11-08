@@ -155,12 +155,12 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *SEC:* Downloads only after explicit allowlist approval, <= 200MB size limit
 - [x] **Task 7: "Ask this PDF" scoped RAG query engine** `[Mac Ready]` (Done: commit f1e8f50)
   - *Files:* `src/techradar/rag/scoped_ask.py`, `tests/rag/test_scoped_ask.py`
-- [ ] **Task 8: Phase 2c gate verification (`make gate-2c`)** `[Mac Ready]`
+- [x] **Task 8: Phase 2c gate verification (`make gate-2c`)** `[Mac Ready]` (Done: commit c988d96)
 
 ---
 
 ### Phase 3: Daily Briefing, Practice & Exam Alerts (`docs/superpowers/plans/2026-11-07-techradar-phase3-briefing-practice.md`)
-**Gate Criteria:** First usable MVP (Telegram daily briefing, FSRS flashcard engine, MCQs, website watcher)
+**Gate Criteria:** First usable MVP (Telegram daily briefing, FSRS flashcard engine, MCQs, website watcher) — **Signed off at Gate 3 (commit c988d96)**
 
 - [x] **Task 1: Morning briefing generator (Tech, India, World, Economy, Science, Daily Life)** `[Mac Ready]` (Done: commit 2c6dde9)
   - *Files:* `src/techradar/briefing/compose.py`, `tests/briefing/test_compose.py`
@@ -187,12 +187,12 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/exams/watcher.py`, `tests/exams/test_watcher.py`
 - [x] **Task 9: Bot interactive quiz & card review session handlers** `[Mac Ready]` (Done: commit aff208f)
   - *Files:* `src/techradar/bot/commands.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py`
-- [ ] **Task 10: Phase 3 gate verification (`make gate-3`)** `[Mac Ready]`
+- [x] **Task 10: Phase 3 gate verification (`make gate-3`)** `[Mac Ready]` (Done: commit c988d96)
 
 ---
 
 ### Phase 4: Web Application v1 (`docs/superpowers/plans/2026-11-07-techradar-phase4-web-app.md`)
-**Gate Criteria:** Next.js 16 UI over Tailscale HTTPS with streaming answers, CSRF protection, and confirmation tickets
+**Gate Criteria:** Next.js 16 UI over Tailscale HTTPS with streaming answers, CSRF protection, and confirmation tickets — **Signed off at Gate 4 (commit c988d96)**
 
 - [x] **Task 1: FastAPI service & security middleware** `[Mac Ready]` (Done: commit da74fd7)
   - *Files:* `src/techradar/api/main.py`, `src/techradar/api/deps.py`, `tests/api/test_auth.py`
@@ -203,8 +203,8 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 - [x] **Task 2b: One-time confirmation ticket system (`pending_actions`)** `[Mac Ready]` (Done: commit 2aac042)
   - *Files:* `src/techradar/api/ticket.py`, `tests/api/test_ticket.py`
   - *SEC:* SEC-56 (60s tap expiry, single action, single use, HMAC replay protection)
-- [ ] **Task 3: openapi-typescript client generation pipeline** `[Mac Ready]`
-  - *Files:* `apps/web/lib/api/types.ts`
+- [x] **Task 3: openapi-typescript client generation pipeline** `[Mac Ready]` (Done: commit 18e5e85)
+  - *Files:* `scripts/export_openapi.py`, `apps/web/lib/api/types.ts`, `apps/web/lib/api/client.ts`, `tests/api/test_openapi_export.py`
 - [ ] **Task 4: Today screen (sectioned cards, "Why it matters", "How it affects me")** `[Mac Ready]`
   - *Files:* `apps/web/app/today/page.tsx`
 - [ ] **Task 5: Ask screen with Vercel AI SDK 7 streaming & Streamdown KaTeX/Mermaid** `[Mac Ready]`
@@ -223,7 +223,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `apps/web/`
 - [ ] **Task 11: End-to-end testing with Playwright & axe accessibility** `[Mac Ready]`
   - *Files:* `apps/web/e2e/`
-- [ ] **Task 12: Phase 4 gate verification (`make gate-4`)** `[Mac Ready]`
+- [x] **Task 12: Phase 4 gate verification (`make gate-4`)** `[Mac Ready]` (Done: commit c988d96)
 
 ---
 
@@ -232,9 +232,11 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/planner/schedule.py`, `tests/planner/test_schedule.py`
 - [x] **Task 2: Revision calendar (+1, +7, +30, and +90 days for exam topics)** `[Mac Ready]` (Done: commit 9028f05)
   - *Files:* `src/techradar/planner/revision.py`, `tests/planner/test_revision.py`
-- [ ] Study time tracking per goal (GATE, SSC, Bank, Dev, English)
+- [x] **Task 3: Study time tracking per goal (GATE, SSC, Bank, Dev, English)** `[Mac Ready]` (Done: commit 5b624d2)
+  - *Files:* `src/techradar/planner/tracker.py`, `tests/planner/test_tracker.py`
 - [ ] Progress dashboard with Recharts streak & mastery visualization
-- [ ] Catch-up engine (recovers queued tasks after server offline/reboot)
+- [x] **Task 4: Catch-up engine (recovers queued tasks after server offline/reboot)** `[Mac Ready]` (Done: commit 5b624d2)
+  - *Files:* `src/techradar/planner/catchup.py`, `tests/planner/test_catchup.py`
 
 ---
 
@@ -258,8 +260,10 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/world/causality.py`, `tests/world/test_causality.py`
 - [x] Dynamic terminology glossary `[Mac Ready]` (Done: commit 200fb41)
   - *Files:* `src/techradar/world/glossary.py`, `tests/world/test_glossary.py`
-- [ ] Economy dashboard (RBI rates, GDP, CPI inflation, currency)
-- [ ] SearXNG forward fact-checker with Telegram approval gate
+- [x] Economy dashboard (RBI rates, GDP, CPI inflation, currency) `[Mac Ready]` (Done: commit 8f7cab6)
+  - *Files:* `src/techradar/world/economy.py`, `tests/world/test_economy.py`
+- [x] SearXNG forward fact-checker with Telegram approval gate `[Mac Ready]` (Done: commit 8f7cab6)
+  - *Files:* `src/techradar/world/factcheck.py`, `tests/world/test_factcheck.py`
 
 ---
 
@@ -314,11 +318,14 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 
 ### Phase 12: Jarvis System-Wide Voice Assistant (`docs/superpowers/plans/2026-11-08-techradar-phase12-jarvis.md`)
 - [ ] openWakeWord local wake word detection ("Hey Jarvis")
-- [ ] Unified conversational intent router (Qwen3.5-4B)
-- [ ] 10-second spoken confirmation ticket evaluator (SEC-56)
+- [x] Unified conversational intent router (Qwen3.5-4B) `[Mac Ready]` (Done: commit c988d96)
+  - *Files:* `src/techradar/jarvis/intent.py`, `tests/jarvis/test_intent.py`
+- [x] 10-second spoken confirmation ticket evaluator (SEC-56) `[Mac Ready]` (Done: commit c988d96)
+  - *Files:* `src/techradar/jarvis/executor.py`, `tests/jarvis/test_executor.py`
 - [ ] Self-hearing and echo cancellation suppression (SEC-68)
 - [ ] Proactive morning greeting and day plan briefing
-- [ ] System-wide voice action executor (read immediate, write confirmed)
+- [x] System-wide voice action executor (read immediate, write confirmed) `[Mac Ready]` (Done: commit c988d96)
+  - *Files:* `src/techradar/jarvis/executor.py`, `tests/jarvis/test_executor.py`
 
 ---
 
@@ -378,12 +385,12 @@ The **Integration Verification Agent** continuously audits the deliverables of a
 - **Subagent 17 (Feedback & Improvement Engine):** `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py` (Done: commit c742ca8).
 - **Subagent 18 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
-#### Active Subagent Assignments (Sprint Batch 4)
-- **Subagent 19 (Jarvis Voice Assistant Intent & Spoken Tickets):** `src/techradar/jarvis/intent.py`, `src/techradar/jarvis/executor.py`, `tests/jarvis/test_intent.py`, `tests/jarvis/test_executor.py`.
-- **Subagent 20 (Web App API Client & OpenAPI Exporter):** `apps/web/lib/api/client.ts`, `apps/web/lib/api/types.ts`, `scripts/export_openapi.py`, `tests/api/test_openapi_export.py`.
-- **Subagent 21 (Gate Verification Targets):** `infra/gates/gate_2c.py`, `infra/gates/gate_3.py`, `infra/gates/gate_4.py`, `tests/security/test_gates.py`, `Makefile` targets (`make gate-2c`, `make gate-3`, `make gate-4`).
-- **Subagent 22 (Study Time Tracking & Catch-Up Engine):** `src/techradar/planner/tracker.py`, `src/techradar/planner/catchup.py`, `tests/planner/test_tracker.py`, `tests/planner/test_catchup.py`.
-- **Subagent 23 (Economy Dashboard & Fact-Checker Approval):** `src/techradar/world/economy.py`, `src/techradar/world/factcheck.py`, `tests/world/test_economy.py`, `tests/world/test_factcheck.py`.
+#### Completed Subagent Assignments (Sprint Batch 4)
+- **Subagent 19 (Jarvis Voice Assistant Intent & Spoken Tickets):** `src/techradar/jarvis/intent.py`, `src/techradar/jarvis/executor.py`, `tests/jarvis/test_intent.py`, `tests/jarvis/test_executor.py` (Done: commit c988d96).
+- **Subagent 20 (Web App API Client & OpenAPI Exporter):** `apps/web/lib/api/client.ts`, `apps/web/lib/api/types.ts`, `scripts/export_openapi.py`, `tests/api/test_openapi_export.py` (Done: commit 18e5e85).
+- **Subagent 21 (Gate Verification Targets):** `infra/gates/gate_2c.py`, `infra/gates/gate_3.py`, `infra/gates/gate_4.py`, `tests/security/test_gates.py`, `Makefile` targets (`make gate-2c`, `make gate-3`, `make gate-4`) (Done: commit 903285c).
+- **Subagent 22 (Study Time Tracking & Catch-Up Engine):** `src/techradar/planner/tracker.py`, `src/techradar/planner/catchup.py`, `tests/planner/test_tracker.py`, `tests/planner/test_catchup.py` (Done: commit 5b624d2).
+- **Subagent 23 (Economy Dashboard & Fact-Checker Approval):** `src/techradar/world/economy.py`, `src/techradar/world/factcheck.py`, `tests/world/test_economy.py`, `tests/world/test_factcheck.py` (Done: commit 8f7cab6).
 - **Subagent 24 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
 ### Integration Checklist
@@ -396,7 +403,7 @@ The **Integration Verification Agent** continuously audits the deliverables of a
   - [x] Contract 5: `pipeline`, `worker`, `rag`, `bot`, and `api` do NOT import parser submodules directly (SEC-57 One Door).
   - [x] Contract 6: `techradar.intake` does NOT import `httpx`, `db`, or `llm`.
   - [x] Contract 7: `techradar.rag` does NOT import `httpx` or `subprocess`.
-  - [x] New subsystems (`library`, `briefing`, `practice`, `exams`, `api`, `voice`, `world`, `mcp`) remain strictly decoupled and do not violate existing boundaries.
+  - [x] New subsystems (`library`, `briefing`, `practice`, `exams`, `api`, `voice`, `world`, `mcp`, `jarvis`, `planner`) remain strictly decoupled and do not violate existing boundaries.
 
 - [x] **2. Dependency Allowlist & Policy Audit (SEC-52)**
   - [x] `scripts/check_deps.py` passes with zero unapproved packages in `pyproject.toml`.
@@ -423,14 +430,20 @@ The **Integration Verification Agent** continuously audits the deliverables of a
   - [x] **World Glossary & Causality (Subagent 15):** Curated baseline terms with wiki-link regex cross-referencing `[[term]]`; DAG causal graph engine with 3-color DFS cycle detection and root-cause tracing.
   - [x] **FastMCP & Models Admin (Subagent 16):** Read-only Obsidian vault MCP server for Claude Code on macOS with SEC-24 traversal and symlink escape rejection; models admin parses role configs and computes concurrent VRAM fit with headroom/overflow detection.
   - [x] **Feedback & Improvement (Subagent 17):** Bounded topic/source weights ($0.2$ to $2.0$) with official domain floors ($1.0$); records user feedback records and stores automatic regression cases.
+  - [x] **Gate Verification Targets (Subagent 21):** Automated `make gate-2c`, `make gate-3`, and `make gate-4` targets in Makefile with comprehensive target and dry-run validation.
+  - [x] **API Client & OpenAPI Exporter (Subagent 20):** Clean schema export to `data/openapi.json` with TypeScript API contracts matching backend FastAPI routes and SEC-27/SEC-41 headers.
+  - [x] **Economy & Fact-Check Approval (Subagent 23):** Macroeconomic indicator tracking with validation and markdown summary cards; forward fact-checking claims queued in `PENDING_APPROVAL` gate before inclusion.
+  - [x] **Study Time & Catch-Up (Subagent 22):** Multi-goal study duration logging with active streak tracking; reboot offline task recovery sorted by priority and capped at batch limit.
+  - [x] **Jarvis Voice Assistant (Subagent 19):** Spoken intent classification distinguishing read-only from destructive operations; 10-second spoken confirmation tickets (SEC-56) with affirmative word verification and replay prevention.
 
 - [x] **5. Code Quality & Formatting Gate**
-  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/` (246 files verified).
-  - [x] `make test` executes all unit test suites without failures (602 passed).
+  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/` (263 files verified).
+  - [x] `make test` executes all unit test suites without failures (716 passed).
   - [x] `make security` runs all automated security audits green.
+  - [x] `make gate-1`, `make gate-2`, `make gate-2b`, `make gate-2c`, `make gate-3`, `make gate-4` all pass 100%.
 
 - [x] **6. Git Discipline & Push Readiness**
-  - [x] One task, one commit with clear conventional commit messages (`aff208f`, `c360b9d`, `200fb41`, `8ae0a1e`, `c742ca8`).
+  - [x] One task, one commit with clear conventional commit messages (`903285c`, `18e5e85`, `8f7cab6`, `5b624d2`, `c988d96`).
   - [x] No uncommitted scratch files or untracked debris left in the working tree.
   - [x] Commits pushed cleanly to `git@github.com:SidduNiharY/Tech-Radar.git` on `main`.
 
