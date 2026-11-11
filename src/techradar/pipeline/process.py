@@ -235,13 +235,16 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
 
         # 2. Duplicate clustering against items from last 72 hours
         cutoff = datetime.now(UTC) - timedelta(hours=72)
+        # `items` has no timestamp of its own; the source item's fetch time dates it.
         recent_res = await session.execute(
-            select(Item.cluster_id, Item.embedding).where(
+            select(Item.cluster_id, Item.embedding)
+            .join(RawItem, RawItem.id == Item.raw_item_id)
+            .where(
                 and_(
                     Item.id != item.id,
                     Item.cluster_id.is_not(None),
                     Item.embedding.is_not(None),
-                    Item.created_at >= cutoff,
+                    RawItem.fetched_at >= cutoff,
                 )
             )
         )
@@ -292,6 +295,11 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
         # 5. Upsert facts and check fact claims
         is_gateway_flagged = "gateway_flagged" in item.flags
 
+        # as_of = the source's publication date, or its fetch date if it has none (plan Task 9b).
+        raw_row = await session.get(RawItem, item.raw_item_id)
+        source_dt = (raw_row.published_at or raw_row.fetched_at) if raw_row else None
+        as_of_date = source_dt.date() if source_dt else date.today()
+
         for f in output.facts:
             fkey = fact_key(f)
             fact_row_res = await session.execute(select(Fact).where(Fact.fact_key == fkey))
@@ -305,7 +313,7 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
                     section=output.section.value,
                     status="unverified",
                     source_count=0,
-                    as_of=item.published_at.date() if item.published_at else date.today(),
+                    as_of=as_of_date,
                 )
                 session.add(fact_row)
                 await session.flush()
@@ -392,18 +400,26 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
         )
 
         # 7. Write Note
+        rendered_content = render_story(story_note)
+        content_hash = hashlib.sha256(rendered_content.encode("utf-8")).hexdigest()
         note_row_res = await session.execute(select(Note).where(Note.cluster_id == item.cluster_id))
         note_row = note_row_res.scalar_one_or_none()
         if note_row is None:
             existing_notes_res = await session.execute(select(Note.vault_path))
             taken_paths = set(existing_notes_res.scalars().all())
             rel_path = note_rel_path(date.today(), item.title, taken_paths)
-            note_row = Note(cluster_id=item.cluster_id, vault_path=str(rel_path))
+            note_row = Note(
+                cluster_id=item.cluster_id,
+                vault_path=str(rel_path),
+                kind="news",
+                title=item.title,
+                content_hash=content_hash,
+            )
             session.add(note_row)
         else:
             rel_path = PurePosixPath(note_row.vault_path)
+            note_row.content_hash = content_hash
 
-        rendered_content = render_story(story_note)
         write_note(deps.vault_root, rel_path, rendered_content)
 
         item.status = "written"

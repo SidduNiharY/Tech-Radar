@@ -162,8 +162,9 @@ async def ask_job(chat_id: int, question: str) -> None:
     session_factory = make_session_factory("app", settings)
     async with session_factory() as session:
         ans_row = AnswerModel(
+            chat_id=chat_id,
             question=question,
-            answer=answer.text,
+            text=answer.text,
             citations=[c.model_dump() for c in answer.citations],
             status=answer.status,
             used_unverified=answer.used_unverified,
@@ -214,7 +215,7 @@ async def save_answer_job(answer_id: int) -> None:
             "citations": citation_paths,
             "date": now.strftime("%Y-%m-%d"),
         }
-        content = f"---\n{yaml.dump(fm, sort_keys=False)}---\n\n{ans.answer}\n"
+        content = f"---\n{yaml.dump(fm, sort_keys=False)}---\n\n{ans.text}\n"
         dest.write_text(content, encoding="utf-8")
 
         ans.saved_path = rel_path
