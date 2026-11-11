@@ -1,9 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-TR_MIGRATOR_PW="$(cat /run/secrets/tr_migrator_password)"
-TR_APP_PW="$(cat /run/secrets/tr_app_password)"
-TR_RO_PW="$(cat /run/secrets/tr_ro_password)"
+# tr-entrypoint.sh copies these from /run/secrets on first start (postgres cannot
+# read the mounted files); delete the copies as soon as they are read.
+SECRETS=/tmp/tr-db-secrets
+TR_MIGRATOR_PW="$(cat "$SECRETS/tr_migrator_password")"
+TR_APP_PW="$(cat "$SECRETS/tr_app_password")"
+TR_RO_PW="$(cat "$SECRETS/tr_ro_password")"
+rm -f "$SECRETS"/tr_*_password
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<EOSQL
 CREATE ROLE tr_migrator WITH LOGIN ENCRYPTED PASSWORD '$TR_MIGRATOR_PW';
