@@ -5,7 +5,7 @@ set -euo pipefail
 # Simulates representative attacks and verifies alert generation within 60s.
 
 ALERT_LOG="${TR_ALERT_LOG:-/var/lib/techradar-alerter/alerts.jsonl}"
-CUDA_IMAGE="nvidia/cuda:12.6.3-base-ubuntu24.04@sha256:d55f05efcb5c256a066ec0a7fb0d6110f601b22e1b40283c76de20be4752c1ef"
+CUDA_IMAGE="nvidia/cuda:12.6.3-base-ubuntu24.04@sha256:c87e78933f4c16e3272123bf2f75537306596d0fbaa395a29696a22786e5ee0e"
 
 echo "=== Starting Phase 1 Security Simulation ==="
 

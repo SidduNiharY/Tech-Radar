@@ -216,7 +216,7 @@ services:
 
   clamav:
     <<: *hardened-baseline
-    image: clamav/clamav:1.4.1@sha256:7f4955b29bfa50f8373b9e4d5fb0d12e7530be90805c6d3bc8f2780e0c384812
+    image: clamav/clamav:1.4.6@sha256:cbc30de94b6e9b33ac14136ff45306cee02a1f9ae522394a3cc5b9215d1affe9
     network_mode: none
     mem_limit: 2g
     cpus: "1.0"
@@ -236,7 +236,7 @@ services:
 
   clamav-update:
     <<: *hardened-baseline
-    image: clamav/clamav:1.4.1@sha256:7f4955b29bfa50f8373b9e4d5fb0d12e7530be90805c6d3bc8f2780e0c384812
+    image: clamav/clamav:1.4.6@sha256:cbc30de94b6e9b33ac14136ff45306cee02a1f9ae522394a3cc5b9215d1affe9
     mem_limit: 512m
     cpus: "0.5"
     networks:
@@ -252,7 +252,7 @@ services:
 
   ollama:
     <<: *hardened-baseline
-    image: ollama/ollama:0.5.12@sha256:b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5
+    image: ollama/ollama:0.40.15@sha256:0e59999e0e8f9fd4e704bd788a89b7e4cad399367fb1365f8c102ac662288761
     read_only: false
     mem_limit: 8g
     cpus: "4.0"
@@ -275,7 +275,7 @@ services:
     <<: *hardened-baseline
     profiles:
       - pull
-    image: ollama/ollama:0.5.12@sha256:b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5d4e3f2a1b6c5
+    image: ollama/ollama:0.40.15@sha256:0e59999e0e8f9fd4e704bd788a89b7e4cad399367fb1365f8c102ac662288761
     read_only: false
     mem_limit: 8g
     cpus: "4.0"
@@ -288,7 +288,7 @@ services:
 
   squid:
     <<: *hardened-baseline
-    image: ubuntu/squid:6.6-24.04_beta@sha256:d1c0c4a7e9f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7
+    image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
     mem_limit: 1g
     cpus: "1.0"
     pids_limit: 200
@@ -316,7 +316,7 @@ services:
     <<: *hardened-baseline
     profiles:
       - test
-    image: curlimages/curl:8.12.1@sha256:c2b3a4f5e6d7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3
+    image: curlimages/curl:8.12.1@sha256:94e9e444bcba979c2ea12e27ae39bee4cd10bc7041a472c4727a558e213744e6
     mem_limit: 512m
     cpus: "1.0"
     pids_limit: 50
@@ -331,7 +331,7 @@ services:
     <<: *hardened-baseline
     profiles:
       - test
-    image: ghcr.io/promptfoo/promptfoo:0.111.0@sha256:7f4d2f098516aa8749725f77864468f7fbe2b1920803405786195c64c8c7d0e3
+    image: ghcr.io/promptfoo/promptfoo:0.125.1@sha256:3ddd7be2b8b043a5c48f0df048b074396de8e60282b0a3b392c299c430b74134
     mem_limit: 1g
     cpus: "1.0"
     pids_limit: 100
