@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings",
     "sqlalchemy[asyncio]>=2",
     "pgvector",
+    "procrastinate",
     "psycopg[binary]>=3",
     "alembic",
     "pyyaml",
@@ -21,7 +22,6 @@ dependencies = [
 [project.optional-dependencies]
 bot = [
     "python-telegram-bot",
-    "procrastinate",
 ]
 fetcher = [
     "httpx",
@@ -35,7 +35,6 @@ parser = [
 worker = [
     "litellm>=1.106",
     "langgraph>=1.2",
-    "procrastinate",
     "jinja2",
     "tldextract",
 ]

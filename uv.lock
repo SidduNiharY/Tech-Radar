@@ -3586,6 +3586,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "pgvector" },
+    { name = "procrastinate" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -3599,7 +3600,6 @@ api = [
     { name = "uvicorn" },
 ]
 bot = [
-    { name = "procrastinate" },
     { name = "python-telegram-bot" },
 ]
 fetcher = [
@@ -3618,7 +3618,6 @@ worker = [
     { name = "jinja2" },
     { name = "langgraph" },
     { name = "litellm" },
-    { name = "procrastinate" },
     { name = "tldextract" },
 ]
 
@@ -3644,8 +3643,7 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'worker'", specifier = ">=1.2" },
     { name = "litellm", marker = "extra == 'worker'", specifier = ">=1.106" },
     { name = "pgvector" },
-    { name = "procrastinate", marker = "extra == 'bot'" },
-    { name = "procrastinate", marker = "extra == 'worker'" },
+    { name = "procrastinate" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-settings" },
