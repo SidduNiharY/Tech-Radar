@@ -14,32 +14,32 @@ WORKDIR /app
 USER 1000:1000
 
 FROM base AS migrate
-COPY --chown=1000:1000 pyproject.toml uv.lock ./
+COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 alembic.ini ./
 COPY --chown=1000:1000 src/ ./src/
 RUN uv sync --frozen --no-dev && rm -rf /tmp/uv-cache
 CMD ["alembic", "upgrade", "head"]
 
 FROM base AS bot
-COPY --chown=1000:1000 pyproject.toml uv.lock ./
+COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 src/ ./src/
 RUN uv sync --frozen --no-dev --extra bot && rm -rf /tmp/uv-cache
 CMD ["python", "-m", "techradar.bot.main"]
 
 FROM base AS fetcher
-COPY --chown=1000:1000 pyproject.toml uv.lock ./
+COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 src/ ./src/
 RUN uv sync --frozen --no-dev --extra fetcher && rm -rf /tmp/uv-cache
 CMD ["python", "-m", "techradar.fetcher.main"]
 
 FROM base AS parser
-COPY --chown=1000:1000 pyproject.toml uv.lock ./
+COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 src/ ./src/
 RUN uv sync --frozen --no-dev --extra parser && rm -rf /tmp/uv-cache
 CMD ["python", "-m", "techradar.parser.main"]
 
 FROM base AS worker
-COPY --chown=1000:1000 pyproject.toml uv.lock ./
+COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 src/ ./src/
 ENV HF_HUB_OFFLINE=1
 RUN uv sync --frozen --no-dev --extra worker --extra rag && rm -rf /tmp/uv-cache
