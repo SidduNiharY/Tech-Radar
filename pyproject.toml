@@ -11,7 +11,7 @@ readme = "README.md"
 dependencies = [
     "pydantic>=2",
     "pydantic-settings",
-    "sqlalchemy>=2",
+    "sqlalchemy[asyncio]>=2",
     "psycopg[binary]>=3",
     "alembic",
     "pyyaml",
