@@ -76,6 +76,8 @@ services:
       - tr_migrator_password
     environment:
       TR_SECRETS_DIR: /run/secrets
+      # Settings() requires it even though migrations never use Telegram.
+      TR_TELEGRAM_OWNER_CHAT_ID: "${TR_TELEGRAM_OWNER_CHAT_ID:-0}"
     restart: "no"
     depends_on:
       postgres:
