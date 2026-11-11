@@ -61,7 +61,8 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py314"
-extend-exclude = ["security/semgrep/rules.py"]
+# Plan documents hold short sketch code on purpose; ruff must not rewrite them.
+extend-exclude = ["security/semgrep/rules.py", "docs/superpowers/plans"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
