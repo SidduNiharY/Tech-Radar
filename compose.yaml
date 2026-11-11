@@ -32,7 +32,8 @@ services:
       - DAC_OVERRIDE
       - FOWNER
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # PostgreSQL 18 images keep data in a version subfolder under /var/lib/postgresql.
+      - pgdata:/var/lib/postgresql
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     secrets:
       - pg_superuser_password
