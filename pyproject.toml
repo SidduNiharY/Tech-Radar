@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2",
     "pydantic-settings",
     "sqlalchemy[asyncio]>=2",
+    "pgvector",
     "psycopg[binary]>=3",
     "alembic",
     "pyyaml",
@@ -35,7 +36,6 @@ worker = [
     "litellm>=1.106",
     "langgraph>=1.2",
     "procrastinate",
-    "pgvector",
     "jinja2",
     "tldextract",
 ]
