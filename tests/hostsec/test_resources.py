@@ -99,3 +99,16 @@ def test_outbound_bytes() -> None:
         "api.telegram.org:443 - DIRECT/- -"
     )
     assert check_outbound_bytes([under_limit_line], client_map) == []
+
+
+def test_package_does_not_preload_modules_run_with_python_m():
+    # The timers run `python -m techradar.hostsec.resources` and `.alerter`.
+    # If the package __init__ imports them first, Python warns on every run.
+    import ast
+    from pathlib import Path
+
+    init = Path(__file__).resolve().parents[2] / "src/techradar/hostsec/__init__.py"
+    tree = ast.parse(init.read_text(encoding="utf-8"))
+    imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+    assert "techradar.hostsec.resources" not in imported
+    assert "techradar.hostsec.alerter" not in imported
