@@ -17,12 +17,14 @@ WORKDIR /app
 USER 1000:1000
 
 FROM runtime AS build
-# uv keeps its cache in /tmp and never downloads a Python.
+# uv keeps its cache in /tmp and never downloads a Python. The long timeout is
+# for the multi-GB CUDA wheels on a slow link (the default 30 s failed the build).
 COPY --from=ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a /uv /uvx /bin/
 ENV UV_CACHE_DIR=/tmp/uv-cache \
     UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1
+    UV_COMPILE_BYTECODE=1 \
+    UV_HTTP_TIMEOUT=600
 COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 src/ ./src/
 
