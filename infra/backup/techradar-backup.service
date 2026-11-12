@@ -4,5 +4,11 @@ After=docker.service
 
 [Service]
 Type=oneshot
+# Runs as the owner (docker group for pg_dump), never as root: the script
+# lives in the owner's repo.
+User=techradar
+SupplementaryGroups=docker
 WorkingDirectory=/opt/techradar
+Environment=BACKUP_DIR=/opt/techradar/data/backup
+Environment=VAULT_DIR=/opt/techradar/data/vault
 ExecStart=/bin/bash infra/backup/backup.sh

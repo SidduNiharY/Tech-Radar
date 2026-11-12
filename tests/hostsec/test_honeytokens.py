@@ -34,7 +34,14 @@ class FakeDB:
 def test_backup_excludes_honeytokens() -> None:
     sh = (REPO_ROOT / "infra/backup/backup.sh").read_text()
     assert "--exclude-table-data=techradar.bank_credentials" in sh
-    assert "/var/lib/techradar-honey/excludes.txt" in sh
+    # Honeytoken files are excluded through restic-excludes.txt. (Reading the
+    # excludes file in /var/lib/techradar-honey set off the tr_honey audit
+    # watch on every backup, so the backup no longer touches that directory.)
+    assert "--exclude-file infra/backup/restic-excludes.txt" in sh
+    excludes = (REPO_ROOT / "infra/backup/restic-excludes.txt").read_text().splitlines()
+    assert "aws_root_key.txt" in excludes
+    assert ".env.production" in excludes
+    assert "techradar-honey" not in sh
 
 
 def test_aide_config_excludes_honeytokens() -> None:

@@ -541,6 +541,8 @@ Semgrep runs through `uv tool run --from semgrep==1.184.0`, so it needs no insta
 
 The unit files in `infra/host/` and `infra/backup/` name `/home/techradar/TechRadarBrain` and the user `techradar`. `install_host.sh` installs copies with the real repo path and owner, loads the audit rules and enables the alerter and the timers.
 
+The backup runs as the owner (not root), so the restic repository (default `/mnt/backup/restic`) must be writable by the owner. Root units (AIDE, Lynis) never run or write inside the repo.
+
 Before running it: the repo is cloned, `uv sync --frozen` has built `.venv`, and `secrets/` exists (mode 700, files 600). The alerter and heartbeat need `secrets/alerter_bot_token` and the owner's chat ID.
 
 ```bash

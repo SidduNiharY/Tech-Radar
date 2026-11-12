@@ -101,3 +101,42 @@ def test_host_units_that_read_secrets_point_at_the_repo_secrets(tmp_path):
     for unit in ["techradar-alerter.service", "techradar-heartbeat.service"]:
         text = (dest / "etc/systemd/system" / unit).read_text()
         assert "Environment=TR_SECRETS_DIR=/srv/tr/secrets" in text, unit
+
+
+def _runs_as_root(text: str) -> bool:
+    users = [ln.split("=", 1)[1] for ln in text.splitlines() if ln.startswith("User=")]
+    return not users or users[-1] == "root"
+
+
+def test_root_units_never_run_or_write_in_the_owners_repo(tmp_path):
+    # The owner can change files in the repo; a root unit that runs a script
+    # from it or writes into it would hand the owner (or anyone who gets the
+    # owner's account) a way to act as root.
+    dest = run_install(tmp_path)
+    for unit in (dest / "etc/systemd/system").glob("*.service"):
+        text = unit.read_text()
+        if _runs_as_root(text):
+            assert "/srv/tr" not in text.replace("/etc/aide/techradar.conf", ""), unit.name
+
+
+def test_backup_runs_as_the_owner_with_repo_paths(tmp_path):
+    dest = run_install(tmp_path)
+    text = (dest / "etc/systemd/system/techradar-backup.service").read_text()
+    assert "User=alice" in text
+    assert "SupplementaryGroups=docker" in text
+    assert "Environment=BACKUP_DIR=/srv/tr/data/backup" in text
+    assert "Environment=VAULT_DIR=/srv/tr/data/vault" in text
+
+
+def test_backup_never_reads_the_honeytoken_directory():
+    # Reading it would set off the tr_honey audit watch on every backup.
+    root = Path(__file__).resolve().parents[2]
+    assert "techradar-honey" not in (root / "infra/backup/backup.sh").read_text()
+    excludes = (root / "infra/backup/restic-excludes.txt").read_text()
+    assert "aws_root_key.txt" in excludes and ".env.production" in excludes
+
+
+def test_installer_creates_owner_dirs_as_the_owner():
+    text = SCRIPT.read_text()
+    assert 'sudo -u "$OWNER" mkdir -p "$REPO/data/incidents"' in text
+    assert '-o "$OWNER" -g "$OWNER" "$REPO' not in text

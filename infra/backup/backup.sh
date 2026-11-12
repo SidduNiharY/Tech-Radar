@@ -23,14 +23,8 @@ ls -1t "$BACKUP_DIR/pg"/techradar-*.dump 2>/dev/null | tail -n +15 | xargs -r rm
 if [ "$(date +%u)" -eq 7 ] && [ -d "$RESTIC_REPOSITORY" ] && [ -f "$RESTIC_PASSWORD_FILE" ]; then
     mkdir -p "$VAULT_DIR" 2>/dev/null || true
 
-    if [ ! -f /var/lib/techradar-honey/excludes.txt ]; then
-        mkdir -p /var/lib/techradar-honey 2>/dev/null && touch /var/lib/techradar-honey/excludes.txt 2>/dev/null || true
-    fi
-
-    if [ -f /var/lib/techradar-honey/excludes.txt ]; then
-        restic -r "$RESTIC_REPOSITORY" backup "$BACKUP_DIR/pg" "$VAULT_DIR" "$SECRETS_DIR" --exclude-file infra/backup/restic-excludes.txt --exclude-file /var/lib/techradar-honey/excludes.txt
-    else
-        restic -r "$RESTIC_REPOSITORY" backup "$BACKUP_DIR/pg" "$VAULT_DIR" "$SECRETS_DIR" --exclude-file infra/backup/restic-excludes.txt
-    fi
+    # Honeytoken files are skipped through restic-excludes.txt. The backup never
+    # reads the honeytoken directory: that would set off the tr_honey audit watch.
+    restic -r "$RESTIC_REPOSITORY" backup "$BACKUP_DIR/pg" "$VAULT_DIR" "$SECRETS_DIR" --exclude-file infra/backup/restic-excludes.txt
     restic -r "$RESTIC_REPOSITORY" forget --keep-weekly 8 --keep-monthly 12 --prune
 fi

@@ -51,7 +51,8 @@ if [ -n "$DESTDIR" ]; then
 fi
 
 install -d -m 0750 -o "$OWNER" -g "$OWNER" /var/lib/techradar-alerter
-install -d -m 0750 -o "$OWNER" -g "$OWNER" "$REPO/data/incidents"
+# Made as the owner: a root chown inside the owner's tree could follow a symlink.
+sudo -u "$OWNER" mkdir -p "$REPO/data/incidents"
 install -d -m 0700 -o root -g root /var/lib/techradar-honey
 augenrules --load
 systemctl daemon-reload
