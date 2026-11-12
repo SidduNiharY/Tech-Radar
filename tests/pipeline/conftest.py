@@ -50,8 +50,9 @@ STORY_TITLE = "RBI keeps the repo rate at 5.5%"
 STORY_TEXT = "The Reserve Bank of India kept the repo rate at 5.5% in its policy review."
 STORY_KEY = f"{STORY_TITLE}\n\n{STORY_TEXT}"  # what process_item embeds
 PROFILE_LINE = "Economy & Banking"
-RELATED = [1.0, 0.0, 0.0, 0.0]
-UNRELATED = [0.0, 1.0, 0.0, 0.0]
+DIM = 1024  # items.embedding is vector(1024), the size BGE-M3 produces
+RELATED = [1.0] + [0.0] * (DIM - 1)
+UNRELATED = [0.0, 1.0] + [0.0] * (DIM - 2)
 
 READER_OUTPUT = {
     "summary": "RBI kept the repo rate unchanged at its policy review.",
@@ -212,7 +213,7 @@ async def _make_deps(
             )
         )
         await s.commit()
-    embedder = FakeEmbedder(dim=4, table={PROFILE_LINE: profile_vector, STORY_KEY: RELATED})
+    embedder = FakeEmbedder(dim=DIM, table={PROFILE_LINE: profile_vector, STORY_KEY: RELATED})
     return PipelineDeps(
         session_factory=factory,
         completer=completer,
