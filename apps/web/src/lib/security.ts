@@ -130,3 +130,18 @@ export function csrfOk(
 
   return false;
 }
+
+/**
+ * SEC-28: may this Markdown link become a real <a href>?
+ *
+ * Same-site paths ("/x") and in-page anchors ("#x") are fine. "//host" and
+ * "/\host" are not same-site: browsers treat both as a link to another site,
+ * and they drop tabs and newlines inside URLs first, so "/\t/host" is the
+ * same as "//host". Outside links pass only with a listed prefix.
+ */
+export function isSafeLink(url: string, allowedPrefixes: readonly string[]): boolean {
+  const u = url.replace(/[\t\n\r]/g, "");
+  if (u.startsWith("#")) return true;
+  if (u.startsWith("/")) return u[1] !== "/" && u[1] !== "\\";
+  return allowedPrefixes.some((p) => p.length > 0 && u.startsWith(p));
+}

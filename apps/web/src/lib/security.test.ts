@@ -5,6 +5,7 @@ import {
   csrfOk,
   isAllowedHost,
   isOwner,
+  isSafeLink,
   securityHeaders,
 } from "./security";
 
@@ -150,5 +151,33 @@ describe("csrfOk", () => {
       origin: "https://evil.example",
     });
     assert.strictEqual(csrfOk("POST", headers, publicOrigin), false);
+  });
+});
+
+describe("isSafeLink (SEC-28)", () => {
+  it("allows same-site paths and in-page anchors", () => {
+    for (const url of ["/notes/a", "/", "#cite-1"]) {
+      assert.strictEqual(isSafeLink(url, []), true, url);
+    }
+  });
+
+  it("blocks links that leave the site", () => {
+    for (const url of [
+      "//evil.example",
+      "/\\evil.example",
+      "/\t/evil.example",
+      "/\n/evil.example",
+      "https://evil.example",
+      "javascript:alert(1)",
+      " //evil.example",
+      "",
+    ]) {
+      assert.strictEqual(isSafeLink(url, []), false, JSON.stringify(url));
+    }
+  });
+
+  it("allows only listed prefixes for outside links", () => {
+    assert.strictEqual(isSafeLink("https://docs.example/a", ["https://docs.example/"]), true);
+    assert.strictEqual(isSafeLink("https://docs.example.evil/a", ["https://docs.example/"]), false);
   });
 });

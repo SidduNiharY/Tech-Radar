@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { isSafeLink } from "../../lib/security";
 
 export interface StreamdownProps {
   content: string;
@@ -623,11 +624,8 @@ function parseInline(
       );
     } else if (linkMatch) {
       // 7. SEC-28 safe links
-      const isAllowed =
-        allowedLinkPrefixes.length > 0 &&
-        allowedLinkPrefixes.some((p) => linkUrl.startsWith(p));
-
-      if (isAllowed || linkUrl.startsWith("/") || linkUrl.startsWith("#")) {
+      // isSafeLink refuses "//host" and "/\host", which startsWith("/") let through.
+      if (isSafeLink(linkUrl, allowedLinkPrefixes)) {
         nodes.push(
           <a
             key={`link-${match.index}`}
