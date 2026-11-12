@@ -110,16 +110,18 @@
     evt.is_open_write = true and
     tr_app_container and
     not (
-      fd.name startswith "/tmp" or
+      fd.name startswith "/tmp/" or
+      fd.name startswith "/dev/" or
+      fd.name startswith "/proc/" or
       fd.name startswith "/data/" or
-      fd.name startswith "/run" or
-      fd.name startswith "/var/run" or
-      fd.name startswith "/var/spool/squid" or
-      fd.name startswith "/root/.ollama" or
-      fd.name startswith "/var/lib" or
-      fd.name startswith "/var/log" or
-      fd.name startswith "/dev" or
-      fd.name startswith "/proc"
+      (container.name startswith "techradar-postgres" and
+        (fd.name startswith "/var/lib/postgresql/" or fd.name startswith "/var/run/postgresql/")) or
+      (container.name startswith "techradar-squid" and
+        (fd.name startswith "/var/spool/squid/" or fd.name startswith "/var/log/squid/" or fd.name startswith "/var/run/")) or
+      (container.name startswith "techradar-ollama" and
+        (fd.name startswith "/root/.ollama/")) or
+      (container.name startswith "techradar-clamav" and not container.name startswith "techradar-clamav-update" and fd.name startswith "/run/clamav/") or
+      (container.name startswith "techradar-clamav-update" and fd.name startswith "/var/lib/clamav/")
     )
   output: "Write outside allowed tmpfs or volume paths (container=%container.name file=%fd.name proc=%proc.name)"
   priority: WARNING

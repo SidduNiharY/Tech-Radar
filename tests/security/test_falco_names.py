@@ -72,3 +72,23 @@ def test_clamav_prefix_never_catches_the_updater():
     for line in rules.splitlines():
         if 'startswith "techradar-clamav"' in line:
             assert 'not container.name startswith "techradar-clamav-update"' in line, line
+
+
+def test_write_rule_allowlist_is_narrow():
+    text = (ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8")
+    rules = yaml.safe_load(text)
+    cond = next(r for r in rules if r.get("rule") == "TR write outside tmpfs or volumes")[
+        "condition"
+    ]
+    prefixes = re.findall(r'fd\.name startswith "([^"]+)"', cond)
+    assert prefixes
+    for prefix in prefixes:
+        assert prefix.endswith("/"), prefix  # "/run" would also allow "/run-evil"
+        assert not "/run/secrets/".startswith(prefix), prefix  # secrets stay watched
+    # Service-only paths are allowed only for that service's containers.
+    for service, path in [("ollama", "/root/.ollama/"), ("squid", "/var/spool/squid/")]:
+        pattern = (
+            rf'container\.name startswith "techradar-{service}" and'
+            rf'\s+\(?[^)]*fd\.name startswith "{path}"'
+        )
+        assert re.search(pattern, cond), service
