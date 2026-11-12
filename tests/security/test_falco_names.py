@@ -44,3 +44,31 @@ def test_scanned_images_use_the_project_name():
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     images = re.search(r"^IMAGES := (.+)$", makefile, re.MULTILINE).group(1).split()
     assert images and all(i.startswith("techradar-") for i in images), images
+
+
+def test_every_program_list_is_used_by_the_rules():
+    # Real Falco (0.45.2) reported five lists no rule referred to: fetcher,
+    # parser, worker, clamav and clamav-update were not covered by the
+    # "unexpected program" and "secret read" rules.
+    lists = (ROOT / "infra/falco/generated_lists.yaml").read_text(encoding="utf-8")
+    rules = (ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8")
+    names = re.findall(r"^- list: (\S+)$", lists, re.MULTILINE)
+    assert names
+    for name in names:
+        assert rules.count(f"({name})") >= 2, name
+
+
+def test_rules_avoid_fields_real_falco_rejects():
+    rules = (ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8")
+    assert "evt.flags" not in rules  # no such field; use evt.is_open_write
+    assert "evt.dir" not in rules  # deprecated, always true
+    assert "fd.rip in (" not in rules  # networks need fd.rnet
+
+
+def test_clamav_prefix_never_catches_the_updater():
+    # "techradar-clamav" is also a prefix of "techradar-clamav-update-1",
+    # which runs freshclam and uses the network on purpose.
+    rules = (ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8")
+    for line in rules.splitlines():
+        if 'startswith "techradar-clamav"' in line:
+            assert 'not container.name startswith "techradar-clamav-update"' in line, line

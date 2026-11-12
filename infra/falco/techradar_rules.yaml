@@ -1,7 +1,7 @@
 - rule: TR shell or package manager in container
   desc: A shell or package manager was spawned inside an application container
   condition: >
-    evt.type in (execve, execveat) and evt.dir = < and
+    evt.type in (execve, execveat) and
     tr_app_container and
     proc.name in (sh, bash, dash, ash, zsh, apt, apt-get, dpkg, pip, pip3, npm, npx, uv)
   output: "Shell or package manager spawned in container (user=%user.name container=%container.name proc=%proc.name cmdline=%proc.cmdline)"
@@ -11,7 +11,7 @@
 - rule: TR network tool in container
   desc: A network tool was spawned inside an application container
   condition: >
-    evt.type in (execve, execveat) and evt.dir = < and
+    evt.type in (execve, execveat) and
     tr_app_container and
     proc.name in (curl, wget, nc, ncat, socat, ssh, scp, telnet)
   output: "Network tool spawned in container (user=%user.name container=%container.name proc=%proc.name cmdline=%proc.cmdline)"
@@ -21,12 +21,17 @@
 - rule: TR unexpected program
   desc: A process outside the service allowed list started inside a container
   condition: >
-    evt.type in (execve, execveat) and evt.dir = < and
+    evt.type in (execve, execveat) and
     tr_app_container and (
       (container.name startswith "techradar-bot" and not proc.name in (tr_bot_programs)) or
       (container.name startswith "techradar-migrate" and not proc.name in (tr_migrate_programs)) or
       (container.name startswith "techradar-postgres" and not proc.name in (tr_postgres_programs)) or
       (container.name startswith "techradar-squid" and not proc.name in (tr_squid_programs)) or
+      (container.name startswith "techradar-clamav-update" and not proc.name in (tr_clamav-update_programs)) or
+      (container.name startswith "techradar-clamav" and not container.name startswith "techradar-clamav-update" and not proc.name in (tr_clamav_programs)) or
+      (container.name startswith "techradar-fetcher" and not proc.name in (tr_fetcher_programs)) or
+      (container.name startswith "techradar-parser" and not proc.name in (tr_parser_programs)) or
+      (container.name startswith "techradar-worker" and not proc.name in (tr_worker_programs)) or
       (container.name startswith "techradar-ollama" and not proc.name in (tr_ollama_programs))
     )
   output: "Unexpected program started in container (container=%container.name proc=%proc.name cmdline=%proc.cmdline)"
@@ -36,9 +41,9 @@
 - rule: TR connection from no-network service
   desc: Network connection attempt from a service marked no-network
   condition: >
-    evt.type = connect and evt.dir = < and (
+    evt.type = connect and (
       container.name startswith "techradar-parser" or
-      container.name startswith "techradar-clamav"
+      (container.name startswith "techradar-clamav" and not container.name startswith "techradar-clamav-update")
     )
   output: "Network connection attempt from no-network service (container=%container.name fd.name=%fd.name)"
   priority: CRITICAL
@@ -47,7 +52,7 @@
 - rule: TR connection outside allowed peers
   desc: Internal-only container connected to an address outside Docker networks
   condition: >
-    evt.type = connect and evt.dir = < and (
+    evt.type = connect and (
       container.name startswith "techradar-worker" or
       container.name startswith "techradar-jarvis" or
       container.name startswith "techradar-api" or
@@ -55,7 +60,7 @@
       container.name startswith "techradar-ollama" or
       container.name startswith "techradar-voice-worker"
     ) and not (
-      fd.rip in (127.0.0.1, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16)
+      fd.rnet in (127.0.0.0/8, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16)
     )
   output: "Internal-only container connecting outside allowed peers (container=%container.name fd.name=%fd.name)"
   priority: CRITICAL
@@ -64,14 +69,14 @@
 - rule: TR outbound not via squid
   desc: Outbound internet connection initiated directly rather than through Squid proxy
   condition: >
-    evt.type = connect and evt.dir = < and (
+    evt.type = connect and (
       container.name startswith "techradar-fetcher" or
       container.name startswith "techradar-bot" or
       container.name startswith "techradar-changedetection" or
       container.name startswith "techradar-searxng" or
       container.name startswith "techradar-clamav-update"
     ) and not (
-      fd.rip in (127.0.0.1, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16)
+      fd.rnet in (127.0.0.0/8, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16)
     )
   output: "Outbound connection not routed via squid (container=%container.name fd.name=%fd.name)"
   priority: CRITICAL
@@ -80,13 +85,18 @@
 - rule: TR secret read by unexpected program
   desc: A secret file was opened by a program outside the service allowed list
   condition: >
-    evt.type in (open, openat, openat2) and evt.dir = < and
+    evt.type in (open, openat, openat2) and
     fd.name startswith "/run/secrets/" and
     tr_app_container and (
       (container.name startswith "techradar-bot" and not proc.name in (tr_bot_programs)) or
       (container.name startswith "techradar-migrate" and not proc.name in (tr_migrate_programs)) or
       (container.name startswith "techradar-postgres" and not proc.name in (tr_postgres_programs)) or
       (container.name startswith "techradar-squid" and not proc.name in (tr_squid_programs)) or
+      (container.name startswith "techradar-clamav-update" and not proc.name in (tr_clamav-update_programs)) or
+      (container.name startswith "techradar-clamav" and not container.name startswith "techradar-clamav-update" and not proc.name in (tr_clamav_programs)) or
+      (container.name startswith "techradar-fetcher" and not proc.name in (tr_fetcher_programs)) or
+      (container.name startswith "techradar-parser" and not proc.name in (tr_parser_programs)) or
+      (container.name startswith "techradar-worker" and not proc.name in (tr_worker_programs)) or
       (container.name startswith "techradar-ollama" and not proc.name in (tr_ollama_programs))
     )
   output: "Secret opened by unexpected program (container=%container.name file=%fd.name proc=%proc.name cmdline=%proc.cmdline)"
@@ -96,11 +106,16 @@
 - rule: TR write outside tmpfs or volumes
   desc: File write to container filesystem outside allowed tmpfs or volume paths
   condition: >
-    evt.type in (open, openat, openat2) and evt.dir = < and
-    evt.flags contains O_WRONLY and
+    evt.type in (open, openat, openat2) and
+    evt.is_open_write = true and
     tr_app_container and
     not (
       fd.name startswith "/tmp" or
+      fd.name startswith "/data/" or
+      fd.name startswith "/run" or
+      fd.name startswith "/var/run" or
+      fd.name startswith "/var/spool/squid" or
+      fd.name startswith "/root/.ollama" or
       fd.name startswith "/var/lib" or
       fd.name startswith "/var/log" or
       fd.name startswith "/dev" or
@@ -113,7 +128,7 @@
 - rule: TR new root process
   desc: A process with UID 0 started in a container not excepted in root_start
   condition: >
-    evt.type in (execve, execveat) and evt.dir = < and
+    evt.type in (execve, execveat) and
     tr_app_container and user.uid = 0 and
     not (
       container.name startswith "techradar-postgres" or
@@ -126,7 +141,7 @@
 - rule: TR docker socket access
   desc: Docker socket was accessed from inside a container
   condition: >
-    evt.type in (open, openat, openat2, connect) and evt.dir = < and
+    evt.type in (open, openat, openat2, connect) and
     container.id != host and
     fd.name = "/var/run/docker.sock"
   output: "Docker socket accessed from inside container (container=%container.name proc=%proc.name cmdline=%proc.cmdline)"
