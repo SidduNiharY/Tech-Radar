@@ -3609,6 +3609,7 @@ fetcher = [
 parser = [
     { name = "docling" },
     { name = "feedparser" },
+    { name = "tldextract" },
     { name = "trafilatura" },
 ]
 rag = [
@@ -3618,6 +3619,7 @@ worker = [
     { name = "jinja2" },
     { name = "langgraph" },
     { name = "litellm" },
+    { name = "python-telegram-bot" },
     { name = "tldextract" },
 ]
 
@@ -3648,10 +3650,12 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-settings" },
     { name = "python-telegram-bot", marker = "extra == 'bot'" },
+    { name = "python-telegram-bot", marker = "extra == 'worker'" },
     { name = "pyyaml" },
     { name = "sentence-transformers", marker = "extra == 'rag'" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2" },
     { name = "tldextract", marker = "extra == 'fetcher'" },
+    { name = "tldextract", marker = "extra == 'parser'" },
     { name = "tldextract", marker = "extra == 'worker'" },
     { name = "trafilatura", marker = "extra == 'parser'" },
     { name = "uvicorn", marker = "extra == 'api'" },

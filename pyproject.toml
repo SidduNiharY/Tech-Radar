@@ -31,12 +31,14 @@ parser = [
     "trafilatura",
     "feedparser",
     "docling>=2.146",
+    "tldextract",
 ]
 worker = [
     "litellm>=1.106",
     "langgraph>=1.2",
     "jinja2",
     "tldextract",
+    "python-telegram-bot",
 ]
 rag = [
     "sentence-transformers",
