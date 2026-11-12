@@ -520,6 +520,7 @@ sudo apt-mark hold falco
 sudo systemctl enable --now falco-modern-bpf.service
 ```
 Verification: `systemctl is-active falco-modern-bpf` prints `active`; `falco --version` prints 0.45.2.
+The TechRadar rules, the JSON output to `/var/log/falco/events.json` and its log rotation are installed by `install_host.sh` (section 23), which checks them with `falco --dry-run`. They match containers named `techradar-<service>-1`, which `name: techradar` in `compose.yaml` guarantees.
 
 ### 4. Syncthing (Ubuntu archive)
 ```bash

@@ -45,6 +45,13 @@ done
 render "$HERE/audit/techradar.rules" "$DESTDIR/etc/audit/rules.d/techradar.rules" 0640
 render "$HERE/aide/techradar.conf" "$DESTDIR/etc/aide/techradar.conf" 0600
 
+# Falco reads rules.d in name order: the lists must load before the rules.
+FALCO="$HERE/../falco"
+render "$FALCO/generated_lists.yaml" "$DESTDIR/etc/falco/rules.d/10-techradar-lists.yaml" 0644
+render "$FALCO/techradar_rules.yaml" "$DESTDIR/etc/falco/rules.d/20-techradar-rules.yaml" 0644
+render "$FALCO/techradar-output.yaml" "$DESTDIR/etc/falco/config.d/techradar-output.yaml" 0644
+render "$FALCO/logrotate" "$DESTDIR/etc/logrotate.d/falco-techradar" 0644
+
 if [ -n "$DESTDIR" ]; then
     echo "Wrote files under $DESTDIR (nothing enabled)."
     exit 0
@@ -55,6 +62,14 @@ install -d -m 0750 -o "$OWNER" -g "$OWNER" /var/lib/techradar-alerter
 sudo -u "$OWNER" mkdir -p "$REPO/data/incidents"
 install -d -m 0700 -o root -g root /var/lib/techradar-honey
 augenrules --load
+install -d -m 0750 /var/log/falco
+if systemctl cat falco-modern-bpf.service >/dev/null 2>&1; then
+    # Checks the whole configured set (our rules use Falco's default macros).
+    falco --dry-run
+    systemctl restart falco-modern-bpf.service
+else
+    echo "Falco is not installed yet (RUNBOOK section 22.3); its rules are in place for when it is."
+fi
 systemctl daemon-reload
 for t in aide integrity resources lynis backup; do
     systemctl enable --now "techradar-$t.timer"

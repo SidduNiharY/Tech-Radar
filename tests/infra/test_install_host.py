@@ -140,3 +140,14 @@ def test_installer_creates_owner_dirs_as_the_owner():
     text = SCRIPT.read_text()
     assert 'sudo -u "$OWNER" mkdir -p "$REPO/data/incidents"' in text
     assert '-o "$OWNER" -g "$OWNER" "$REPO' not in text
+
+
+def test_falco_rules_and_output_are_installed(tmp_path):
+    # The lists load before the rules that use them (Falco reads rules.d in order).
+    dest = run_install(tmp_path)
+    lists = dest / "etc/falco/rules.d/10-techradar-lists.yaml"
+    rules = dest / "etc/falco/rules.d/20-techradar-rules.yaml"
+    assert lists.is_file() and rules.is_file()
+    assert "tr_bot_programs" in lists.read_text()
+    assert (dest / "etc/falco/config.d/techradar-output.yaml").is_file()
+    assert (dest / "etc/logrotate.d/falco-techradar").is_file()
