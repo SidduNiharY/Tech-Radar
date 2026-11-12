@@ -27,19 +27,19 @@ COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 src/ ./src/
 
 FROM build AS migrate-build
-RUN uv sync --frozen --no-dev && rm -rf /tmp/uv-cache
+RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen --no-dev
 
 FROM build AS bot-build
-RUN uv sync --frozen --no-dev --extra bot && rm -rf /tmp/uv-cache
+RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen --no-dev --extra bot
 
 FROM build AS fetcher-build
-RUN uv sync --frozen --no-dev --extra fetcher && rm -rf /tmp/uv-cache
+RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen --no-dev --extra fetcher
 
 FROM build AS parser-build
-RUN uv sync --frozen --no-dev --extra parser && rm -rf /tmp/uv-cache
+RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen --no-dev --extra parser
 
 FROM build AS worker-build
-RUN uv sync --frozen --no-dev --extra worker --extra rag && rm -rf /tmp/uv-cache
+RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen --no-dev --extra worker --extra rag
 
 FROM runtime AS migrate
 COPY --from=migrate-build /app /app

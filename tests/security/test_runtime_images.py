@@ -55,3 +55,13 @@ def test_runtime_stage_pins_debian_security_fixes():
     runtime = stages()["runtime"]
     for pin in ("apt=3.0.4", "libapt-pkg7.0=3.0.4", "zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1"):
         assert pin in runtime, pin
+
+
+def test_uv_downloads_are_cached_between_builds():
+    # torch and its CUDA libraries are several GB; without a cache mount every
+    # rebuild downloads them again. The cache never ends up in an image.
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    syncs = [ln for ln in text.splitlines() if "uv sync" in ln]
+    assert syncs
+    for ln in syncs:
+        assert "--mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000" in ln, ln
