@@ -56,8 +56,15 @@ sudo -u "$OWNER" mkdir -p "$REPO/data/incidents"
 install -d -m 0700 -o root -g root /var/lib/techradar-honey
 augenrules --load
 systemctl daemon-reload
-systemctl enable --now techradar-alerter.service
-for t in aide integrity resources heartbeat lynis backup; do
+for t in aide integrity resources lynis backup; do
     systemctl enable --now "techradar-$t.timer"
 done
+# The alerter and heartbeat send to Telegram: they need secrets/alerter_bot_token,
+# the chat ID in .env, and the internet. SKIP_ALERTER=1 leaves them installed
+# but off until then; run this script again without it to turn them on.
+if [ "${SKIP_ALERTER:-0}" = "1" ]; then
+    echo "Alerter and heartbeat installed but NOT enabled (SKIP_ALERTER=1)."
+else
+    systemctl enable --now techradar-alerter.service techradar-heartbeat.timer
+fi
 echo "Installed for OWNER=$OWNER REPO=$REPO. Next: sudo aide --init --config /etc/aide/techradar.conf"

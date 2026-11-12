@@ -548,6 +548,8 @@ Before running it: the repo is cloned, `uv sync --frozen` has built `.venv`, and
 ```bash
 cd ~/TechRadarBrain
 sudo OWNER="$USER" bash infra/host/install_host.sh
+# Before Telegram is set up (no alerter token yet), leave the alerter off:
+#   sudo OWNER="$USER" SKIP_ALERTER=1 bash infra/host/install_host.sh
 sudo aide --init --config /etc/aide/techradar.conf
 sudo mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
 uv run python scripts/plant_honeytokens.py
