@@ -151,3 +151,12 @@ def test_falco_rules_and_output_are_installed(tmp_path):
     assert "tr_bot_programs" in lists.read_text()
     assert (dest / "etc/falco/config.d/techradar-output.yaml").is_file()
     assert (dest / "etc/logrotate.d/falco-techradar").is_file()
+
+
+def test_lynis_unit_uses_the_ubuntu_path():
+    # Ubuntu's lynis package installs /usr/sbin/lynis; /usr/bin/lynis does
+    # not exist there (checked on the TUF, 2026-11-13), so the timer failed.
+    root = Path(__file__).resolve().parents[2]
+    unit = (root / "infra/host/timers/techradar-lynis.service").read_text()
+    assert "/usr/sbin/lynis audit system" in unit
+    assert "/usr/bin/lynis" not in unit

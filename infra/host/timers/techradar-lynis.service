@@ -8,7 +8,7 @@ User=root
 # Root unit: runs and writes only in root-owned places, never in the repo.
 # Copy the month's report into docs/security/lynis/ as the owner (see monthly.md).
 WorkingDirectory=/
-ExecStart=/bin/sh -c 'mkdir -p /var/log/techradar/lynis && /usr/bin/lynis audit system --quick --no-colors > "/var/log/techradar/lynis/$$(date +%%Y-%%m).txt"'
+ExecStart=/bin/sh -c 'mkdir -p /var/log/techradar/lynis && /usr/sbin/lynis audit system --quick --no-colors > "/var/log/techradar/lynis/$$(date +%%Y-%%m).txt"'
 SyslogIdentifier=techradar-lynis
 StandardOutput=journal
 StandardError=journal
