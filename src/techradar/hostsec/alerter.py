@@ -277,47 +277,31 @@ def popen_lines(kind: str, cmd: list[str]) -> Iterator[str]:
         yield from proc.stdout
 
 
-# Streams handled before the others (see run_streams).
-HIGH_PRIORITY = frozenset({"falco", "auditd", "journal"})
+class RoundRobin:
+    """Serve the per-stream queues in turn.
 
-
-# After this many detection lines in a row, one waiting log line is handled.
-HIGH_BURST = 10
-
-
-class LineScheduler:
-    """Detection lines first, but log lines are never starved.
-
-    Any local user can write journal lines under any identifier, so a flood
-    of detection lines must not hold back Squid and Postgres lines forever.
+    Each stream has its own bounded queue, so a flood on one (the journal
+    can be written by any local user) fills only that queue and blocks only
+    that stream's reader; every other stream still gets a line each round.
     """
 
-    def __init__(
-        self,
-        high: queue.Queue[tuple[str, str]],
-        low: queue.Queue[tuple[str, str]],
-    ) -> None:
-        self._high = high
-        self._low = low
-        self._run = 0
+    def __init__(self, queues: Mapping[str, queue.Queue[tuple[str, str]]]) -> None:
+        self._queues = list(queues.values())
+        self._next = 0
 
     def next(self, *, timeout_s: float) -> tuple[str, str] | None:
-        if self._run >= HIGH_BURST:
-            self._run = 0
-            try:
-                return self._low.get_nowait()
-            except queue.Empty:
-                pass
-        try:
-            item = self._high.get_nowait()
-            self._run += 1
-            return item
-        except queue.Empty:
-            self._run = 0
-        try:
-            return self._low.get(timeout=timeout_s)
-        except queue.Empty:
-            return None
+        deadline = time.monotonic() + timeout_s
+        while True:
+            for _ in range(len(self._queues)):
+                q = self._queues[self._next]
+                self._next = (self._next + 1) % len(self._queues)
+                try:
+                    return q.get_nowait()
+                except queue.Empty:
+                    continue
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.02)
 
 
 def check_sources(streams: Sequence[tuple[str, list[str]]]) -> list[Alert]:
@@ -363,16 +347,15 @@ def run_streams(
     started again after `restart_delay_s`.
     """
     stop = stop or threading.Event()
-    # Detection streams have their own queue and go first (see LineScheduler),
-    # so a flood of Squid or Postgres lines cannot delay a Falco or audit
-    # alert, while log lines still get a share. Both queues are bounded: when
-    # one is full, only the streams feeding it wait.
-    high: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=50_000)
-    low: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=10_000)
-    scheduler = LineScheduler(high, low)
+    # One bounded queue per stream, served in turn (see RoundRobin): a flood
+    # on one stream can only block that stream's own reader.
+    queues: dict[str, queue.Queue[tuple[str, str]]] = {
+        kind: queue.Queue(maxsize=10_000) for kind, _ in streams
+    }
+    scheduler = RoundRobin(queues)
 
     def pump(kind: str, cmd: list[str]) -> None:
-        target = high if kind in HIGH_PRIORITY else low
+        target = queues[kind]
         while not stop.is_set():
             try:
                 for line in spawn(kind, cmd):

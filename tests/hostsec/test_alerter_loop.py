@@ -218,32 +218,29 @@ def test_stream_errors_reach_the_journal():
     assert "DEVNULL" not in inspect.getsource(alerter.popen_lines)
 
 
-def test_detection_streams_go_first_but_log_streams_are_never_starved():
-    # Any local user can write journal lines under any name, so a flood of
-    # "high" lines must not stop Squid and Postgres lines for good.
+def test_every_stream_gets_a_turn_so_a_flood_cannot_hide_falco():
+    # From the automated review: the journal can be written by any local
+    # user. Each stream has its own queue and they are served in turn, so a
+    # full journal queue never delays a Falco or audit line.
     import queue as q
 
-    from techradar.hostsec.alerter import HIGH_BURST, LineScheduler
+    from techradar.hostsec.alerter import RoundRobin
 
-    high, low = q.Queue(), q.Queue()
-    sched = LineScheduler(high, low)
-    for i in range(3 * HIGH_BURST):
-        high.put(("journal", f"h{i}"))
-    low.put(("squid", "l0"))
-    first = [sched.next(timeout_s=0.01) for _ in range(HIGH_BURST + 1)]
-    assert first[0] == ("journal", "h0")
-    assert ("squid", "l0") in first
+    queues = {k: q.Queue(maxsize=5) for k in ["falco", "auditd", "journal", "squid"]}
+    for i in range(5):
+        queues["journal"].put(("journal", f"j{i}"))
+    assert queues["journal"].full()
+    queues["falco"].put(("falco", "f"))
+    queues["squid"].put(("squid", "s"))
+    rr = RoundRobin(queues)
+    first = [rr.next(timeout_s=0.01) for _ in range(3)]
+    assert ("falco", "f") in first and ("squid", "s") in first
 
 
-def test_scheduler_takes_detection_lines_first_when_both_wait():
+def test_round_robin_returns_none_when_every_queue_is_empty():
     import queue as q
 
-    from techradar.hostsec.alerter import LineScheduler
+    from techradar.hostsec.alerter import RoundRobin
 
-    high, low = q.Queue(), q.Queue()
-    low.put(("squid", "a"))
-    high.put(("falco", "x"))
-    sched = LineScheduler(high, low)
-    assert sched.next(timeout_s=0.01) == ("falco", "x")
-    assert sched.next(timeout_s=0.01) == ("squid", "a")
-    assert sched.next(timeout_s=0.01) is None
+    rr = RoundRobin({"falco": q.Queue(), "squid": q.Queue()})
+    assert rr.next(timeout_s=0.01) is None
