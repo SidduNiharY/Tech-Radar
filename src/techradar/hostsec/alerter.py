@@ -1,12 +1,17 @@
 """Host security alerter daemon, Telegram dispatcher, and daily heartbeat runner."""
 
 import argparse
+import json
 import logging
+import queue
+import re
 import subprocess
 import sys
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 
@@ -106,10 +111,42 @@ def default_runner(
 class AlerterDaemon:
     """Host security alerter daemon orchestrating log parsing, containment, and alerts."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        client_map: Callable[[], Mapping[str, str]] | None = None,
+        migrating_flag: Path = Path("data/run/migrating"),
+    ) -> None:
         self.settings = settings
         self.alert_log = AlertLog(settings.alert_log)
         self.quiet = parse_quiet_hours(settings.quiet_hours)
+        self._client_map = client_map or (lambda: build_client_map(default_runner))
+        self._migrating_flag = migrating_flag
+
+    def handle(self, kind: str, line: str) -> None:
+        """Route one line from a stream to its parser. A bad line is logged, never raised."""
+        line = line.rstrip("\n")
+        if not line.strip():
+            return
+        try:
+            if kind == "falco":
+                self.process_falco_line(line)
+            elif kind == "auditd":
+                # audit.log is read directly (journald gets no audit records on
+                # this host); only the SYSCALL record carries the watch key.
+                if 'key="tr_' in line:
+                    self.process_journal_entry({"SYSLOG_IDENTIFIER": "audit", "MESSAGE": line})
+            elif kind == "journal":
+                self.process_journal_entry(json.loads(line))
+            elif kind == "squid":
+                self.process_squid_line(line, self._client_map())
+            elif kind == "postgres":
+                self.process_postgres_line(line, migrating=self._migrating_flag.exists())
+            else:
+                logger.warning("Unknown alerter stream %r", kind)
+        except Exception as exc:  # one bad line must not stop the alerter
+            logger.error("Alerter could not handle a %s line: %s", kind, exc)
 
     def dispatch_alert(self, alert: Alert, action: str) -> None:
         """Send immediate or batched alert notification to Telegram."""
@@ -175,6 +212,116 @@ class AlerterDaemon:
             self.process_alert(alert)
 
 
+# Journal identifiers the alerter cares about (from_journal handles each).
+JOURNAL_IDENTIFIERS = (
+    "sudo",
+    "systemd-logind",
+    "aide",
+    "techradar-integrity",
+    "techradar-resources",
+)
+_CONTAINER_NAME = re.compile(r"^techradar-([a-z0-9-]+?)(?:-run-[0-9a-f]+|-\d+)$")
+
+
+def stream_commands() -> list[tuple[str, list[str]]]:
+    """The streams the alerter follows (Phase 1 Task 14), each starting from now."""
+    journal = ["journalctl", "-f", "-n", "0", "-o", "json"]
+    for ident in JOURNAL_IDENTIFIERS:
+        journal += ["-t", ident]
+    logs = ["docker", "compose", "logs", "-f", "--no-color", "--no-log-prefix", "--since", "0s"]
+    return [
+        ("falco", ["tail", "-n", "0", "-F", "/var/log/falco/events.json"]),
+        ("auditd", ["tail", "-n", "0", "-F", "/var/log/audit/audit.log"]),
+        ("journal", journal),
+        ("squid", [*logs, "squid"]),
+        ("postgres", [*logs, "postgres"]),
+    ]
+
+
+def build_client_map(run: Callable[..., subprocess.CompletedProcess]) -> dict[str, str]:
+    """Map Squid client IPs to Compose services from the egress network."""
+    res = run(
+        [
+            "docker",
+            "network",
+            "inspect",
+            "techradar_egress_internal",
+            "--format",
+            "{{json .Containers}}",
+        ]
+    )
+    if res.returncode != 0:
+        return {}
+    try:
+        containers = json.loads(res.stdout or "{}") or {}
+    except json.JSONDecodeError:
+        return {}
+    mapping: dict[str, str] = {}
+    for info in containers.values():
+        match = _CONTAINER_NAME.match(str(info.get("Name", "")))
+        ip = str(info.get("IPv4Address", "")).split("/", 1)[0]
+        if match and ip:
+            mapping[ip] = match.group(1)
+    return mapping
+
+
+def popen_lines(kind: str, cmd: list[str]) -> Iterator[str]:
+    """Yield the output lines of a long-running command (no shell)."""
+    with subprocess.Popen(  # noqa: S603
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        bufsize=1,
+    ) as proc:
+        if proc.stdout is None:
+            return
+        yield from proc.stdout
+
+
+def run_streams(
+    daemon: AlerterDaemon,
+    streams: Sequence[tuple[str, list[str]]],
+    *,
+    spawn: Callable[[str, list[str]], Iterable[str]] = popen_lines,
+    stop: threading.Event | None = None,
+    on_idle: Callable[[], None] | None = None,
+    restart_delay_s: float = 5.0,
+) -> None:
+    """Follow every stream in its own thread and handle lines one at a time.
+
+    A stream that ends (a container restarted, a file not there yet) is
+    started again after `restart_delay_s`.
+    """
+    stop = stop or threading.Event()
+    lines: queue.Queue[tuple[str, str]] = queue.Queue()
+
+    def pump(kind: str, cmd: list[str]) -> None:
+        while not stop.is_set():
+            try:
+                for line in spawn(kind, cmd):
+                    lines.put((kind, line))
+                    if stop.is_set():
+                        return
+            except Exception as exc:
+                logger.error("Alerter stream %s failed: %s", kind, exc)
+            stop.wait(restart_delay_s)
+
+    for kind, cmd in streams:
+        threading.Thread(target=pump, args=(kind, cmd), name=f"alerter-{kind}", daemon=True).start()
+
+    while not stop.is_set():
+        try:
+            kind, line = lines.get(timeout=0.2)
+        except queue.Empty:
+            if on_idle:
+                on_idle()
+            continue
+        daemon.handle(kind, line)
+        if on_idle:
+            on_idle()
+
+
 def main(args: Sequence[str] | None = None) -> int:
     """Entry point for the host alerter CLI."""
     parser = argparse.ArgumentParser(description="TechRadar host security alerter")
@@ -190,8 +337,9 @@ def main(args: Sequence[str] | None = None) -> int:
         run_heartbeat(settings)
         return 0
 
-    _ = AlerterDaemon(settings)
+    daemon = AlerterDaemon(settings)
     logger.info("TechRadar hostsec alerter daemon starting...")
+    run_streams(daemon, stream_commands())
     return 0
 
 

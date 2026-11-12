@@ -181,3 +181,28 @@ def test_aide_uses_its_own_database_file():
     assert "database_in=file:@@{DBDIR}/techradar.db\n" in conf
     assert "database_out=file:@@{DBDIR}/techradar.db.new\n" in conf
     assert "/aide.db" not in conf
+
+
+def test_alerter_runs_offline_and_only_the_heartbeat_waits_for_telegram():
+    # The alerter logs alerts locally and skips Telegram when it has no token,
+    # so it runs from the start; only the heartbeat needs Telegram.
+    text = SCRIPT.read_text()
+    tail = text[text.index("systemctl daemon-reload") :]
+    assert "systemctl enable --now techradar-alerter.service\n" in tail
+    skip_block = tail[tail.index("SKIP_TELEGRAM") :]
+    assert "techradar-heartbeat.timer" in skip_block
+    assert "SKIP_ALERTER" in text  # the old name still works
+
+
+def test_alerter_can_read_falco_events():
+    # The alerter runs as the owner with the adm group; /var/log/falco was root-only.
+    text = SCRIPT.read_text()
+    assert "install -d -m 0750 -o root -g adm /var/log/falco" in text
+
+
+def test_installer_gives_settings_a_chat_id_placeholder_before_telegram():
+    # Settings requires TR_TELEGRAM_OWNER_CHAT_ID; without .env the alerter
+    # would crash on start and restart every 5 seconds.
+    text = SCRIPT.read_text()
+    assert "TR_TELEGRAM_OWNER_CHAT_ID=0" in text
+    assert 'sudo -u "$OWNER"' in text[text.index("TR_TELEGRAM_OWNER_CHAT_ID=0") - 300 :]

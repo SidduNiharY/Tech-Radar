@@ -9,6 +9,33 @@ CUDA_IMAGE="nvidia/cuda:12.6.3-base-ubuntu24.04@sha256:c87e78933f4c16e3272123bf2
 
 echo "=== Starting Phase 1 Security Simulation ==="
 
+# Alerts raised before this run must not count as a pass.
+SIM_START="${SIM_START:-$(date -u +%Y-%m-%dT%H:%M:%S+00:00)}"
+
+# True once the alert log has an alert with this rule and level, raised at or
+# after SIM_START. The log is compact JSON (one Alert per line), so it is
+# parsed rather than grepped.
+alert_seen() {
+    python3 - "$ALERT_LOG" "$1" "$2" "$SIM_START" <<'PYEOF'
+import json, sys
+from datetime import datetime
+log, rule, level, start = sys.argv[1:5]
+since = datetime.fromisoformat(start)
+try:
+    lines = open(log, encoding="utf-8").read().splitlines()
+except OSError:
+    sys.exit(1)
+for raw in lines:
+    try:
+        a = json.loads(raw)
+        if a["rule"] == rule and a["level"] == level and datetime.fromisoformat(a["at"]) >= since:
+            sys.exit(0)
+    except (ValueError, KeyError, TypeError):
+        continue
+sys.exit(1)
+PYEOF
+}
+
 wait_for_alert() {
     local rule="$1"
     local expected_level="${2:-critical}"
@@ -18,11 +45,9 @@ wait_for_alert() {
 
     echo -n "Waiting for alert rule: '${rule}' (${expected_level})... "
     while true; do
-        if [ -f "$ALERT_LOG" ]; then
-            if grep -F "\"rule\": \"$rule\"" "$ALERT_LOG" | grep -F "\"level\": \"$expected_level\"" >/dev/null 2>&1; then
-                echo "PASS"
-                return 0
-            fi
+        if alert_seen "$rule" "$expected_level"; then
+            echo "PASS"
+            return 0
         fi
 
         local now

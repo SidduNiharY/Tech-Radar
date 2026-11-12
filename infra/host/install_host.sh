@@ -62,7 +62,8 @@ install -d -m 0750 -o "$OWNER" -g "$OWNER" /var/lib/techradar-alerter
 sudo -u "$OWNER" mkdir -p "$REPO/data/incidents"
 install -d -m 0700 -o root -g root /var/lib/techradar-honey
 augenrules --load
-install -d -m 0750 /var/log/falco
+# The alerter (owner, adm group) follows /var/log/falco/events.json.
+install -d -m 0750 -o root -g adm /var/log/falco
 if systemctl cat falco-modern-bpf.service >/dev/null 2>&1; then
     # Checks the whole configured set (our rules use Falco's default macros).
     falco --dry-run
@@ -74,12 +75,20 @@ systemctl daemon-reload
 for t in aide integrity resources lynis backup; do
     systemctl enable --now "techradar-$t.timer"
 done
-# The alerter and heartbeat send to Telegram: they need secrets/alerter_bot_token,
-# the chat ID in .env, and the internet. SKIP_ALERTER=1 leaves them installed
-# but off until then; run this script again without it to turn them on.
-if [ "${SKIP_ALERTER:-0}" = "1" ]; then
-    echo "Alerter and heartbeat installed but NOT enabled (SKIP_ALERTER=1)."
+# Settings needs TR_TELEGRAM_OWNER_CHAT_ID. Before the Telegram stage there is
+# no .env, and the alerter would crash on start; 0 means "no chat yet".
+if [ ! -f "$REPO/.env" ]; then
+    sudo -u "$OWNER" sh -c 'umask 077 && printf "%s\n" "# Set your real chat ID in the Telegram stage." "TR_TELEGRAM_OWNER_CHAT_ID=0" > "$1"' sh "$REPO/.env"
+    echo "Created $REPO/.env with a placeholder chat ID (0)."
+fi
+# The alerter logs every alert to /var/lib/techradar-alerter/alerts.jsonl and
+# only sends to Telegram when secrets/alerter_bot_token exists, so it runs
+# from the start. The heartbeat only sends to Telegram: SKIP_TELEGRAM=1 (or
+# the old name SKIP_ALERTER=1) leaves it off until the Telegram stage.
+systemctl enable --now techradar-alerter.service
+if [ "${SKIP_TELEGRAM:-${SKIP_ALERTER:-0}}" = "1" ]; then
+    echo "Heartbeat installed but NOT enabled (SKIP_TELEGRAM=1)."
 else
-    systemctl enable --now techradar-alerter.service techradar-heartbeat.timer
+    systemctl enable --now techradar-heartbeat.timer
 fi
 echo "Installed for OWNER=$OWNER REPO=$REPO. Next: sudo aide --init --config /etc/aide/techradar.conf"
