@@ -281,21 +281,43 @@ def popen_lines(kind: str, cmd: list[str]) -> Iterator[str]:
 HIGH_PRIORITY = frozenset({"falco", "auditd", "journal"})
 
 
-def next_line(
-    high: queue.Queue[tuple[str, str]],
-    low: queue.Queue[tuple[str, str]],
-    *,
-    timeout_s: float,
-) -> tuple[str, str] | None:
-    """The next line to handle: detection lines first, then log lines."""
-    try:
-        return high.get_nowait()
-    except queue.Empty:
-        pass
-    try:
-        return low.get(timeout=timeout_s)
-    except queue.Empty:
-        return None
+# After this many detection lines in a row, one waiting log line is handled.
+HIGH_BURST = 10
+
+
+class LineScheduler:
+    """Detection lines first, but log lines are never starved.
+
+    Any local user can write journal lines under any identifier, so a flood
+    of detection lines must not hold back Squid and Postgres lines forever.
+    """
+
+    def __init__(
+        self,
+        high: queue.Queue[tuple[str, str]],
+        low: queue.Queue[tuple[str, str]],
+    ) -> None:
+        self._high = high
+        self._low = low
+        self._run = 0
+
+    def next(self, *, timeout_s: float) -> tuple[str, str] | None:
+        if self._run >= HIGH_BURST:
+            self._run = 0
+            try:
+                return self._low.get_nowait()
+            except queue.Empty:
+                pass
+        try:
+            item = self._high.get_nowait()
+            self._run += 1
+            return item
+        except queue.Empty:
+            self._run = 0
+        try:
+            return self._low.get(timeout=timeout_s)
+        except queue.Empty:
+            return None
 
 
 def check_sources(streams: Sequence[tuple[str, list[str]]]) -> list[Alert]:
@@ -341,11 +363,13 @@ def run_streams(
     started again after `restart_delay_s`.
     """
     stop = stop or threading.Event()
-    # Detection streams have their own queue and are always handled first, so
-    # a flood of Squid or Postgres lines cannot delay a Falco or audit alert.
-    # The log queue is bounded: when full, only the log streams wait.
-    high: queue.Queue[tuple[str, str]] = queue.Queue()
+    # Detection streams have their own queue and go first (see LineScheduler),
+    # so a flood of Squid or Postgres lines cannot delay a Falco or audit
+    # alert, while log lines still get a share. Both queues are bounded: when
+    # one is full, only the streams feeding it wait.
+    high: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=50_000)
     low: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=10_000)
+    scheduler = LineScheduler(high, low)
 
     def pump(kind: str, cmd: list[str]) -> None:
         target = high if kind in HIGH_PRIORITY else low
@@ -364,7 +388,7 @@ def run_streams(
         threading.Thread(target=pump, args=(kind, cmd), name=f"alerter-{kind}", daemon=True).start()
 
     while not stop.is_set():
-        item = next_line(high, low, timeout_s=0.2)
+        item = scheduler.next(timeout_s=0.2)
         if item is not None:
             daemon.handle(*item)
         if on_idle:

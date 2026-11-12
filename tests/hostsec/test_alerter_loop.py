@@ -218,14 +218,32 @@ def test_stream_errors_reach_the_journal():
     assert "DEVNULL" not in inspect.getsource(alerter.popen_lines)
 
 
-def test_detection_streams_are_handled_before_log_streams():
+def test_detection_streams_go_first_but_log_streams_are_never_starved():
+    # Any local user can write journal lines under any name, so a flood of
+    # "high" lines must not stop Squid and Postgres lines for good.
     import queue as q
 
-    from techradar.hostsec.alerter import next_line
+    from techradar.hostsec.alerter import HIGH_BURST, LineScheduler
+
+    high, low = q.Queue(), q.Queue()
+    sched = LineScheduler(high, low)
+    for i in range(3 * HIGH_BURST):
+        high.put(("journal", f"h{i}"))
+    low.put(("squid", "l0"))
+    first = [sched.next(timeout_s=0.01) for _ in range(HIGH_BURST + 1)]
+    assert first[0] == ("journal", "h0")
+    assert ("squid", "l0") in first
+
+
+def test_scheduler_takes_detection_lines_first_when_both_wait():
+    import queue as q
+
+    from techradar.hostsec.alerter import LineScheduler
 
     high, low = q.Queue(), q.Queue()
     low.put(("squid", "a"))
-    low.put(("squid", "b"))
     high.put(("falco", "x"))
-    assert next_line(high, low, timeout_s=0.01) == ("falco", "x")
-    assert next_line(high, low, timeout_s=0.01) == ("squid", "a")
+    sched = LineScheduler(high, low)
+    assert sched.next(timeout_s=0.01) == ("falco", "x")
+    assert sched.next(timeout_s=0.01) == ("squid", "a")
+    assert sched.next(timeout_s=0.01) is None
