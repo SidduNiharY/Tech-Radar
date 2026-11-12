@@ -96,15 +96,13 @@ async def supersede_if_newer(
     other_res = await session.execute(other_stmt)
     candidates = other_res.scalars().all()
 
-    norm_new = normalize(new_fact.value or "")
-    older_fact: Fact | None = None
-    for cand in candidates:
-        norm_cand = normalize(cand.value or "")
-        if norm_cand != norm_new:
-            older_fact = cand
-            break
-
-    if older_fact is None:
+    # Compare with the most recent earlier fact only: if it already says the same
+    # thing, nothing changed (an even older, different value was already replaced
+    # by that one, so it must not be superseded again).
+    if not candidates:
+        return None
+    older_fact = candidates[0]
+    if normalize(older_fact.value or "") == normalize(new_fact.value or ""):
         return None
 
     older_fact.status = "superseded"
