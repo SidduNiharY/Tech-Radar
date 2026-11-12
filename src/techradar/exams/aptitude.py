@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import random
 import re
 from typing import Self
@@ -97,12 +98,17 @@ def _build_options(
     return options, correct_idx
 
 
+def _stable_problem_num(seed: int, kind: str) -> int:
+    """A 4-digit number fixed by (seed, kind). hash() is not used: str hashing
+    changes between processes, so the same seed gave a different id each run."""
+    digest = hashlib.sha256(f"{seed}:{kind}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") % 9000 + 1000
+
+
 def generate_percentage_drill(seed: int | None = None) -> AptitudeProblem:
     """Generates an algorithmic percentage drill with programmatic ground truth (SEC-20)."""
     rng = random.Random(seed)  # noqa: S311
-    problem_num = (
-        rng.randint(1000, 9999) if seed is None else abs(hash((seed, "pct"))) % 9000 + 1000
-    )
+    problem_num = rng.randint(1000, 9999) if seed is None else _stable_problem_num(seed, "pct")
     problem_id = f"drill_pct_{problem_num}"
 
     template_type = rng.choice([0, 1, 2, 3])
@@ -201,9 +207,7 @@ def generate_percentage_drill(seed: int | None = None) -> AptitudeProblem:
 def generate_speed_time_drill(seed: int | None = None) -> AptitudeProblem:
     """Generates a speed, time & distance drill with integer arithmetic (SEC-20)."""
     rng = random.Random(seed)  # noqa: S311
-    problem_num = (
-        rng.randint(1000, 9999) if seed is None else abs(hash((seed, "speed"))) % 9000 + 1000
-    )
+    problem_num = rng.randint(1000, 9999) if seed is None else _stable_problem_num(seed, "speed")
     problem_id = f"drill_st_{problem_num}"
 
     template_type = rng.choice([0, 1, 2, 3])
@@ -324,9 +328,7 @@ def generate_speed_time_drill(seed: int | None = None) -> AptitudeProblem:
 def generate_number_series_drill(seed: int | None = None) -> AptitudeProblem:
     """Generates an algorithmic number series drill with ground truth (SEC-20)."""
     rng = random.Random(seed)  # noqa: S311
-    problem_num = (
-        rng.randint(1000, 9999) if seed is None else abs(hash((seed, "series"))) % 9000 + 1000
-    )
+    problem_num = rng.randint(1000, 9999) if seed is None else _stable_problem_num(seed, "series")
     problem_id = f"drill_ns_{problem_num}"
 
     series_type = rng.choice([0, 1, 2, 3])

@@ -169,3 +169,27 @@ def test_aptitude_problem_schema_and_security_validators():
                 "options": ["10%", "20%", "30%", "https://evil.com"],
             }
         )
+
+
+def test_drill_ids_are_stable_across_processes():
+    """A seeded drill keeps its id between runs (str hashing is randomised per process)."""
+    import subprocess
+    import sys
+
+    code = (
+        "from techradar.exams.aptitude import generate_percentage_drill, "
+        "generate_speed_time_drill, generate_number_series_drill;"
+        "print(generate_percentage_drill(7).id, generate_speed_time_drill(7).id, "
+        "generate_number_series_drill(7).id)"
+    )
+    outs = {
+        subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            env={"PYTHONHASHSEED": str(s), "PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        for s in (1, 2, 3)
+    }
+    assert len(outs) == 1, outs
