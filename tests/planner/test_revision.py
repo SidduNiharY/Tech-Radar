@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from techradar.planner.revision import (
+    EXAM_GOALS,
+    EXAM_OFFSET,
     REVISION_OFFSETS,
     RevisionCalendar,
     RevisionCheckpoint,
@@ -11,7 +13,22 @@ from techradar.planner.schedule import StudyGoal
 
 
 def test_revision_offsets_constant():
-    assert REVISION_OFFSETS == [1, 7, 30, 90]
+    assert REVISION_OFFSETS == [1, 7, 30]
+    assert EXAM_OFFSET == 90
+
+
+def test_plus_90_only_for_exam_goals():
+    # Phase 5 plan: +1, +7, +30 for every goal; +90 only for GATE and the
+    # government exams (SSC, banking).
+    assert {StudyGoal.GATE, StudyGoal.SSC, StudyGoal.BANKING} == EXAM_GOALS
+    learned = date(2026, 11, 8)
+    for goal in StudyGoal:
+        cps = RevisionCalendar.schedule_topic_revisions("t", "T", goal, learned)
+        last = cps[-1].due_date
+        if goal in EXAM_GOALS:
+            assert (len(cps), last) == (4, date(2027, 2, 6)), goal
+        else:
+            assert (len(cps), last) == (3, date(2026, 12, 8)), goal
 
 
 def test_schedule_topic_revisions_offsets():
@@ -65,7 +82,7 @@ def test_revision_calendar_instance_and_class_calls():
         learned_date=learned,
     )
 
-    assert len(cps_instance) == 4
+    assert len(cps_instance) == 3  # DEV is not an exam goal: no +90
     assert cps_instance == cps_class
 
 

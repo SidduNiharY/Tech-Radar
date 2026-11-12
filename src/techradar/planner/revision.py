@@ -6,7 +6,11 @@ from pydantic import BaseModel
 
 from techradar.planner.schedule import StudyGoal
 
-REVISION_OFFSETS: list[int] = [1, 7, 30, 90]
+# +1, +7 and +30 for every goal; +90 only for the exam goals (Phase 5 plan,
+# 06 A7.3): GATE and the government exams.
+REVISION_OFFSETS: list[int] = [1, 7, 30]
+EXAM_OFFSET: int = 90
+EXAM_GOALS: frozenset[StudyGoal] = frozenset({StudyGoal.GATE, StudyGoal.SSC, StudyGoal.BANKING})
 
 
 class RevisionCheckpoint(BaseModel):
@@ -27,7 +31,8 @@ class RevisionCalendar:
         goal: StudyGoal,
         learned_date: date,
     ) -> list[RevisionCheckpoint]:
-        """Calculates +1, +7, +30, and +90 day revision checkpoints."""
+        """Revision checkpoints at +1, +7 and +30 days, plus +90 for exam goals."""
+        offsets = REVISION_OFFSETS + ([EXAM_OFFSET] if goal in EXAM_GOALS else [])
         return [
             RevisionCheckpoint(
                 topic_id=topic_id,
@@ -36,7 +41,7 @@ class RevisionCalendar:
                 due_date=learned_date + timedelta(days=offset),
                 stage=stage,
             )
-            for stage, offset in enumerate(REVISION_OFFSETS, start=1)
+            for stage, offset in enumerate(offsets, start=1)
         ]
 
     @staticmethod
