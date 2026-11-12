@@ -1,8 +1,37 @@
 # TechRadar Brain: Master Implementation & Development Tracker
 
-**Status:** Initializing Mac Development (Linux Server Deferred)  
-**Target Environment:** MacBook Air M4 (Active Development) ➔ ASUS TUF A15 Linux (Production Deployment)  
+**Status (2026-11-12):** No gate is passed. Logic modules exist for most phases; only Phases 1 to 2b are partly wired and have run on the TUF. See the status table below; it replaces the ticks.  
+**Target Environment:** MacBook Air M4 (development) and ASUS TUF A15 running Ubuntu 26.04 (server, set up 2026-11-11)  
 **Security Baseline:** SEC-01 through SEC-68 (Strict Zero-Inbound, Least-Privilege, Sandbox Verification)
+
+---
+
+## 0. Truthful Status (2026-11-12)
+
+**Read this before any tick below.** An audit on 2026-11-10 found that a tick in this file meant only that a small logic module with unit tests (using fakes) existed, often under different names than the plans. The ticks are kept as history. This table is the status:
+
+- **LOGIC**: the module exists and its unit tests pass with fakes.
+- **WIRED**: jobs, migrations, bot handlers or API routes call it, so it runs inside the app.
+- **VERIFIED-ON-TUF**: its database, egress or end-to-end tests have passed on the Linux server.
+
+| Phase | LOGIC | WIRED | VERIFIED-ON-TUF | Notes |
+|---|---|---|---|---|
+| 1 Foundation | Yes | Yes | Partly | 31 db tests, 7 of 8 egress tests, compose policy, scanners in `make security` (2026-11-12). Host daemons, restore test, simulated attacks, nmap and heartbeat not done yet. |
+| 2 Ingest | Yes | Partly | Partly | Intake Gateway now runs on every parser job (2026-11-12). The fake pipeline runs on Postgres. Not run with real feeds or models. |
+| 2b RAG and Ask | Yes | Partly | Partly | RAG db tests pass. No eval with real models. |
+| 2c Library | Partly | No | No | Most plan tasks not built. |
+| 3 Briefing and practice | Yes | No | No | Not called by any job or bot handler. |
+| 4 Web app | Partly | No | No | Pages show placeholder data and never call the API. API fails closed (2026-11-12). |
+| 5 Planner | Yes | No | No | No tables or jobs. |
+| 6 Voice and English | Partly | No | No | |
+| 7 World | Partly | No | No | The "fact-checker" is an in-memory list; no SearXNG. |
+| 8 Exams | Partly | No | No | |
+| 9 Live voice | No | No | No | |
+| 10 Models and MCP | Partly | No | No | The vault MCP is a plain class (not FastMCP: `fastmcp` is not approved). |
+| 11 Feedback | Partly | No | No | |
+| 12 Jarvis | Partly | No | No | |
+
+Only migrations 0001 to 0004 exist (the plans need about 15). The worker has 5 jobs, all for Phases 2 and 2b. The server work and the remaining steps are tracked in `TODO_TUF_AND_MAC.md`; gate status is in `docs/security/gates.md`.
 
 ---
 
@@ -16,7 +45,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 | **Testing Harness** | Unit tests run via mock protocols (`fakes.py`) without requiring Docker/Postgres | Integration tests run against containerized Postgres + pgvector |
 | **Database** | In-memory/SQLite fakes for unit tests, local Postgres or Docker when available | Production PostgreSQL 18 + pgvector + pgaudit |
 | **Local Models** | Native Mac Ollama (Gemma 4 E2B, Qwen3.5-4B) / Fake LLM completers | Ollama on NVIDIA RTX 3060 Laptop GPU (6GB VRAM) |
-| **Frontend** | Next.js 16 (App Router), Tailwind v4, shadcn/ui, Three.js Orb on Node 20 | Next.js running in Docker behind Tailscale Serve HTTPS |
+| **Frontend** | Next.js 14 (App Router), React 18, Tailwind 3 on Node 20 (no shadcn/ui or Three.js orb yet) | Next.js running in Docker behind Tailscale Serve HTTPS |
 | **Intake Gateway** | Native Python sandbox logic (libmagic, pdfid, YARA, text normalization) | ClamAV daemon container, no-network parser container |
 | **Security & Auditing** | Static checks: semgrep, ruff, gitleaks, `check_deps.py`, `check_mcp.py` | Host daemons: Falco (eBPF), auditd, AIDE, Lynis, Alerter |
 | **Voice Engine** | Web Audio API, openWakeWord, Kokoro ONNX, faster-whisper (CPU/Metal) | Pipecat WebRTC live pipeline on GPU |
@@ -99,7 +128,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ---
 
 ### Phase 2: Secure Ingest & Markdown Vault (`docs/superpowers/plans/2026-11-07-techradar-phase2-ingest.md`)
-**Gate Criteria:** `make gate-2` passes (Intake Gateway, sanitized feed parsing, LangGraph pipeline) — **Signed off at Gate 2 (commit 470844e)**
+**Gate Criteria:** `make gate-2` passes (Intake Gateway, sanitized feed parsing, LangGraph pipeline) — NOT PASSED (the sign-off at 470844e was withdrawn on 2026-11-12; see `docs/security/gates.md`)
 
 - [x] **Task 1: Intake Gateway file-type & structural scanning** `[Mac Ready]` (Done: commit 21ec369)
 - [x] **Task 2: Antivirus client & ClamAV daemon socket wrapper** `[Mac Ready]` (Done: commit 21ec369)
@@ -119,7 +148,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ---
 
 ### Phase 2b: RAG Knowledge Index & Ask (`docs/superpowers/plans/2026-11-07-techradar-phase2b-rag.md`)
-**Gate Criteria:** `make gate-2b` passes (hybrid search, reciprocal rank fusion, citation checking) — **Signed off at Gate 2b (commit e24a85a)**
+**Gate Criteria:** `make gate-2b` passes (hybrid search, reciprocal rank fusion, citation checking) — NOT PASSED (the sign-off at e24a85a was withdrawn on 2026-11-12; see `docs/security/gates.md`)
 
 - [x] **Task 1: Chunking engine with contextual breadcrumbs** `[Mac Ready]` (Done: commit e24a85a)
 - [x] **Task 2: Postgres vector + BM25 hybrid index** `[Mac Ready]` (Done: commit e24a85a)
@@ -158,7 +187,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ---
 
 ### Phase 3: Daily Briefing, Practice & Exam Alerts (`docs/superpowers/plans/2026-11-07-techradar-phase3-briefing-practice.md`)
-**Gate Criteria:** First usable MVP (Telegram daily briefing, FSRS flashcard engine, MCQs, website watcher) — **Signed off at Gate 3 (commit c988d96)**
+**Gate Criteria:** First usable MVP (Telegram daily briefing, FSRS flashcard engine, MCQs, website watcher) — NOT PASSED (the sign-off at c988d96 was withdrawn on 2026-11-12; see `docs/security/gates.md`)
 
 - [x] **Task 1: Morning briefing generator (Tech, India, World, Economy, Science, Daily Life)** `[Mac Ready]` (Done: commit 2c6dde9)
   - *Files:* `src/techradar/briefing/compose.py`, `tests/briefing/test_compose.py`
@@ -190,7 +219,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 ---
 
 ### Phase 4: Web Application v1 (`docs/superpowers/plans/2026-11-07-techradar-phase4-web-app.md`)
-**Gate Criteria:** Next.js 16 UI over Tailscale HTTPS with streaming answers, CSRF protection, and confirmation tickets — **Signed off at Gate 4 (commit c988d96)**
+**Gate Criteria:** Next.js UI over Tailscale HTTPS with streaming answers, CSRF protection, and confirmation tickets — NOT PASSED (the sign-off at c988d96 was withdrawn on 2026-11-12; see `docs/security/gates.md`)
 
 - [x] **Task 1: FastAPI service & security middleware** `[Mac Ready]` (Done: commit da74fd7)
   - *Files:* `src/techradar/api/main.py`, `src/techradar/api/deps.py`, `tests/api/test_auth.py`
@@ -217,7 +246,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `apps/web/src/app/models/page.tsx`, `apps/web/src/components/models/vram-meter.tsx`
 - [x] **Task 9: Security screen (Quarantine manager, active alarms, heartbeat status)** `[Mac Ready]` (Done: commit c1bfb3b)
   - *Files:* `apps/web/src/app/security/page.tsx`, `apps/web/src/components/security/quarantine-table.tsx`
-- [x] **Task 10: Next.js 16 + Tailwind v4 + shadcn/ui frontend scaffold** `[Mac Ready]` (Done: commit c1bfb3b)
+- [x] **Task 10: frontend scaffold** (actually Next.js 14, React 18, Tailwind 3; no shadcn/ui) `[Mac Ready]` (Done: commit c1bfb3b)
   - *Files:* `apps/web/package.json`, `apps/web/src/app/globals.css`, `apps/web/src/proxy.ts`, `apps/web/src/components/orb.tsx`
 - [x] **Task 11: End-to-end testing with component contracts & axe accessibility** `[Mac Ready]` (Done: commit c1bfb3b)
   - *Files:* `apps/web/src/lib/security.test.ts`, `apps/web/src/components/ask/ask.test.ts`, `apps/web/src/components/practice/practice.test.ts`
@@ -261,7 +290,7 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
   - *Files:* `src/techradar/world/glossary.py`, `tests/world/test_glossary.py`
 - [x] Economy dashboard (RBI rates, GDP, CPI inflation, currency) `[Mac Ready]` (Done: commit 8f7cab6)
   - *Files:* `src/techradar/world/economy.py`, `tests/world/test_economy.py`
-- [x] SearXNG forward fact-checker with Telegram approval gate `[Mac Ready]` (Done: commit 8f7cab6)
+- [ ] SearXNG forward fact-checker with Telegram approval gate. Only an in-memory approval list exists (`world/factcheck.py`, commit 8f7cab6); no SearXNG, no Telegram.
   - *Files:* `src/techradar/world/factcheck.py`, `tests/world/test_factcheck.py`
 
 ---
@@ -290,10 +319,10 @@ Because development is starting on the **MacBook Air M4** while the **ASUS TUF A
 
 ---
 
-### Phase 10: Models Admin & FastMCP Server (`docs/superpowers/plans/2026-11-07-techradar-phase10-models-extras.md`)
+### Phase 10: Models Admin & Vault MCP Server (`docs/superpowers/plans/2026-11-07-techradar-phase10-models-extras.md`)
 - [ ] Full Models Admin UI (model downloads, fit checks, test bench)
 - [ ] A/B test voting suite for candidate models
-- [x] Read-only FastMCP server for Claude Code on macOS (`vault/` search) `[Mac Ready]` (Done: commit 8ae0a1e)
+- [ ] Read-only FastMCP server for Claude Code on macOS. A plain class with the plan's path rules exists (`mcp/server.py`; .md only, no symlinks, 200 KB cap since 2026-11-12); the FastMCP wrapper waits for `fastmcp` approval.
   - *Files:* `src/techradar/mcp/server.py`, `tests/mcp/test_server.py`
 - [x] Models Admin VRAM fit and config evaluator `[Mac Ready]` (Done: commit 8ae0a1e)
   - *Files:* `src/techradar/llm/admin.py`, `tests/llm/test_admin.py`
@@ -381,7 +410,7 @@ The **Integration Verification Agent** continuously audits the deliverables of a
 - **Subagent 13 (Bot Interactive Commands):** `src/techradar/bot/commands/quiz.py`, `src/techradar/bot/commands/cards.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py` (Done: commit aff208f).
 - **Subagent 14 (Voice Coach Engine):** `src/techradar/voice/fluency.py`, `src/techradar/voice/grammar.py`, `tests/voice/test_fluency.py`, `tests/voice/test_grammar.py` (Done: commit c360b9d).
 - **Subagent 15 (World Understanding & Causality):** `src/techradar/world/glossary.py`, `src/techradar/world/causality.py`, `tests/world/test_glossary.py`, `tests/world/test_causality.py` (Done: commit 200fb41).
-- **Subagent 16 (FastMCP & Models Admin):** `src/techradar/mcp/server.py`, `src/techradar/llm/admin.py`, `tests/mcp/test_server.py`, `tests/llm/test_admin.py` (Done: commit 8ae0a1e).
+- **Subagent 16 (Vault MCP class & Models Admin; not FastMCP):** `src/techradar/mcp/server.py`, `src/techradar/llm/admin.py`, `tests/mcp/test_server.py`, `tests/llm/test_admin.py` (Done: commit 8ae0a1e).
 - **Subagent 17 (Feedback & Improvement Engine):** `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py` (Done: commit c742ca8).
 - **Subagent 18 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
 
@@ -428,7 +457,7 @@ The **Integration Verification Agent** continuously audits the deliverables of a
   - [x] **Bot Interactive Commands (Subagent 13):** Formats quiz and grammar inline cards matching Telegram callback regex `^[a-z_]{1,20}(:[0-9]{1,12}){1,2}$`; implements reveal/rating states for flashcards; routes interactive commands and active briefing takes with strict unauthorized chat rejection (SEC-26).
   - [x] **Voice Fluency & Grammar (Subagent 14):** Fully offline speech fluency analysis and filler-word counter (`um`, `uh`, `like`); detects stutters, double comparatives, double negatives, and subject-verb mismatches without network dependency.
   - [x] **World Glossary & Causality (Subagent 15):** Curated baseline terms with wiki-link regex cross-referencing `[[term]]`; DAG causal graph engine with 3-color DFS cycle detection and root-cause tracing.
-  - [x] **FastMCP & Models Admin (Subagent 16):** Read-only Obsidian vault MCP server for Claude Code on macOS with SEC-24 traversal and symlink escape rejection; models admin parses role configs and computes concurrent VRAM fit with headroom/overflow detection.
+  - [x] **Vault MCP class & Models Admin (Subagent 16; not FastMCP):** Read-only Obsidian vault MCP class for Claude Code on macOS with SEC-24 traversal and symlink escape rejection; models admin parses role configs and computes concurrent VRAM fit with headroom/overflow detection.
   - [x] **Feedback & Improvement (Subagent 17):** Bounded topic/source weights ($0.2$ to $2.0$) with official domain floors ($1.0$); records user feedback records and stores automatic regression cases.
   - [x] **Gate Verification Targets (Subagent 21):** Automated `make gate-2c`, `make gate-3`, and `make gate-4` targets in Makefile with comprehensive target and dry-run validation.
   - [x] **API Client & OpenAPI Exporter (Subagent 20):** Clean schema export to `data/openapi.json` with TypeScript API contracts matching backend FastAPI routes and SEC-27/SEC-41 headers.
