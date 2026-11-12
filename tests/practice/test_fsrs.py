@@ -114,3 +114,15 @@ def test_review_progression():
     assert c2.reps == 2
     assert c2.stability > c1.stability
     assert c2.due > review_time
+
+
+def test_default_weights_match_the_fsrs5_reference():
+    # fsrs-rs v1.4.3, src/inference.rs, DEFAULT_PARAMETERS (FSRS-5).
+    # w[14] was 0.2269 here (a slipped digit); four others were rounded.
+    from techradar.practice.fsrs import DEFAULT_WEIGHTS
+
+    reference = (
+        0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575,
+        0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621,
+    )  # fmt: skip
+    assert DEFAULT_WEIGHTS == reference

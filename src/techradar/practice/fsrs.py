@@ -22,27 +22,27 @@ class State(IntEnum):
     RELEARNING = 3
 
 
-# Standard FSRS v5 default weights
+# FSRS-5 default weights, exactly as fsrs-rs v1.4.3 (src/inference.rs).
 DEFAULT_WEIGHTS: tuple[float, ...] = (
-    0.40255,
+    0.40255,  # w[0..3]: initial stability for Again, Hard, Good, Easy
     1.18385,
     3.173,
-    15.69105,  # w[0..3]: initial stability for Again, Hard, Good, Easy
-    7.1949,
-    0.5345,  # w[4..5]: initial difficulty
+    15.69105,
+    7.1949,  # w[4..6]: initial difficulty, difficulty delta
+    0.5345,
     1.4604,
-    0.0046,  # w[6..7]: difficulty delta & mean reversion
-    1.5457,
+    0.0046,  # w[7]: difficulty mean reversion
+    1.54575,  # w[8..10]: recall stability update
     0.1192,
-    1.0192,  # w[8..10]: recall stability update
-    1.9395,
+    1.01925,
+    1.9395,  # w[11..14]: forget stability update
     0.11,
-    0.296,
-    0.2269,  # w[11..14]: forget stability update
-    0.2315,
-    2.9898,  # w[15..16]: hard/easy stability modifiers
-    0.5165,
-    0.6621,  # w[17..18]: retrievability parameters
+    0.29605,
+    2.2698,
+    0.2315,  # w[15..16]: hard penalty, easy bonus
+    2.9898,
+    0.51655,  # w[17..18]: same-day review
+    0.6621,
 )
 
 FACTOR: float = 19.0 / 81.0
