@@ -67,7 +67,9 @@ async def seed_answer(
     finally:
         async with session_factory() as session:
             await session.execute(
-                text("DELETE FROM techradar.outbox WHERE ref_id = :id AND purpose = 'answer_saved'"),
+                text(
+                    "DELETE FROM techradar.outbox WHERE ref_id = :id AND purpose = 'answer_saved'"
+                ),
                 {"id": ans_id},
             )
             await session.execute(
