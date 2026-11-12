@@ -40,6 +40,20 @@ is_allowed_ip() {
     return 1
 }
 
+# The IP part of an `ss` local address: "0.0.0.0:22", "127.0.0.53%lo:53",
+# "[::1]:631" or "[fd7a:...]%tailscale0:61088" (interface tag after the bracket).
+listener_ip() {
+    local field="$1" ip
+    if [[ "$field" =~ ^\[([^]]+)\](%[^:]*)?:[0-9*]+$ ]]; then
+        ip="${BASH_REMATCH[1]}"
+    elif [[ "$field" =~ : ]]; then
+        ip="${field%:*}"
+    else
+        ip="$field"
+    fi
+    echo "${ip%%%*}"
+}
+
 # 1. ufw active with default incoming deny
 echo "=== Check 1: Firewall (ufw) ==="
 if command -v ufw >/dev/null 2>&1; then
@@ -69,17 +83,7 @@ else
             local_field=$(echo "$line" | awk '{print $4}')
             [ -z "$local_field" ] && continue
 
-            ip=""
-            if [[ "$local_field" =~ ^\[([^]]+)\]:?[0-9]*$ ]]; then
-                ip="${BASH_REMATCH[1]}"
-            elif [[ "$local_field" =~ : ]]; then
-                ip="${local_field%:*}"
-            else
-                ip="$local_field"
-            fi
-
-            # Strip scope/interface suffix if present (e.g. 127.0.0.53%lo)
-            ip="${ip%%%*}"
+            ip=$(listener_ip "$local_field")
 
             if ! is_allowed_ip "$ip"; then
                 illegal_listeners+=("$local_field (resolved IP: $ip)")
@@ -337,12 +341,9 @@ echo "=== Check 16: Host Security Daemons (auditd, falco, alerter) ==="
 daemons_ok=true
 for daemon in auditd falco-modern-bpf techradar-alerter; do
     if command -v systemctl >/dev/null 2>&1; then
-        if systemctl is-active "$daemon" >/dev/null 2>&1; then
-            :
-        elif [ -f "/etc/systemd/system/${daemon}.service" ] || [ -f "/lib/systemd/system/${daemon}.service" ]; then
-            :
-        else
-            echo "[FAIL] 16. Host security daemon '${daemon}' is not active or installed"
+        # Only a running daemon counts; an installed unit file is not a monitor.
+        if ! systemctl is-active "$daemon" >/dev/null 2>&1; then
+            echo "[FAIL] 16. Host security daemon '${daemon}' is not active"
             daemons_ok=false
             failed=$((failed + 1))
         fi
@@ -357,12 +358,9 @@ echo "=== Check 17: Security Monitoring Systemd Timers ==="
 timers_ok=true
 for timer_unit in techradar-aide.timer techradar-integrity.timer techradar-resources.timer techradar-heartbeat.timer techradar-lynis.timer; do
     if command -v systemctl >/dev/null 2>&1; then
-        if systemctl is-active "$timer_unit" >/dev/null 2>&1 || systemctl is-enabled "$timer_unit" >/dev/null 2>&1; then
-            :
-        elif [ -f "/etc/systemd/system/${timer_unit}" ] || [ -f "infra/host/timers/${timer_unit}" ] || [ -f "infra/host/alerter/${timer_unit}" ]; then
-            :
-        else
-            echo "[FAIL] 17. Security timer '${timer_unit}' is not active or installed"
+        # Only an active timer counts; a unit file on disk or in the repo does not.
+        if ! systemctl is-active "$timer_unit" >/dev/null 2>&1; then
+            echo "[FAIL] 17. Security timer '${timer_unit}' is not active"
             timers_ok=false
             failed=$((failed + 1))
         fi

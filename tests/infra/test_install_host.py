@@ -160,3 +160,13 @@ def test_lynis_unit_uses_the_ubuntu_path():
     unit = (root / "infra/host/timers/techradar-lynis.service").read_text()
     assert "/usr/sbin/lynis audit system" in unit
     assert "/usr/bin/lynis" not in unit
+
+
+def test_falco_web_server_is_off():
+    # Falco's health web server listens on 0.0.0.0:8765 by default (seen on
+    # the TUF 2026-11-13); nothing uses it, and SEC-02 allows no such listener.
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = yaml.safe_load((root / "infra/falco/techradar-output.yaml").read_text())
+    assert cfg["webserver"]["enabled"] is False

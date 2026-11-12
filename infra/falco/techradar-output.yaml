@@ -10,3 +10,8 @@ stdout_output:
 
 syslog_output:
   enabled: false
+
+# Falco's health web server listens on 0.0.0.0:8765 by default. Nothing
+# uses it, and no host port may listen outside loopback/Tailscale (SEC-02).
+webserver:
+  enabled: false

@@ -185,3 +185,44 @@ fi
         assert res.stdout.strip() == expected, (
             f"IP {ip} expected {expected} but got {res.stdout.strip()}"
         )
+
+
+def _bash_function(name: str) -> str:
+    content = CHECK_HOST_SCRIPT.read_text(encoding="utf-8")
+    match = re.search(rf"({name}\(\)\s*\{{.*?\n\}})", content, re.DOTALL)
+    assert match is not None, f"{name} not found in check_host.sh"
+    return match.group(1)
+
+
+def test_listener_ip_parses_ss_local_fields() -> None:
+    # Seen on the TUF 2026-11-13: tailscaled's IPv6 listener carries a
+    # %interface tag after the bracket and was reported as disallowed.
+    cases = {
+        "0.0.0.0:8765": "0.0.0.0",  # noqa: S104
+        "127.0.0.53%lo:53": "127.0.0.53",
+        "[::1]:631": "::1",
+        "[fd7a:115c:a1e0::2229:d34f]%tailscale0:61088": "fd7a:115c:a1e0::2229:d34f",
+        "100.101.102.103:22": "100.101.102.103",
+        "*:22": "*",
+        "[::]:22": "::",
+    }
+    func = _bash_function("listener_ip")
+    for field, expected in cases.items():
+        res = subprocess.run(  # noqa: S603
+            ["bash", "-c", f'{func}\nlistener_ip "{field}"'],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.stdout.strip() == expected, (field, res.stdout, res.stderr)
+
+
+def test_daemon_and_timer_checks_need_running_units() -> None:
+    # A unit file on disk is not a running monitor: the alerter was reported
+    # PASS while switched off, and timers passed when only the repo had them.
+    content = CHECK_HOST_SCRIPT.read_text(encoding="utf-8")
+    check16 = content[content.index("=== Check 16") : content.index("=== Check 17")]
+    check17 = content[content.index("=== Check 17") :]
+    assert '-f "/etc/systemd/system/${daemon}.service"' not in check16
+    assert "infra/host/timers/${timer_unit}" not in check17
+    assert '-f "/etc/systemd/system/${timer_unit}"' not in check17
