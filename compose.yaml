@@ -304,8 +304,9 @@ services:
     tmpfs:
       - /tmp
       - /var/run
-      - /var/spool/squid
-      - /var/log/squid
+      # Squid drops to its proxy user (uid 13), which must own these.
+      - /var/spool/squid:uid=13,gid=13
+      - /var/log/squid:uid=13,gid=13
     volumes:
       - ./infra/squid/squid.conf:/etc/squid/squid.conf:ro
       - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro
