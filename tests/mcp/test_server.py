@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from techradar.mcp.server import SecurityError, VaultMcpServer
+from techradar.mcp.server import MAX_NOTE_BYTES, SecurityError, VaultMcpServer, safe_note_path
 
 
 @pytest.fixture
@@ -104,16 +104,49 @@ def test_symlinks_pointing_outside_vault_rejected(temp_vault: Path, tmp_path: Pa
     assert len(results) == 0
 
 
-def test_symlinks_pointing_inside_vault_allowed(temp_vault: Path) -> None:
+def test_symlinks_refused_even_inside_the_vault(temp_vault: Path) -> None:
+    # Phase 10 Task 8: a note path must not be a symlink at any level. An
+    # in-vault link can be retargeted later, so none are followed.
     server = VaultMcpServer(temp_vault)
+    (temp_vault / "skills" / "python_alias.md").symlink_to(temp_vault / "python_guide.md")
+    (temp_vault / "linked").symlink_to(temp_vault / "skills", target_is_directory=True)
+    for rel in ["skills/python_alias.md", "linked/docker.md"]:
+        with pytest.raises(ValueError):
+            server.read_note(rel)
+    paths = {r["path"] for r in server.search_notes("python", limit=10)}
+    assert "skills/python_alias.md" not in paths
+    paths = {r["path"] for r in server.search_notes("docker", limit=10)}
+    assert "linked/docker.md" not in paths
 
-    # Symlink pointing to an internal note is allowed
-    target = temp_vault / "python_guide.md"
-    symlink_internal = temp_vault / "skills" / "python_alias.md"
-    symlink_internal.symlink_to(target)
 
-    content = server.read_note("skills/python_alias.md")
-    assert "Python Programming Guide" in content
+def test_safe_note_path_refuses_plan_examples(temp_vault: Path) -> None:
+    (temp_vault / "notes").mkdir()
+    (temp_vault / "notes" / "a.txt").write_text("x", encoding="utf-8")
+    for rel in ["../../.ssh/id_rsa", "/etc/passwd", "notes/../../x.md", "notes/a.txt"]:
+        with pytest.raises(ValueError):
+            safe_note_path(temp_vault, rel)
+
+
+def test_read_note_refuses_non_markdown(temp_vault: Path) -> None:
+    (temp_vault / "secret.txt").write_text("token", encoding="utf-8")
+    with pytest.raises(ValueError):
+        VaultMcpServer(temp_vault).read_note("secret.txt")
+
+
+def test_read_note_size_cap(temp_vault: Path) -> None:
+    (temp_vault / "big.md").write_text("a" * (MAX_NOTE_BYTES + 1), encoding="utf-8")
+    with pytest.raises(ValueError):
+        VaultMcpServer(temp_vault).read_note("big.md")
+    (temp_vault / "ok.md").write_text("a" * MAX_NOTE_BYTES, encoding="utf-8")
+    assert len(VaultMcpServer(temp_vault).read_note("ok.md")) == MAX_NOTE_BYTES
+
+
+def test_search_limit_is_capped_at_10(temp_vault: Path) -> None:
+    for i in range(15):
+        (temp_vault / f"topic{i}.md").write_text(f"# Topic {i}\nshared word\n", encoding="utf-8")
+    server = VaultMcpServer(temp_vault)
+    assert len(server.search_notes("shared", limit=1000)) == 10
+    assert len(server.search_notes("shared", max_results=1000)) == 10
 
 
 def test_search_notes_returns_matching_files(temp_vault: Path) -> None:

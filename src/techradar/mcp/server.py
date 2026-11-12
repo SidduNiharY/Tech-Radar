@@ -1,12 +1,49 @@
-"""Read-only MCP server interface for Claude Code on macOS to search vault notes (SEC-24)."""
+"""Read-only MCP server interface for Claude Code on macOS to search vault notes (SEC-24).
+
+Rules from Phase 10 Task 8: only `.md` files, never through a symlink at any
+level (an in-vault link can be retargeted later), at most MAX_NOTE_BYTES per
+note, and at most MAX_LIMIT search results.
+"""
 
 import os
 from pathlib import Path
 from typing import Any
 
+MAX_NOTE_BYTES = 200_000
+MAX_LIMIT = 10
+
 
 class SecurityError(ValueError):
     """Raised when path traversal, symlink breakout, or other security violations occur."""
+
+
+def _safe_path(vault: Path, rel: str | Path) -> Path:
+    """Resolve `rel` inside `vault`, refusing absolute paths, `..` and any symlink."""
+    raw = str(rel).strip()
+    if not raw:
+        raise SecurityError("Relative path must not be empty")
+    if raw.startswith(("/", "\\")) or Path(raw).is_absolute():
+        raise SecurityError(f"Absolute paths not permitted: {rel}")
+    parts = Path(raw).parts
+    if ".." in parts:
+        raise SecurityError(f"Path traversal ('..') not permitted: {rel}")
+    vault = vault.resolve()
+    curr = vault
+    for part in parts:
+        curr = curr / part
+        if curr.is_symlink():
+            raise SecurityError(f"Symlinks are not followed: {rel}")
+    if not curr.resolve().is_relative_to(vault):
+        raise SecurityError(f"Path traversal outside vault: {rel}")
+    return curr
+
+
+def safe_note_path(vault: Path, rel: str) -> Path:
+    """A note path inside `vault`, ending in .md, with no symlink at any level."""
+    path = _safe_path(vault, rel)
+    if path.suffix != ".md":
+        raise SecurityError(f"Only .md notes can be read: {rel}")
+    return path
 
 
 class VaultMcpServer:
@@ -20,53 +57,8 @@ class VaultMcpServer:
             raise NotADirectoryError(f"Vault path is not a directory: {vault_dir}")
 
     def _validate_path(self, relative_path: str | Path) -> Path:
-        """Enforce strict SEC-24 path traversal prevention.
-
-        Rejects:
-        - Absolute paths (raises SecurityError).
-        - '..' traversal segments (raises SecurityError).
-        - Symlinks pointing outside vault_dir (raises SecurityError).
-        - Any resolved destination outside vault_dir (raises SecurityError).
-        """
-        raw_str = str(relative_path).strip()
-        if not raw_str:
-            raise SecurityError("Relative path must not be empty")
-
-        if raw_str.startswith("/") or raw_str.startswith("\\"):
-            raise SecurityError(f"Absolute paths not permitted: {relative_path}")
-
-        rel = Path(raw_str)
-        if rel.is_absolute():
-            raise SecurityError(f"Absolute paths not permitted: {relative_path}")
-
-        if ".." in rel.parts:
-            raise SecurityError(f"Path traversal ('..') not permitted: {relative_path}")
-
-        dest = self.vault_dir / rel
-        resolved_vault = self.vault_dir.resolve()
-
-        # Check each component from vault_dir down to dest for external symlinks
-        curr = self.vault_dir
-        for part in rel.parts:
-            curr = curr / part
-            if curr.is_symlink():
-                resolved_link = curr.resolve()
-                if not (
-                    resolved_link == resolved_vault
-                    or resolved_link.is_relative_to(resolved_vault)
-                    or str(resolved_link).startswith(str(resolved_vault) + os.sep)
-                ):
-                    raise SecurityError(f"Symlink points outside vault: {relative_path}")
-
-        resolved_dest = dest.resolve()
-        if not (
-            resolved_dest == resolved_vault
-            or resolved_dest.is_relative_to(resolved_vault)
-            or str(resolved_dest).startswith(str(resolved_vault) + os.sep)
-        ):
-            raise SecurityError(f"Path traversal outside vault: {relative_path}")
-
-        return dest
+        """A path inside the vault with no `..`, no absolute start and no symlink."""
+        return _safe_path(self.vault_dir, relative_path)
 
     def search_notes(
         self,
@@ -80,38 +72,16 @@ class VaultMcpServer:
         """
         if limit is not None:
             max_results = limit
+        max_results = min(max_results, MAX_LIMIT)
 
         q = query.strip().lower()
         if not q or max_results <= 0:
             return []
 
-        resolved_vault = self.vault_dir.resolve()
         candidates: list[dict[str, Any]] = []
 
-        for p in self.vault_dir.rglob("*.md"):
-            # Skip hidden files or directories
-            try:
-                rel = p.relative_to(self.vault_dir)
-            except ValueError:
-                continue
-
-            if any(part.startswith(".") for part in rel.parts):
-                continue
-
-            # Check symlink breakout safety
-            try:
-                resolved_p = p.resolve()
-                if not (
-                    resolved_p.is_relative_to(resolved_vault)
-                    or str(resolved_p).startswith(str(resolved_vault) + os.sep)
-                ):
-                    continue
-            except OSError, ValueError:
-                continue
-
-            if not p.is_file():
-                continue
-
+        for p in self._markdown_files():
+            rel = p.relative_to(self.vault_dir)
             try:
                 content = p.read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -191,11 +161,33 @@ class VaultMcpServer:
         ]
 
     def read_note(self, relative_path: str) -> str:
-        """Read Markdown note content enforcing SEC-24 path traversal prevention."""
-        dest = self._validate_path(relative_path)
-        if not dest.exists() or not dest.is_file():
+        """Read one Markdown note (SEC-24 path rules, at most MAX_NOTE_BYTES)."""
+        dest = safe_note_path(self.vault_dir, relative_path)
+        if not dest.is_file():
             raise FileNotFoundError(f"Note not found: {relative_path}")
+        if dest.stat().st_size > MAX_NOTE_BYTES:
+            raise SecurityError(f"Note is larger than {MAX_NOTE_BYTES} bytes: {relative_path}")
         return dest.read_text(encoding="utf-8")
+
+    def _markdown_files(self) -> list[Path]:
+        """Visible .md files under the vault, never through a symlink, within the size cap."""
+        found: list[Path] = []
+        for root, dirs, files in os.walk(self.vault_dir, followlinks=False):
+            base = Path(root)
+            dirs[:] = sorted(
+                d for d in dirs if not d.startswith(".") and not (base / d).is_symlink()
+            )
+            for name in sorted(files):
+                f = base / name
+                if name.startswith(".") or f.suffix != ".md" or f.is_symlink():
+                    continue
+                try:
+                    if f.stat().st_size > MAX_NOTE_BYTES:
+                        continue
+                except OSError:
+                    continue
+                found.append(f)
+        return found
 
     def list_topics(self, subfolder: str = "") -> list[str]:
         """Safely list topics and notes in vault_dir or the given subfolder."""
@@ -207,21 +199,10 @@ class VaultMcpServer:
             if not target.is_dir():
                 raise NotADirectoryError(f"Subfolder is not a directory: {subfolder}")
 
-        resolved_vault = self.vault_dir.resolve()
         items: list[str] = []
 
         for entry in sorted(target.iterdir()):
-            if entry.name.startswith("."):
-                continue
-
-            try:
-                resolved_entry = entry.resolve()
-                if not (
-                    resolved_entry.is_relative_to(resolved_vault)
-                    or str(resolved_entry).startswith(str(resolved_vault) + os.sep)
-                ):
-                    continue
-            except OSError, ValueError:
+            if entry.name.startswith(".") or entry.is_symlink():
                 continue
 
             if entry.is_dir() or (entry.is_file() and entry.suffix == ".md"):
