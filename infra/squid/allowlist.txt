@@ -13,16 +13,11 @@ ibps.in
 sbi.co.in
 ncert.nic.in
 nios.ac.in
-un.org
 .un.org
 
 # Feeds & Code Repositories
-github.com
 .github.com
-arxiv.org
 .arxiv.org
-export.arxiv.org
 
 # Antivirus Signatures
-database.clamav.net
 .clamav.net
