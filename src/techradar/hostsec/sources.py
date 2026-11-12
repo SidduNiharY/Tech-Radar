@@ -1,5 +1,6 @@
 """Parsers converting raw log lines and event records into structured security alerts."""
 
+import csv
 import json
 import re
 from collections.abc import Mapping
@@ -238,60 +239,62 @@ def from_journal(entry: dict) -> Alert | None:
     return None
 
 
+# A real server log line: "<date> <time> <tz> [<pid>]<rest of prefix> LEVEL:  message".
+# Postgres indents every continuation line of a message with a tab, so SQL
+# text can never start a line of its own; the level must follow the prefix.
+_PG_LINE = re.compile(
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)? \S+ \[\d+\]\S*(?: \S+)*? "
+    r"(?P<level>LOG|FATAL|ERROR|WARNING):  (?P<msg>.*)$"
+)
+_FAILED_LOGIN = re.compile(r'^password authentication failed for user "(?P<user>[^"]*)"$')
+
+
+def _audit_fields(msg: str) -> list[str] | None:
+    """pgaudit's fields: AUDIT_TYPE,STATEMENT_ID,SUBSTATEMENT_ID,CLASS,COMMAND,
+    OBJECT_TYPE,OBJECT_NAME,STATEMENT,PARAMETER (CSV; the statement is quoted)."""
+    if not msg.startswith("AUDIT: "):
+        return None
+    try:
+        fields = next(csv.reader([msg[len("AUDIT: ") :]]))
+    except csv.Error, StopIteration:
+        return None
+    return fields if len(fields) >= 7 else None
+
+
 def from_postgres(line: str, *, migrating: bool = False) -> Alert | None:
-    """Parse PostgreSQL / pgaudit log line into an Alert."""
+    """Parse a PostgreSQL / pgaudit log line into an Alert.
+
+    Markers are only trusted in their real position: the level and message
+    right after the line prefix, and pgaudit's class and object fields. SQL
+    text is user-controlled and is logged too, so a statement that quotes a
+    marker must not raise an alert.
+    """
+    match = _PG_LINE.match(line.rstrip("\n"))
+    if match is None:
+        return None
+    level, msg = match.group("level"), match.group("msg")
     at = datetime.now(UTC)
     summary = line.strip()[:200]
 
-    # Honeytoken table read
-    if "AUDIT: OBJECT" in line and "bank_credentials" in line:
+    def alert(lvl: Level, rule: str) -> Alert:
         return Alert(
-            level=Level.CRITICAL,
-            source="pgaudit",
-            rule="honeytoken table read",
-            service="postgres",
-            summary=summary,
-            at=at,
+            level=lvl, source="pgaudit", rule=rule, service="postgres", summary=summary, at=at
         )
 
-    # Role changes
-    if "AUDIT: SESSION" in line and ",ROLE," in line:
-        if migrating:
-            return None
-        return Alert(
-            level=Level.CRITICAL,
-            source="pgaudit",
-            rule="unauthorized role change",
-            service="postgres",
-            summary=summary,
-            at=at,
-        )
+    fields = _audit_fields(msg) if level == "LOG" else None
+    if fields is not None:
+        audit_type, audit_class, object_name = fields[0], fields[3], fields[6]
+        if audit_type == "OBJECT" and object_name.split(".")[-1] == "bank_credentials":
+            return alert(Level.CRITICAL, "honeytoken table read")
+        if audit_type == "SESSION" and audit_class == "ROLE":
+            return None if migrating else alert(Level.CRITICAL, "unauthorized role change")
+        return None
 
-    # Admin backup failed login
-    if 'password authentication failed for user "admin_backup"' in line:
-        return Alert(
-            level=Level.CRITICAL,
-            source="pgaudit",
-            rule="admin_backup login attempt",
-            service="postgres",
-            summary=summary,
-            at=at,
-        )
-
-    # Other failed logins
-    if (
-        "password authentication failed for user" in line
-        or "authentication failed for user" in line
-    ):
-        return Alert(
-            level=Level.WARNING,
-            source="pgaudit",
-            rule="failed login",
-            service="postgres",
-            summary=summary,
-            at=at,
-        )
-
+    failed = _FAILED_LOGIN.match(msg) if level == "FATAL" else None
+    if failed is not None:
+        if failed.group("user") == "admin_backup":
+            return alert(Level.CRITICAL, "admin_backup login attempt")
+        return alert(Level.WARNING, "failed login")
     return None
 
 

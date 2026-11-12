@@ -10,6 +10,8 @@ from techradar.hostsec.sources import (
     from_squid,
 )
 
+PG = "2026-11-13 02:00:00.000 UTC [77] "  # Postgres's default log_line_prefix
+
 FALCO_SHELL_IN_PARSER = json.dumps(
     {
         "priority": "Critical",
@@ -101,7 +103,7 @@ def test_honeytoken_audit_is_critical() -> None:
 
 
 def test_admin_backup_login_is_critical() -> None:
-    line = 'FATAL:  password authentication failed for user "admin_backup"'
+    line = PG + 'FATAL:  password authentication failed for user "admin_backup"'
     a = from_postgres(line, migrating=False)
     assert a is not None
     assert a.level is Level.CRITICAL
@@ -132,7 +134,7 @@ def test_postgres_honeytoken_table_read() -> None:
 
 
 def test_postgres_regular_failed_login() -> None:
-    line = 'FATAL:  password authentication failed for user "random_user"'
+    line = PG + 'FATAL:  password authentication failed for user "random_user"'
     a = from_postgres(line, migrating=False)
     assert a is not None
     assert a.level is Level.WARNING
@@ -197,3 +199,33 @@ def test_from_parser_quarantine_and_reject() -> None:
     assert r_alert.source == "parser"
 
     assert from_parser("normal log line") is None
+
+
+def test_postgres_lines_cannot_be_spoofed_through_sql_text() -> None:
+    # From the automated review: statement text is user-controlled and is
+    # logged inside AUDIT lines, so markers are only trusted in their real
+    # position (the level and message right after the prefix, or the
+    # pgaudit class and object fields).
+    spoofs = [
+        PG + "LOG:  AUDIT: SESSION,1,1,DDL,CREATE TABLE,,,"
+        "\"create table t (c text default 'FATAL:  password authentication failed "
+        'for user ""admin_backup""\')",<not logged>',
+        PG + 'LOG:  AUDIT: SESSION,1,1,DDL,CREATE TABLE,,,"create table x_ROLE_ (a int) -- ,ROLE,"',
+        # Log text used as test data, not a query that runs.
+        PG  # noqa: S608
+        + "LOG:  AUDIT: OBJECT,1,1,READ,SELECT,TABLE,public.notes,"
+        "\"select * from notes where body like '%bank_credentials%'\"",
+        '\tFATAL:  password authentication failed for user "admin_backup"',
+        'FATAL:  password authentication failed for user "admin_backup"',  # no prefix
+    ]
+    for line in spoofs:
+        a = from_postgres(line, migrating=False)
+        assert a is None or a.level is not Level.CRITICAL, line
+
+
+def test_postgres_role_class_is_read_from_the_audit_field() -> None:
+    line = (
+        PG + 'LOG:  AUDIT: SESSION,3,1,ROLE,ALTER ROLE,,,"alter role tr_app superuser",<not logged>'
+    )
+    a = from_postgres(line, migrating=False)
+    assert a is not None and a.rule == "unauthorized role change"

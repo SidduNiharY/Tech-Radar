@@ -134,3 +134,11 @@ def test_every_attack_waits_for_a_rule_the_parsers_really_produce():
 def test_attack_output_that_the_alerter_reads_from_the_journal_goes_there():
     sh = (REPO_ROOT / "security/simulate/phase1.sh").read_text()
     assert "systemd-cat -t techradar-integrity" in sh
+
+
+def test_admin_backup_attack_goes_through_password_auth():
+    # Inside the postgres container 127.0.0.1 uses trust auth (seen on the TUF
+    # 2026-11-13), so the attack must come from another container.
+    sh = (REPO_ROOT / "security/simulate/phase1.sh").read_text()
+    assert "psql -h 127.0.0.1 -U admin_backup" not in sh
+    assert "host='postgres', user='admin_backup', password='wrong'" in sh

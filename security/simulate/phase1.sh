@@ -75,7 +75,11 @@ fi
 
 # 3. Failed database login for honeytoken user admin_backup
 echo "--- Attack 3: Failed DB login for admin_backup ---"
-docker compose exec -T -e PGPASSWORD=wrong postgres psql -h 127.0.0.1 -U admin_backup techradar -c 'select 1' 2>/dev/null || true
+# From another container over the db network: inside the postgres container,
+# 127.0.0.1 is trusted without a password, so no password check would run.
+docker compose run --rm --no-deps --entrypoint python migrate -c \
+    "import psycopg; psycopg.connect(host='postgres', user='admin_backup', password='wrong', dbname='techradar', connect_timeout=5)" \
+    >/dev/null 2>&1 || true
 wait_for_alert "admin_backup login attempt" "critical" 60 || echo "[FAIL] Attack 3"
 
 # 4. Outbound connection outside allowed peers from isolated service
