@@ -11,6 +11,7 @@ from pathlib import Path
 
 from techradar.hostsec.alerter import (
     AlerterDaemon,
+    ClientMap,
     build_client_map,
     main,
     run_streams,
@@ -170,4 +171,64 @@ def test_main_runs_the_loop_instead_of_returning(monkeypatch, tmp_path):
         lambda daemon, streams, **kw: called.setdefault("streams", streams),
     )
     assert main([]) == 0
-    assert {k for k, _ in called["streams"]} == {"falco", "auditd", "journal", "squid", "postgres"}
+    assert {k for k, _ in called["streams"]} == {
+        "falco",
+        "auditd",
+        "journal",
+        "squid",
+        "postgres",
+        "docker",
+    }
+
+
+class FakeRun:
+    """docker network inspect / docker inspect answers for ClientMap."""
+
+    def __init__(self):
+        self.network: dict = {}
+        self.containers: dict[str, dict] = {}
+
+    def __call__(self, args, **_):
+        class R:
+            returncode = 0
+            stdout = ""
+
+        r = R()
+        if args[:3] == ["docker", "network", "inspect"]:
+            r.stdout = json.dumps(self.network)
+        elif args[:2] == ["docker", "inspect"]:
+            r.stdout = json.dumps(self.containers.get(args[-1], {}))
+        return r
+
+
+def test_short_lived_container_is_remembered_after_it_exits():
+    # Seen on the TUF 2026-11-13: the egress probe exited before the squid
+    # line was handled, so the alert named only "172.20.0.3".
+    run = FakeRun()
+    run.containers["abc123"] = {
+        "Name": "/techradar-egress-probe-run-3f2a1b9c8d7e",
+        "NetworkSettings": {"Networks": {"techradar_egress_internal": {"IPAddress": "172.20.0.3"}}},
+    }
+    cmap = ClientMap(run)
+    cmap.learn("abc123")  # docker events: container started
+    run.containers.clear()  # it has exited; the network no longer lists it
+    assert cmap() == {"172.20.0.3": "egress-probe"}
+
+
+def test_docker_start_event_line_feeds_the_client_map(tmp_path):
+    run = FakeRun()
+    run.containers["abc123"] = {
+        "Name": "/techradar-egress-probe-run-3f2a1b9c8d7e",
+        "NetworkSettings": {"Networks": {"techradar_egress_internal": {"IPAddress": "172.20.0.3"}}},
+    }
+    d = AlerterDaemon(settings(tmp_path), client_map=ClientMap(run))
+    d.handle("docker", "abc123\n")
+    d.handle("squid", SQUID_LINE)
+    [a] = logged(tmp_path)
+    assert a["rule"] == "outbound attempt from egress-probe"
+
+
+def test_stream_commands_include_container_start_events():
+    cmds = dict(stream_commands())
+    assert cmds["docker"][:2] == ["docker", "events"]
+    assert "event=start" in cmds["docker"]

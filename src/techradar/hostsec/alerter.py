@@ -121,7 +121,7 @@ class AlerterDaemon:
         self.settings = settings
         self.alert_log = AlertLog(settings.alert_log)
         self.quiet = parse_quiet_hours(settings.quiet_hours)
-        self._client_map = client_map or (lambda: build_client_map(default_runner))
+        self._client_map = client_map or ClientMap(default_runner)
         self._migrating_flag = migrating_flag
 
     def handle(self, kind: str, line: str) -> None:
@@ -141,6 +141,10 @@ class AlerterDaemon:
                 self.process_journal_entry(json.loads(line))
             elif kind == "squid":
                 self.process_squid_line(line, self._client_map())
+            elif kind == "docker":
+                learn = getattr(self._client_map, "learn", None)
+                if learn and line.strip():
+                    learn(line.strip())
             elif kind == "postgres":
                 self.process_postgres_line(line, migrating=self._migrating_flag.exists())
             else:
@@ -235,6 +239,20 @@ def stream_commands() -> list[tuple[str, list[str]]]:
         ("journal", journal),
         ("squid", [*logs, "squid"]),
         ("postgres", [*logs, "postgres"]),
+        # Learn each new container's address while it is still running.
+        (
+            "docker",
+            [
+                "docker",
+                "events",
+                "--filter",
+                "type=container",
+                "--filter",
+                "event=start",
+                "--format",
+                "{{.ID}}",
+            ],
+        ),
     ]
 
 
@@ -263,6 +281,40 @@ def build_client_map(run: Callable[..., subprocess.CompletedProcess]) -> dict[st
         if match and ip:
             mapping[ip] = match.group(1)
     return mapping
+
+
+EGRESS_NETWORK = "techradar_egress_internal"
+
+
+class ClientMap:
+    """Squid client IP -> Compose service, remembered after a container exits.
+
+    Short-lived containers (an egress probe, `docker compose run`) are often
+    gone by the time their Squid denial is handled, so each container is
+    learned when it starts (docker events) and kept after it stops.
+    """
+
+    def __init__(self, run: Callable[..., subprocess.CompletedProcess]) -> None:
+        self._run = run
+        self._known: dict[str, str] = {}
+
+    def __call__(self) -> dict[str, str]:
+        self._known.update(build_client_map(self._run))
+        return dict(self._known)
+
+    def learn(self, container_id: str) -> None:
+        res = self._run(["docker", "inspect", "--format", "{{json .}}", container_id])
+        if res.returncode != 0:
+            return
+        try:
+            info = json.loads(res.stdout or "{}") or {}
+        except json.JSONDecodeError:
+            return
+        match = _CONTAINER_NAME.match(str(info.get("Name", "")).lstrip("/"))
+        net = (info.get("NetworkSettings") or {}).get("Networks", {}).get(EGRESS_NETWORK) or {}
+        ip = str(net.get("IPAddress", ""))
+        if match and ip:
+            self._known[ip] = match.group(1)
 
 
 def popen_lines(kind: str, cmd: list[str]) -> Iterator[str]:
