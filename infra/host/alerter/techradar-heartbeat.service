@@ -7,6 +7,7 @@ Type=oneshot
 User=techradar
 SupplementaryGroups=docker systemd-journal adm
 WorkingDirectory=/home/techradar/TechRadarBrain
+Environment=TR_SECRETS_DIR=/home/techradar/TechRadarBrain/secrets
 ExecStart=/home/techradar/TechRadarBrain/.venv/bin/python -m techradar.hostsec.alerter --heartbeat
 NoNewPrivileges=yes
 ProtectSystem=strict

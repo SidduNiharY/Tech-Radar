@@ -14,6 +14,18 @@ The host architecture follows strict defense-in-depth principles:
 
 ---
 
+## First Boot Order
+
+Do the steps in this order on a fresh server (it matches Part A of `TODO_TUF_AND_MAC.md`):
+
+1. Install Ubuntu LTS (section 11: encryption, Secure Boot, AppArmor). On the TUF, disk encryption was skipped by the owner on 2026-11-11 (accepted risk); `check_host.sh` will report it as FAIL.
+2. Base hardening: timezone (1), automatic updates (2), firewall (3), Tailscale and SSH (4, 5).
+3. Install the host tools (22): Docker first, then the security tools.
+4. Docker daemon config (6), GPU driver and toolkit (7), battery (8), lid (9), docker group (10).
+5. Accounts and network lock: router (12), passkeys (14), Telegram (15), Tailnet Lock (16), text-mode boot (17), firmware (18).
+6. Clone the repo, create `secrets/` (owner only), then install the TechRadar host units (23).
+7. Verify: `sudo OWNER="$USER" bash infra/host/check_host.sh` (20), then the monthly review (19).
+
 ## Table of Contents
 
 1. [Timezone Configuration](#1-timezone-configuration)
@@ -29,7 +41,16 @@ The host architecture follows strict defense-in-depth principles:
 11. [Full Disk Encryption, Secure Boot, and AppArmor](#11-full-disk-encryption-secure-boot-and-apparmor)
 12. [Router and Local Network Security](#12-router-and-local-network-security)
 13. [Dual Boot and Disaster Recovery USB](#13-dual-boot-and-disaster-recovery-usb)
-14. [Automated Verification (check_host.sh)](#14-automated-verification-check_hostsh)
+14. [Passkeys and Hardware Multi-Factor Authentication](#14-passkeys-and-hardware-multi-factor-authentication)
+15. [Telegram Account Hardening](#15-telegram-account-hardening)
+16. [Tailnet Lock](#16-tailnet-lock)
+17. [Text-Mode Boot and Browser Removal](#17-text-mode-boot-and-browser-removal)
+18. [Firmware and BIOS/UEFI Security](#18-firmware-and-biosuefi-security)
+19. [Monthly Security Review](#19-monthly-security-review)
+20. [Automated Verification (check_host.sh)](#20-automated-verification-check_hostsh)
+21. [Private Vault Sync (Syncthing)](#21-private-vault-sync-syncthing)
+22. [Install the Host Tools](#22-install-the-host-tools)
+23. [Install the TechRadar Host Units](#23-install-the-techradar-host-units)
 
 ---
 
@@ -186,7 +207,7 @@ ss -ltnH | grep :22
 The Docker daemon must enforce log rotation to prevent disk exhaustion and prevent container processes from gaining additional privileges.
 
 ### Setup Commands
-Create or edit `/etc/docker/daemon.json`:
+Install Docker Engine first (section 22, step 1). Then create or edit `/etc/docker/daemon.json`:
 ```json
 {
   "log-driver": "json-file",
@@ -251,14 +272,18 @@ When running on an ASUS gaming laptop (e.g., ROG Zephyrus / TUF) operating as an
 asusctl -c 80
 ```
 
-### Kernel Sysfs Fallback (for generic hardware)
-If `asusctl` is not applicable, set the charge threshold in sysfs:
+`asusctl` has no package in the Ubuntu archive (the asus-linux project builds it for Fedora and Arch). On Ubuntu, use the kernel sysfs setting below, which the `asus-wmi` driver provides on the TUF. It is what the TUF uses (verified 2026-11-12: threshold 80).
+
+### Kernel Sysfs (the TUF's method on Ubuntu)
+The battery name differs between models: the TUF A15 exposes `BAT1`, not `BAT0`. Find it first:
 ```bash
-echo 80 | sudo tee /sys/class/power_supply/BAT0/charge_control_end_threshold
+ls /sys/class/power_supply/          # e.g. ACAD  BAT1
+BAT=BAT1
+echo 80 | sudo tee /sys/class/power_supply/$BAT/charge_control_end_threshold
 ```
-Persist via `/etc/tmpfiles.d/battery-charge-limit.conf`:
+Persist via `/etc/tmpfiles.d/battery-charge-limit.conf` (use your battery name):
 ```text
-w /sys/class/power_supply/BAT0/charge_control_end_threshold - - - - 80
+w /sys/class/power_supply/BAT1/charge_control_end_threshold - - - - 80
 ```
 
 ### Verification
@@ -451,3 +476,85 @@ Obsidian vault syncing between the TUF server and the macOS client occurs strict
    ```
 8. Set the Obsidian Web Clipper destination to `Clippings/`.
 
+---
+
+## 22. Install the Host Tools
+
+Install each tool from the Ubuntu archive or the vendor's signed apt repository, and check each signing key's fingerprint before trusting it. Versions below are the ones verified on the TUF (Ubuntu 26.04 "resolute") on 2026-11-12.
+
+### 1. Docker Engine, Compose and Buildx (Docker's apt repository)
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.asc
+gpg --show-keys --with-fingerprint /tmp/docker.asc
+# Must show: 9DC8 5822 9FC7 DD38 854A  E2D8 8D81 803C 0EBF CD88
+sudo install -m 0644 /tmp/docker.asc /etc/apt/keyrings/docker.asc
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+docker version --format '{{.Server.Version}}'   # TUF: 29.9.3
+docker compose version                          # TUF: v5.7.1
+```
+
+### 2. Security and backup tools (Ubuntu archive)
+```bash
+sudo apt install -y make jq auditd aide lynis restic age shellcheck
+dpkg -l auditd aide lynis restic age shellcheck | awk '/^ii/{print $2, $3}'
+# TUF: auditd 1:4.1.2, aide 0.19.2, lynis 3.1.6, restic 0.18.1, age 1.2.1, shellcheck 0.11.0
+```
+Do not run `aideinit` (it builds a database for the stock config); section 23 initialises AIDE with the TechRadar config.
+
+### 3. Falco (falcosecurity apt repository, exact version, `modern_ebpf`)
+```bash
+curl -fsSL https://falco.org/repo/falcosecurity-packages.asc -o /tmp/falco.asc
+gpg --show-keys --with-fingerprint /tmp/falco.asc
+# Must show: 478B 2FBB C75F 4237 B731  DA43 6510 6822 B35B 1B1F
+sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg /tmp/falco.asc
+echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" \
+  | sudo tee /etc/apt/sources.list.d/falcosecurity.list
+sudo apt update
+# 0.45.2 is the newest release before the exclude-newer cut-off (2026-11-07).
+sudo FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf apt install -y falco=0.45.2
+sudo apt-mark hold falco
+sudo systemctl enable --now falco-modern-bpf.service
+```
+Verification: `systemctl is-active falco-modern-bpf` prints `active`; `falco --version` prints 0.45.2.
+
+### 4. Syncthing (Ubuntu archive)
+```bash
+sudo apt install -y syncthing      # TUF candidate: 1.29.5
+sudo loginctl enable-linger "$USER"   # keeps the user service running without a login
+systemctl --user enable --now syncthing.service
+```
+Then follow section 21 (GUI on 127.0.0.1 only, Tailscale addresses only, no discovery, relays or UPnP).
+
+### 5. Scanners for `make security` (no sudo)
+```bash
+bash scripts/install_security_tools.sh   # gitleaks, trivy, osv-scanner, hadolint into ~/.local/bin, SHA-256 checked
+```
+Semgrep runs through `uv tool run --from semgrep==1.184.0`, so it needs no install.
+
+---
+
+## 23. Install the TechRadar Host Units
+
+The unit files in `infra/host/` and `infra/backup/` name `/home/techradar/TechRadarBrain` and the user `techradar`. `install_host.sh` installs copies with the real repo path and owner, loads the audit rules and enables the alerter and the timers.
+
+Before running it: the repo is cloned, `uv sync --frozen` has built `.venv`, and `secrets/` exists (mode 700, files 600). The alerter and heartbeat need `secrets/alerter_bot_token` and the owner's chat ID.
+
+```bash
+cd ~/TechRadarBrain
+sudo OWNER="$USER" bash infra/host/install_host.sh
+sudo aide --init --config /etc/aide/techradar.conf
+sudo mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+uv run python scripts/plant_honeytokens.py
+```
+
+### Verification
+```bash
+sudo auditctl -l | grep -c tr_                         # the TechRadar watches are loaded
+systemctl is-active techradar-alerter                  # active
+systemctl list-timers 'techradar-*' --no-pager         # aide, integrity, resources, heartbeat, lynis, backup
+sudo OWNER="$USER" bash infra/host/check_host.sh
+```
