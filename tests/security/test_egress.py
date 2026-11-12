@@ -34,7 +34,9 @@ def test_not_allowlisted_denied():
     ],
 )
 def test_private_and_metadata_addresses_denied(url):
-    assert probe("-sS", "--max-time", "10", url).returncode != 0
+    # Denied either as a failed CONNECT (https) or as Squid's 403 page (http).
+    r = probe("-sS", "--max-time", "10", "-o", "/dev/null", "-w", "%{http_code}", url)
+    assert r.returncode != 0 or r.stdout == "403"
 
 
 def test_plain_http_denied():
