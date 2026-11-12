@@ -67,7 +67,7 @@ async def collect_results(deps: PipelineDeps) -> dict[str, int]:
                 data = json.loads(rpath.read_text(encoding="utf-8"))
                 result = ParseResult.model_validate(data)
             except Exception as e:
-                logger.warning("Corrupted result file %s: %e", rpath, e)
+                logger.warning("Corrupted result file %s: %s", rpath, e)
                 rpath.unlink(missing_ok=True)
                 counts["rejected"] += 1
                 continue
@@ -223,7 +223,7 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
             vec = vecs[0]
             item.embedding = vec
         except Exception as e:
-            logger.warning("Embedding error for item %s: %e", item_id, e)
+            logger.warning("Embedding error for item %s: %s", item_id, e)
             item.attempts += 1
             if item.attempts >= 3:
                 item.status = "needs_review"
@@ -274,7 +274,7 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
         try:
             reader_res = await read_item(reader_graph, doc)
         except Exception as e:
-            logger.warning("Reader error for item %s: %e", item_id, e)
+            logger.warning("Reader error for item %s: %s", item_id, e)
             item.attempts += 1
             if item.attempts >= 3:
                 item.status = "needs_review"
@@ -354,11 +354,18 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
         cluster_items = list(cluster_items_res.scalars().all())
 
         # Collect cluster sources
+        # Items have no timestamp of their own; each source's fetch time is on its raw item.
+        fetched_res = await session.execute(
+            select(RawItem.id, RawItem.fetched_at).where(
+                RawItem.id.in_([it.raw_item_id for it in cluster_items])
+            )
+        )
+        fetched_at = {raw_id: ts for raw_id, ts in fetched_res.all()}
         story_sources = [
             StorySource(
                 url=it.url,
                 domain=it.domain,
-                fetched_at=it.created_at,
+                fetched_at=fetched_at.get(it.raw_item_id) or datetime.now(UTC),
             )
             for it in cluster_items
         ]
