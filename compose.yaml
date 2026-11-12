@@ -330,6 +330,9 @@ services:
     environment:
       HTTP_PROXY: "http://squid:3128"
       HTTPS_PROXY: "http://squid:3128"
+      # curl ignores upper-case HTTP_PROXY for plain http (httpoxy defence).
+      http_proxy: "http://squid:3128"
+      https_proxy: "http://squid:3128"
 
   redteam:
     <<: *hardened-baseline
