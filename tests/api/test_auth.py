@@ -34,7 +34,7 @@ def client() -> TestClient:
 @pytest.fixture
 def prod_client() -> TestClient:
     app = create_app(Settings(env="prod", telegram_owner_chat_id=1, owner_login=OWNER))
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")  # prod does not trust "testserver"
 
 
 def test_missing_or_wrong_token_401(client: TestClient) -> None:

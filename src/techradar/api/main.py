@@ -3,7 +3,7 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from techradar.api.deps import require_caller
@@ -13,9 +13,9 @@ MAX_BODY: int = 65_536
 
 
 class AskRequest(BaseModel):
-    """Stub request schema for asking questions."""
+    """A question for /v1/ask (answers.question is varchar(500))."""
 
-    question: str = ""
+    question: str = Field(min_length=1, max_length=500)
     verified_only: bool = False
 
 
@@ -60,7 +60,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # SEC-51: Reject foreign Host headers
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["api", "localhost", "127.0.0.1", "testserver"],
+        # "testserver" is the Host the test client sends; never trusted in prod.
+        allowed_hosts=["api", "localhost", "127.0.0.1"] + ([] if is_prod else ["testserver"]),
     )
 
     # Public unauthenticated routes
@@ -85,7 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @v1_router.post("/ask")
-    def ask(request: AskRequest | None = None) -> dict[str, Any]:
+    def ask(request: AskRequest) -> dict[str, Any]:
         return {
             "answer_id": 1,
             "status": "queued",

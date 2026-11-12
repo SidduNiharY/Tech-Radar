@@ -1,7 +1,6 @@
 """API dependency injection and authorization guards (SEC-27, SEC-41)."""
 
 import logging
-import os
 import secrets
 
 from fastapi import Header, HTTPException, Request, status
@@ -33,20 +32,25 @@ def _get_current_settings() -> Settings:
         return Settings(telegram_owner_chat_id=1)
 
 
+class ServiceTokenMissing(Exception):
+    """The api_service_token secret is not available: refuse every request."""
+
+
+PLACEHOLDER_OWNER = "owner@local"
+
+
 def get_expected_service_token(settings: Settings | None = None) -> str:
-    """Retrieve expected API service token from secrets, environment, or test injection."""
+    """The API service token, read only from the secret file (SEC-10).
+
+    There is no fallback: without the secret the API refuses all /v1 calls.
+    """
     if _test_service_token is not None:
         return _test_service_token
     s = settings or _get_current_settings()
     try:
         return read_secret("api_service_token", s.secrets_dir)
     except (SecretError, OSError) as exc:
-        logger.debug("Could not read secret from configured secrets_dir: %s", exc)
-    try:
-        return read_secret("api_service_token")
-    except (SecretError, OSError) as exc:
-        logger.debug("Could not read secret from default secrets_dir: %s", exc)
-    return os.environ.get("TR_API_SERVICE_TOKEN", "test-token")
+        raise ServiceTokenMissing("api_service_token secret is not available") from exc
 
 
 async def require_caller(
@@ -65,8 +69,21 @@ async def require_caller(
     else:
         settings = _get_current_settings()
 
-    expected_token = get_expected_service_token(settings)
+    try:
+        expected_token = get_expected_service_token(settings)
+    except ServiceTokenMissing:
+        logger.error("API refused a request: api_service_token secret is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service token not configured",
+        ) from None
     expected_user = _test_owner_login if _test_owner_login is not None else settings.owner_login
+    if settings.env == "prod" and expected_user == PLACEHOLDER_OWNER:
+        logger.error("API refused a request: owner_login is still the placeholder")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Owner login not configured",
+        )
 
     if not x_service_token or not secrets.compare_digest(x_service_token, expected_token):
         raise HTTPException(
