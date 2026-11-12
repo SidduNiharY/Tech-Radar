@@ -4,7 +4,6 @@ import argparse
 import json
 import logging
 import queue
-import re
 import subprocess
 import sys
 import threading
@@ -14,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import yaml
 
 from techradar.hostsec.alerts import (
     Alert,
@@ -121,7 +121,10 @@ class AlerterDaemon:
         self.settings = settings
         self.alert_log = AlertLog(settings.alert_log)
         self.quiet = parse_quiet_hours(settings.quiet_hours)
-        self._client_map = client_map or ClientMap(default_runner)
+        if client_map is None:
+            static = client_map_from_compose(Path("compose.yaml"))
+            client_map = lambda: static  # noqa: E731
+        self._client_map = client_map
         self._migrating_flag = migrating_flag
 
     def handle(self, kind: str, line: str) -> None:
@@ -140,11 +143,8 @@ class AlerterDaemon:
             elif kind == "journal":
                 self.process_journal_entry(json.loads(line))
             elif kind == "squid":
-                self.process_squid_line(line, self._client_map())
-            elif kind == "docker":
-                learn = getattr(self._client_map, "learn", None)
-                if learn and line.strip():
-                    learn(line.strip())
+                if "TCP_DENIED" in line:
+                    self.process_squid_line(line, self._client_map())
             elif kind == "postgres":
                 self.process_postgres_line(line, migrating=self._migrating_flag.exists())
             else:
@@ -224,7 +224,6 @@ JOURNAL_IDENTIFIERS = (
     "techradar-integrity",
     "techradar-resources",
 )
-_CONTAINER_NAME = re.compile(r"^techradar-([a-z0-9-]+?)(?:-run-[0-9a-f]+|-\d+)$")
 
 
 def stream_commands() -> list[tuple[str, list[str]]]:
@@ -239,82 +238,29 @@ def stream_commands() -> list[tuple[str, list[str]]]:
         ("journal", journal),
         ("squid", [*logs, "squid"]),
         ("postgres", [*logs, "postgres"]),
-        # Learn each new container's address while it is still running.
-        (
-            "docker",
-            [
-                "docker",
-                "events",
-                "--filter",
-                "type=container",
-                "--filter",
-                "event=start",
-                "--format",
-                "{{.ID}}",
-            ],
-        ),
     ]
 
 
-def build_client_map(run: Callable[..., subprocess.CompletedProcess]) -> dict[str, str]:
-    """Map Squid client IPs to Compose services from the egress network."""
-    res = run(
-        [
-            "docker",
-            "network",
-            "inspect",
-            "techradar_egress_internal",
-            "--format",
-            "{{json .Containers}}",
-        ]
-    )
-    if res.returncode != 0:
-        return {}
+def client_map_from_compose(compose_path: Path) -> dict[str, str]:
+    """Squid client IP -> Compose service, from the fixed egress addresses.
+
+    Read from compose.yaml instead of asking Docker: short-lived containers
+    (an egress probe) exit before a runtime lookup can see them, and no
+    command runs per log line.
+    """
     try:
-        containers = json.loads(res.stdout or "{}") or {}
-    except json.JSONDecodeError:
+        data = yaml.safe_load(compose_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.error("Alerter cannot read %s: %s", compose_path, exc)
         return {}
     mapping: dict[str, str] = {}
-    for info in containers.values():
-        match = _CONTAINER_NAME.match(str(info.get("Name", "")))
-        ip = str(info.get("IPv4Address", "")).split("/", 1)[0]
-        if match and ip:
-            mapping[ip] = match.group(1)
+    for name, svc in (data.get("services") or {}).items():
+        nets = (svc or {}).get("networks") or {}
+        if isinstance(nets, dict):
+            addr = (nets.get("egress_internal") or {}).get("ipv4_address")
+            if addr:
+                mapping[str(addr)] = str(name)
     return mapping
-
-
-EGRESS_NETWORK = "techradar_egress_internal"
-
-
-class ClientMap:
-    """Squid client IP -> Compose service, remembered after a container exits.
-
-    Short-lived containers (an egress probe, `docker compose run`) are often
-    gone by the time their Squid denial is handled, so each container is
-    learned when it starts (docker events) and kept after it stops.
-    """
-
-    def __init__(self, run: Callable[..., subprocess.CompletedProcess]) -> None:
-        self._run = run
-        self._known: dict[str, str] = {}
-
-    def __call__(self) -> dict[str, str]:
-        self._known.update(build_client_map(self._run))
-        return dict(self._known)
-
-    def learn(self, container_id: str) -> None:
-        res = self._run(["docker", "inspect", "--format", "{{json .}}", container_id])
-        if res.returncode != 0:
-            return
-        try:
-            info = json.loads(res.stdout or "{}") or {}
-        except json.JSONDecodeError:
-            return
-        match = _CONTAINER_NAME.match(str(info.get("Name", "")).lstrip("/"))
-        net = (info.get("NetworkSettings") or {}).get("Networks", {}).get(EGRESS_NETWORK) or {}
-        ip = str(net.get("IPAddress", ""))
-        if match and ip:
-            self._known[ip] = match.group(1)
 
 
 def popen_lines(kind: str, cmd: list[str]) -> Iterator[str]:

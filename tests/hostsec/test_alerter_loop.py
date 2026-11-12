@@ -11,8 +11,6 @@ from pathlib import Path
 
 from techradar.hostsec.alerter import (
     AlerterDaemon,
-    ClientMap,
-    build_client_map,
     main,
     run_streams,
     stream_commands,
@@ -138,31 +136,6 @@ def test_stream_commands_follow_the_plan_sources():
     assert "0" in cmds["falco"] and "0s" in cmds["squid"]
 
 
-def test_build_client_map_reads_docker_network_inspect():
-    out = json.dumps(
-        {
-            "a1": {"Name": "techradar-fetcher-1", "IPv4Address": "172.20.0.4/16"},
-            "b2": {
-                "Name": "techradar-egress-probe-run-3f2a1b9c8d7e",
-                "IPv4Address": "172.20.0.3/16",
-            },
-            "c3": {"Name": "techradar-squid-1", "IPv4Address": "172.20.0.2/16"},
-            "d4": {"Name": "someone-else-1", "IPv4Address": "172.20.0.9/16"},
-        }
-    )
-
-    class R:
-        returncode = 0
-        stdout = out
-
-    mapping = build_client_map(lambda args, **_: R())
-    assert mapping == {
-        "172.20.0.4": "fetcher",
-        "172.20.0.3": "egress-probe",
-        "172.20.0.2": "squid",
-    }
-
-
 def test_main_runs_the_loop_instead_of_returning(monkeypatch, tmp_path):
     called = {}
     monkeypatch.setattr("techradar.hostsec.alerter.get_settings", lambda: settings(tmp_path))
@@ -177,58 +150,35 @@ def test_main_runs_the_loop_instead_of_returning(monkeypatch, tmp_path):
         "journal",
         "squid",
         "postgres",
-        "docker",
     }
 
 
-class FakeRun:
-    """docker network inspect / docker inspect answers for ClientMap."""
+def test_client_map_comes_from_compose_without_running_docker(tmp_path):
+    from techradar.hostsec.alerter import client_map_from_compose
 
-    def __init__(self):
-        self.network: dict = {}
-        self.containers: dict[str, dict] = {}
-
-    def __call__(self, args, **_):
-        class R:
-            returncode = 0
-            stdout = ""
-
-        r = R()
-        if args[:3] == ["docker", "network", "inspect"]:
-            r.stdout = json.dumps(self.network)
-        elif args[:2] == ["docker", "inspect"]:
-            r.stdout = json.dumps(self.containers.get(args[-1], {}))
-        return r
-
-
-def test_short_lived_container_is_remembered_after_it_exits():
-    # Seen on the TUF 2026-11-13: the egress probe exited before the squid
-    # line was handled, so the alert named only "172.20.0.3".
-    run = FakeRun()
-    run.containers["abc123"] = {
-        "Name": "/techradar-egress-probe-run-3f2a1b9c8d7e",
-        "NetworkSettings": {"Networks": {"techradar_egress_internal": {"IPAddress": "172.20.0.3"}}},
+    compose = tmp_path / "compose.yaml"
+    compose.write_text(
+        "services:\n"
+        "  squid:\n    networks:\n      egress_internal:\n        ipv4_address: 10.250.10.2\n"
+        "  egress-probe:\n    networks:\n      egress_internal:\n"
+        "        ipv4_address: 10.250.10.20\n"
+        "  parser:\n    network_mode: none\n"
+        "  bot:\n    networks: [db]\n",
+        encoding="utf-8",
+    )
+    assert client_map_from_compose(compose) == {
+        "10.250.10.2": "squid",
+        "10.250.10.20": "egress-probe",
     }
-    cmap = ClientMap(run)
-    cmap.learn("abc123")  # docker events: container started
-    run.containers.clear()  # it has exited; the network no longer lists it
-    assert cmap() == {"172.20.0.3": "egress-probe"}
 
 
-def test_docker_start_event_line_feeds_the_client_map(tmp_path):
-    run = FakeRun()
-    run.containers["abc123"] = {
-        "Name": "/techradar-egress-probe-run-3f2a1b9c8d7e",
-        "NetworkSettings": {"Networks": {"techradar_egress_internal": {"IPAddress": "172.20.0.3"}}},
-    }
-    d = AlerterDaemon(settings(tmp_path), client_map=ClientMap(run))
-    d.handle("docker", "abc123\n")
-    d.handle("squid", SQUID_LINE)
-    [a] = logged(tmp_path)
-    assert a["rule"] == "outbound attempt from egress-probe"
+def test_client_map_is_only_consulted_for_denials(tmp_path):
+    calls = []
 
+    def cmap():
+        calls.append(1)
+        return {}
 
-def test_stream_commands_include_container_start_events():
-    cmds = dict(stream_commands())
-    assert cmds["docker"][:2] == ["docker", "events"]
-    assert "event=start" in cmds["docker"]
+    d = AlerterDaemon(settings(tmp_path), client_map=cmap)
+    d.handle("squid", "1794514104.903 0 10.250.10.11 TCP_MISS/200 512 GET http://ok/ - x")
+    assert calls == []

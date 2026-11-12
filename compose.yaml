@@ -101,9 +101,10 @@ services:
     cpus: "1.0"
     user: "1000:1000"
     networks:
-      - db
-      - llm
-      - egress_internal
+      db: {}
+      llm: {}
+      egress_internal:
+        ipv4_address: 10.250.10.10
     secrets:
       - tr_ro_password
       - telegram_bot_token
@@ -136,8 +137,9 @@ services:
     cpus: "1.0"
     user: "1000:1000"
     networks:
-      - db
-      - egress_internal
+      db: {}
+      egress_internal:
+        ipv4_address: 10.250.10.11
     volumes:
       - ./data/raw:/data/raw
       - ./data/parse-jobs:/data/parse-jobs
@@ -251,7 +253,8 @@ services:
     mem_limit: 512m
     cpus: "0.5"
     networks:
-      - egress_internal
+      egress_internal:
+        ipv4_address: 10.250.10.12
     environment:
       HTTP_PROXY: "http://squid:3128"
       HTTPS_PROXY: "http://squid:3128"
@@ -304,8 +307,9 @@ services:
     cpus: "1.0"
     pids_limit: 200
     networks:
-      - egress_internal
-      - egress_out
+      egress_internal:
+        ipv4_address: 10.250.10.2
+      egress_out: {}
     cap_add:
       - SETUID
       - SETGID
@@ -334,7 +338,8 @@ services:
     pids_limit: 50
     user: "1000:1000"
     networks:
-      - egress_internal
+      egress_internal:
+        ipv4_address: 10.250.10.20
     environment:
       HTTP_PROXY: "http://squid:3128"
       HTTPS_PROXY: "http://squid:3128"
@@ -394,6 +399,11 @@ networks:
     internal: true
   egress_internal:
     internal: true
+    # Fixed addresses: the alerter maps a Squid client IP to its service from
+    # this file (short-lived containers exit before a runtime lookup).
+    ipam:
+      config:
+        - subnet: 10.250.10.0/24
   egress_out:
     internal: false
 
