@@ -8,7 +8,7 @@ SHELL_SCRIPTS := $(shell git ls-files '*.sh')
 # Images built from this repo that Trivy scans (gate-1).
 IMAGES := techradarbrain-bot techradarbrain-migrate techradarbrain-postgres
 
-.PHONY: all lint format test test-db test-egress security security-images simulate-1 simulate-2 guard-eval redteam-live gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4 gate-5
+.PHONY: all lint format test test-db test-egress security security-images simulate-1 simulate-2 guard-eval redteam-live gate-1-mac gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4 gate-5
 
 all: lint test security
 
@@ -50,6 +50,13 @@ security-images:
 
 simulate-1:
 	bash security/simulate/phase1.sh
+
+# Runs anywhere (Mac or server). It is only part of gate 1: never sign a gate on it.
+gate-1-mac: lint test security
+	$(UV_RUN) pytest tests/hostsec -v
+	bash -n infra/backup/*.sh
+	bash -n infra/host/*.sh
+	@echo "gate-1-mac passed. This is NOT gate 1: run make gate-1 on the server."
 
 gate-1: lint test security test-db test-egress security-images
 	$(UV_RUN) pytest tests/hostsec -v

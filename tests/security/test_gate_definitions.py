@@ -66,3 +66,21 @@ def test_later_gates_include_the_earlier_ones(gate: str, earlier_marker: str):
 
 def test_makefile_has_no_mac_only_paths():
     assert "/opt/homebrew" not in (ROOT / "Makefile").read_text(encoding="utf-8")
+
+
+def test_gate1_mac_runs_only_portable_checks():
+    # gate-1-mac runs anywhere; it must not stand in for gate-1, which needs
+    # the server (db, egress, images, host checks, simulated attacks).
+    mac = dry_run("gate-1-mac")
+    assert "ruff check" in mac and "semgrep" in mac
+    # Commands, not file names: `security` shellchecks every script by name.
+    server_only_commands = [
+        "-m db",
+        "-m egress",
+        "sudo OWNER",
+        "bash infra/backup/restore_test.sh",
+        "bash security/simulate",
+        "trivy image",
+    ]
+    for server_only in server_only_commands:
+        assert server_only not in mac, server_only
