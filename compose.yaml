@@ -373,7 +373,8 @@ services:
       TR_SECRETS_DIR: /run/secrets
     secrets:
       - tr_ro_password
-    command: ["uv", "run", "python", "evals/rag/run.py"]
+    # The image has no uv (see infra/docker/Dockerfile); run from the .venv.
+    command: ["python", "evals/rag/run.py"]
 
 
 
