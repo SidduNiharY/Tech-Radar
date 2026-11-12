@@ -19,7 +19,7 @@ test:
 	$(UV_RUN) pytest -v
 
 test-db:
-	$(UV_RUN) pytest -m db tests/ -v
+	TR_DB_TESTS_MAY_WIPE=1 $(UV_RUN) pytest -m db tests/ -v
 
 test-egress:
 	$(UV_RUN) pytest -m egress tests/ -v
