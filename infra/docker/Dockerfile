@@ -36,6 +36,9 @@ FROM base AS parser
 COPY --chown=1000:1000 pyproject.toml uv.lock README.md ./
 COPY --chown=1000:1000 src/ ./src/
 RUN uv sync --frozen --no-dev --extra parser && rm -rf /tmp/uv-cache
+# The Intake Gateway's data (the parser has no network, so it is baked in, read-only).
+COPY --chown=1000:1000 infra/squid/allowlist.txt ./infra/squid/allowlist.txt
+COPY --chown=1000:1000 infra/intake/ ./infra/intake/
 CMD ["python", "-m", "techradar.parser.main"]
 
 FROM base AS worker

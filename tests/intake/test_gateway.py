@@ -3,10 +3,10 @@ from pathlib import Path
 
 import yaml
 
-from techradar.intake.av import AvResult, IntakeWait
+from techradar.intake.av import AvResult
 from techradar.intake.gateway import combine, gate_job
 from techradar.parser.limits import parse_job
-from techradar.parser.main import serve_once
+from techradar.parser.main import build_gate, serve_once
 from techradar.schemas.pipeline import IntakeStep, ParseJob
 
 FIX_DIR = Path(__file__).parent / "fixtures"
@@ -121,13 +121,15 @@ def test_intake_wait_leaves_job_file(tmp_path: Path, monkeypatch):
     job_file = jobs_dir / f"{job.job_id}.job.json"
     job_file.write_text(job.model_dump_json())
 
-    # Simulate AV failure raising IntakeWait inside serve_once
-    def mock_run_with_limits(*args, **kwargs):
-        raise IntakeWait("clamd down")
-
-    monkeypatch.setattr("techradar.parser.main.run_with_limits", mock_run_with_limits)
-
-    count = serve_once(jobs_dir, raw_dir, clean_dir)
+    # clamd down: the scanner reports an error and the gateway makes the job wait
+    gate = build_gate(
+        raw_dir,
+        tmp_path / "quarantine",
+        av=FakeAvScanner(AvResult(status="error")),
+        allowed_hosts=frozenset({"pib.gov.in"}),
+        limits=LIMITS,
+    )
+    count = serve_once(jobs_dir, raw_dir, clean_dir, gate=gate)
     assert count == 0
     # Job file must not be removed when waiting
     assert job_file.exists()

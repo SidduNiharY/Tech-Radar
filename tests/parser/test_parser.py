@@ -6,10 +6,11 @@ from typing import NamedTuple
 
 import pytest
 
+from techradar.intake.av import AvResult
 from techradar.parser.feed import feed_to_entries
 from techradar.parser.html import html_to_doc
 from techradar.parser.limits import parse_job, run_with_limits
-from techradar.parser.main import serve_once
+from techradar.parser.main import build_gate, load_limits, serve_once
 from techradar.parser.pdf import pdf_to_doc
 from techradar.schemas.pipeline import JobKind, ParseJob, ParseResult
 
@@ -69,6 +70,23 @@ def long_article(char_count: int) -> bytes:
         f"<body><article>{body}</article></body></html>"
     )
     return html.encode("utf-8")
+
+
+class CleanAv:
+    def scan(self, path: Path) -> AvResult:
+        from datetime import date
+
+        return AvResult(status="clean", db_date=date.today())
+
+
+def gate_for(dirs: ParserDirs):
+    return build_gate(
+        dirs.raw,
+        dirs.raw.parent / "quarantine",
+        av=CleanAv(),
+        allowed_hosts=frozenset({"pib.gov.in"}),
+        limits=load_limits(Path("infra/intake/limits.yaml")),
+    )
 
 
 class ParserDirs(NamedTuple):
@@ -154,7 +172,7 @@ def test_run_with_limits_times_out(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_serve_once_writes_result_and_cleans_job(dirs: ParserDirs):
-    count = serve_once(dirs.jobs, dirs.raw, dirs.clean)
+    count = serve_once(dirs.jobs, dirs.raw, dirs.clean, gate=gate_for(dirs))
     assert count == 1
     assert not list(dirs.jobs.glob("*.json"))
     assert not list(dirs.clean.glob("*.tmp"))
@@ -167,7 +185,7 @@ def test_serve_once_writes_result_and_cleans_job(dirs: ParserDirs):
 
 
 def test_serve_once_writes_result_and_removes_job(dirs: ParserDirs):
-    assert serve_once(dirs.jobs, dirs.raw, dirs.clean) == 1
+    assert serve_once(dirs.jobs, dirs.raw, dirs.clean, gate=gate_for(dirs)) == 1
     assert not list(dirs.jobs.glob("*.json"))
     assert not list(dirs.clean.glob("*.tmp"))
     ParseResult.model_validate_json(next(dirs.clean.glob("*.result.json")).read_text())
@@ -177,7 +195,7 @@ def test_serve_once_handles_invalid_job_file(dirs: ParserDirs):
     for f in dirs.jobs.glob("*.job.json"):
         f.unlink()
     (dirs.jobs / "bad.job.json").write_text("{not json")
-    assert serve_once(dirs.jobs, dirs.raw, dirs.clean) == 1
+    assert serve_once(dirs.jobs, dirs.raw, dirs.clean, gate=gate_for(dirs)) == 1
     assert not (dirs.jobs / "bad.job.json").exists()
 
 
