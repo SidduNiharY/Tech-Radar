@@ -12,7 +12,9 @@ from techradar.pipeline.writer import slugify
 
 SKILL_STATUSES: tuple[str, ...] = ("not_started", "learning", "built")
 
-FRONTMATTER_PATTERN = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+# The block may be empty ("---\n---\n") and may end the file with no newline
+# after the closing fence; both used to get a second block added.
+FRONTMATTER_PATTERN = re.compile(r"^---\r?\n(?:(.*?)\r?\n)?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 
 
 def update_front_matter(
@@ -30,7 +32,7 @@ def update_front_matter(
 
     match = FRONTMATTER_PATTERN.match(md)
     if match:
-        fm_raw = match.group(1)
+        fm_raw = match.group(1) or ""
         body = md[match.end() :]
         existing_data = yaml.safe_load(fm_raw)
         if not isinstance(existing_data, dict):

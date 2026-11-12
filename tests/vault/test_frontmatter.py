@@ -64,3 +64,20 @@ async def test_set_skill_status_success(tmp_path: Path):
     assert "status: learning" in updated_content
     assert "updated: '2026-11-08'" in updated_content or "updated: 2026-11-08" in updated_content
     assert updated_content.endswith("# FastAPI\nDeep framework notes.\n")
+
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.mark.parametrize(
+    ("md", "body"),
+    [
+        ("---\n---\nbody\n", "body\n"),  # empty front matter
+        ("---\nstatus: learning\n---", ""),  # front matter ends the file
+        ("---\nstatus: learning\n---\r\nbody", "body"),  # CRLF after the fence
+    ],
+)
+def test_update_never_adds_a_second_block(md, body):
+    out = update_front_matter(md, {"status": "built"}, frozenset({"status"}))
+    assert out.count("---") == 2, out
+    assert out == f"---\nstatus: built\n---\n{body}"
