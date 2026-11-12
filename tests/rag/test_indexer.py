@@ -114,7 +114,7 @@ def test_library_original_outside_raw_dir(tmp_path: Path):
 
 
 @pytest.fixture
-def index_deps(tmp_path: Path) -> IndexDeps:
+def index_deps(tmp_path: Path, rag_db: None) -> IndexDeps:
     vault = tmp_path / "vault"
     library = tmp_path / "library"
     library_inbox = tmp_path / "library-inbox"
