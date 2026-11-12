@@ -143,3 +143,35 @@ services:
     )
     assert code == 1
     assert "CRITICAL app digest mismatch" in lines
+
+
+def test_folders_that_only_hold_a_mount_point_are_expected() -> None:
+    # Seen on the TUF 2026-11-13: squid mounts /etc/squid/squid.conf, so docker
+    # diff reports /etc and /etc/squid as changed. A file put next to the
+    # mount is still flagged.
+    changes = [("C", "/etc"), ("C", "/etc/squid"), ("A", "/etc/squid/evil.conf")]
+    assert unexpected_changes(changes, [], ["/etc/squid/squid.conf"]) == ["/etc/squid/evil.conf"]
+
+
+def test_docker_secrets_count_as_mounts(tmp_path: Path) -> None:
+    from scripts.integrity_check import extract_mounts_and_pins
+
+    compose = tmp_path / "compose.yaml"
+    compose.write_text(
+        "services:\n"
+        "  postgres:\n"
+        "    image: x@sha256:abc\n"
+        "    secrets: [tr_app_password, {source: pg_pw, target: custom_pw}]\n",
+        encoding="utf-8",
+    )
+    _tmpfs, volumes, _pins = extract_mounts_and_pins(compose)
+    assert "/run/secrets/tr_app_password" in volumes["postgres"]
+    assert "/run/secrets/custom_pw" in volumes["postgres"]
+
+
+def test_postgres_socket_dir_is_tmpfs() -> None:
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    pg = yaml.safe_load((root / "compose.yaml").read_text(encoding="utf-8"))["services"]["postgres"]
+    assert any(str(t).startswith("/run/postgresql:") for t in pg["tmpfs"]), pg.get("tmpfs")

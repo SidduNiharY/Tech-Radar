@@ -27,6 +27,10 @@ services:
     mem_limit: 2g
     cpus: "2.0"
     pids_limit: 200
+    tmpfs:
+      - /tmp
+      # The server socket lives here; runtime state, not part of the image.
+      - /run/postgresql:uid=999,gid=999,mode=3777
     networks:
       - db
     cap_add:

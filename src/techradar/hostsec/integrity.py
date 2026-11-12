@@ -36,6 +36,9 @@ def unexpected_changes(
     """Find paths in changes that are not under any tmpfs or volume mount.
 
     Neither the mount directory itself nor any path underneath it is flagged.
+    A folder that only holds a mount point (for example /etc/squid for a
+    mounted /etc/squid/squid.conf) is not flagged either: Docker creates it to
+    hold the mount. Any other file in that folder is still its own entry.
     """
     all_mounts = [PurePosixPath(m.rstrip("/")) for m in [*tmpfs, *volumes] if m.strip()]
     unexpected: list[str] = []
@@ -44,7 +47,7 @@ def unexpected_changes(
         path = PurePosixPath(path_str)
         is_covered = False
         for mount in all_mounts:
-            if path == mount or mount in path.parents:
+            if path == mount or mount in path.parents or path in mount.parents:
                 is_covered = True
                 break
         if not is_covered:

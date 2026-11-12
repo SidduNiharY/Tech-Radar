@@ -87,6 +87,17 @@ def extract_mounts_and_pins(
                         volumes.append(parts[0])
                 elif isinstance(v, dict) and "target" in v:
                     volumes.append(str(v["target"]))
+        # Docker secrets are mounted read-only at /run/secrets/<target>.
+        raw_secrets = svc.get("secrets", [])
+        if isinstance(raw_secrets, list):
+            for sec in raw_secrets:
+                if isinstance(sec, str):
+                    volumes.append(f"/run/secrets/{sec}")
+                elif isinstance(sec, dict):
+                    target = str(sec.get("target") or sec.get("source") or "")
+                    if target:
+                        path = target if target.startswith("/") else f"/run/secrets/{target}"
+                        volumes.append(path)
         volumes_map[name] = volumes
 
         # pinned digests
