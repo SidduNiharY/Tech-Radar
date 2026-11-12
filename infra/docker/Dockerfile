@@ -2,7 +2,15 @@ FROM python:3.14.9-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a0
 # What every service runs on. It has no uv: uv is only needed to build the
 # .venv, and leaving its binaries in the image added 12 scanner findings.
 # Containers run read-only, so programs start from the built .venv directly.
-RUN mkdir -p /app && chown 1000:1000 /app
+# Debian 13 security fixes, pinned exactly (HIGH/CRITICAL in the base image).
+# pip is removed: the app never uses it (uv builds the .venv), and it vendors
+# old urllib3, msgpack and setuptools copies that scanners flag.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+        apt=3.0.4 libapt-pkg7.0=3.0.4 zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall --yes --no-input pip \
+    && mkdir -p /app && chown 1000:1000 /app
 ENV HOME=/app \
     PATH="/app/.venv/bin:${PATH}"
 WORKDIR /app

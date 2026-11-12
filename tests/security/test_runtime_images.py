@@ -43,3 +43,15 @@ def test_service_stages_never_copy_uv():
 def test_compose_never_calls_uv():
     for f in ROOT.glob("compose*.yaml"):
         assert '"uv"' not in f.read_text(encoding="utf-8"), f
+
+
+def test_runtime_stage_drops_pip():
+    # The base image's pip vendors old urllib3, msgpack and setuptools (5 HIGH
+    # findings). The app never uses pip: uv builds the .venv.
+    assert "pip uninstall" in stages()["runtime"]
+
+
+def test_runtime_stage_pins_debian_security_fixes():
+    runtime = stages()["runtime"]
+    for pin in ("apt=3.0.4", "libapt-pkg7.0=3.0.4", "zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1"):
+        assert pin in runtime, pin
