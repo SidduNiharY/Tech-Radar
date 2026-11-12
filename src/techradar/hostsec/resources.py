@@ -75,7 +75,7 @@ def check_gpu(apps: Sequence[GpuApp], services: Mapping[int, str | None]) -> lis
     for app in apps:
         svc = services.get(app.pid)
         if svc not in GPU_SERVICES:
-            alerts.append(f"CRITICAL unknown GPU process {app.name}")
+            alerts.append(f"CRITICAL unknown GPU process: {app.name}")
     return alerts
 
 

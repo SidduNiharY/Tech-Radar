@@ -114,6 +114,15 @@ def from_squid(line: str, client_map: Mapping[str, str] | None = None) -> Alert 
     )
 
 
+def _finding_rule(msg: str, fallback: str) -> str:
+    """The rule for a "CRITICAL <what>[: <detail>]" line: <what>, e.g.
+    "postgres digest mismatch" or "unknown GPU process", so alerts say what
+    happened and group by it (the detail stays in the summary)."""
+    what = msg.split(" ", 1)[1] if " " in msg else ""
+    what = what.split(":", 1)[0].strip()
+    return what[:80] or fallback
+
+
 def from_journal(entry: dict) -> Alert | None:
     """Parse a systemd journal JSON record into an Alert."""
     ident = str(entry.get("SYSLOG_IDENTIFIER", "")).strip()
@@ -210,7 +219,7 @@ def from_journal(entry: dict) -> Alert | None:
             return Alert(
                 level=Level.CRITICAL,
                 source=source,
-                rule=f"{source} check failed",
+                rule=_finding_rule(msg, f"{source} check failed"),
                 service=None,
                 summary=summary,
                 at=at,
@@ -219,7 +228,7 @@ def from_journal(entry: dict) -> Alert | None:
             return Alert(
                 level=Level.WARNING,
                 source=source,
-                rule=f"{source} warning",
+                rule=_finding_rule(msg, f"{source} warning"),
                 service=None,
                 summary=summary,
                 at=at,

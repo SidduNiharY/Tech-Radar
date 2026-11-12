@@ -62,7 +62,8 @@ wait_for_alert() {
 
 # 1. Shell in container
 echo "--- Attack 1: Container shell execution ---"
-docker compose exec -T bot sh -c true 2>/dev/null || true
+# postgres runs from Phase 1 on (the bot waits for the Telegram stage).
+docker compose exec -T postgres sh -c true 2>/dev/null || true
 wait_for_alert "TR shell or package manager in container" "critical" 60 || echo "[FAIL] Attack 1"
 
 # 2. AWS root key honeytoken read
@@ -75,7 +76,7 @@ fi
 # 3. Failed database login for honeytoken user admin_backup
 echo "--- Attack 3: Failed DB login for admin_backup ---"
 docker compose exec -T -e PGPASSWORD=wrong postgres psql -h 127.0.0.1 -U admin_backup techradar -c 'select 1' 2>/dev/null || true
-wait_for_alert "failed login for admin_backup" "critical" 60 || echo "[FAIL] Attack 3"
+wait_for_alert "admin_backup login attempt" "critical" 60 || echo "[FAIL] Attack 3"
 
 # 4. Outbound connection outside allowed peers from isolated service
 echo "--- Attack 4: Unauthorized outbound network attempt ---"
@@ -92,13 +93,15 @@ echo "--- Attack 6: Host filesystem integrity modification ---"
 if command -v sudo >/dev/null 2>&1; then
     sudo touch /etc/techradar-aide-test 2>/dev/null || true
     sudo systemctl start techradar-aide.service 2>/dev/null || true
-    wait_for_alert "AIDE differences" "warning" 60 || echo "[WARN] Attack 6"
+    wait_for_alert "aide integrity" "warning" 60 || echo "[WARN] Attack 6"
     sudo rm -f /etc/techradar-aide-test 2>/dev/null || true
 fi
 
 # 7. Image digest mismatch simulation
 echo "--- Attack 7: Image digest mismatch detection ---"
-uv run python scripts/integrity_check.py --pinned-override postgres=sha256:0000000000000000000000000000000000000000000000000000000000000000 2>/dev/null || true
+# The alerter reads integrity results from the journal (as the timer writes them).
+uv run python scripts/integrity_check.py --pinned-override postgres=sha256:0000000000000000000000000000000000000000000000000000000000000000 2>&1 \
+    | systemd-cat -t techradar-integrity || true
 wait_for_alert "postgres digest mismatch" "critical" 60 || echo "[FAIL] Attack 7"
 
 # 8. Unknown GPU process detection

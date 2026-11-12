@@ -54,6 +54,7 @@
   condition: >
     evt.type = connect and (
       container.name startswith "techradar-worker" or
+      container.name startswith "techradar-migrate" or
       container.name startswith "techradar-jarvis" or
       container.name startswith "techradar-api" or
       container.name startswith "techradar-postgres" or

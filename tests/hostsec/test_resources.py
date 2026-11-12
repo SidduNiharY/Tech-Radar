@@ -47,7 +47,7 @@ def test_service_of_pid() -> None:
 
 def test_unknown_gpu_process_is_critical() -> None:
     assert check_gpu([GpuApp(pid=7, name="xmrig", used_mib=900)], {7: None}) == [
-        "CRITICAL unknown GPU process xmrig"
+        "CRITICAL unknown GPU process: xmrig"
     ]
 
 
@@ -63,7 +63,7 @@ def test_allowed_gpu_services_no_alert() -> None:
 def test_unallowed_service_gpu_is_critical() -> None:
     apps = [GpuApp(pid=30, name="python", used_mib=1000)]
     services = {30: "bot"}
-    assert check_gpu(apps, services) == ["CRITICAL unknown GPU process python"]
+    assert check_gpu(apps, services) == ["CRITICAL unknown GPU process: python"]
 
 
 def test_gpu_busy_with_no_job() -> None:

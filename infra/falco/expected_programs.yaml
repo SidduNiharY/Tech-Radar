@@ -11,6 +11,7 @@ services:
   ollama: [ollama]
 internal_only:
   - worker
+  - migrate
   - jarvis
   - api
   - postgres
