@@ -6,7 +6,7 @@ UV_RUN := UV_PYTHON=$(UV_PYTHON) $(UV) run --no-sync
 SEMGREP := $(UV) tool run --from semgrep==1.184.0 semgrep
 SHELL_SCRIPTS := $(shell git ls-files '*.sh')
 # Images built from this repo that Trivy scans (gate-1).
-IMAGES := techradarbrain-bot techradarbrain-migrate techradarbrain-postgres
+IMAGES := techradar-bot techradar-migrate techradar-postgres
 
 .PHONY: all lint format test test-db test-egress security security-images simulate-1 simulate-2 guard-eval redteam-live gate-1-mac gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4 gate-5
 

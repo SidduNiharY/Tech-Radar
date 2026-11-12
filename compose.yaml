@@ -1,3 +1,7 @@
+# Containers are named techradar-<service>-1; the Falco rules and the
+# alerter match on that prefix, so the project name is pinned here.
+name: techradar
+
 x-hardened: &hardened-baseline
   cap_drop:
     - ALL
