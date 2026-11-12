@@ -40,7 +40,7 @@ security:
 	$(SEMGREP) scan --error --config security/semgrep/rules.yaml src
 	gitleaks git --redact --no-banner .
 	osv-scanner scan source -L uv.lock
-	trivy config --exit-code 1 --severity HIGH,CRITICAL .
+	trivy config --exit-code 1 --severity HIGH,CRITICAL --ignorefile .trivyignore.yaml .
 	hadolint infra/docker/Dockerfile infra/postgres/Dockerfile
 	shellcheck $(SHELL_SCRIPTS)
 	@echo "All security policy gates passed."

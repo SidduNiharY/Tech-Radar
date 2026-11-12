@@ -1,0 +1,9 @@
+# Accepted Trivy findings, each with its reason (reviewed 2026-11-12).
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - "infra/postgres/Dockerfile"
+    statement: >-
+      The official postgres entrypoint must start as root to set up the data
+      directory and the role passwords (tr-entrypoint.sh), then drops to the
+      postgres user; same exception as infra/policy/compose_exceptions.yaml.
