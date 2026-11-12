@@ -36,18 +36,28 @@ def unexpected_changes(
     """Find paths in changes that are not under any tmpfs or volume mount.
 
     Neither the mount directory itself nor any path underneath it is flagged.
-    A folder that only holds a mount point (for example /etc/squid for a
-    mounted /etc/squid/squid.conf) is not flagged either: Docker creates it to
-    hold the mount. Any other file in that folder is still its own entry.
+    A folder above a mount point (for example /etc/squid for a mounted
+    /etc/squid/squid.conf) is not flagged when it is added or changed: Docker
+    creates or touches it to hold the mount. Deleting it is still flagged, and
+    every file beside the mount is its own entry, so writes there are caught.
+    Known limit: a permission-only change on such a folder looks the same as
+    the mount and is not reported here; containers run read-only and Falco's
+    write rule covers the writes such a change would allow.
     """
-    all_mounts = [PurePosixPath(m.rstrip("/")) for m in [*tmpfs, *volumes] if m.strip()]
+    # tmpfs entries may carry options ("/var/spool/squid:uid=13,gid=13").
+    all_mounts = [
+        PurePosixPath(m.split(":", 1)[0].rstrip("/")) for m in [*tmpfs, *volumes] if m.strip()
+    ]
     unexpected: list[str] = []
 
-    for _action, path_str in changes:
+    for action, path_str in changes:
         path = PurePosixPath(path_str)
         is_covered = False
         for mount in all_mounts:
-            if path == mount or mount in path.parents or path in mount.parents:
+            if path == mount or mount in path.parents:
+                is_covered = True
+                break
+            if action in ("A", "C") and path in mount.parents:
                 is_covered = True
                 break
         if not is_covered:

@@ -175,3 +175,14 @@ def test_postgres_socket_dir_is_tmpfs() -> None:
     root = Path(__file__).resolve().parents[2]
     pg = yaml.safe_load((root / "compose.yaml").read_text(encoding="utf-8"))["services"]["postgres"]
     assert any(str(t).startswith("/run/postgresql:") for t in pg["tmpfs"]), pg.get("tmpfs")
+
+
+def test_deleting_a_folder_above_a_mount_is_still_flagged() -> None:
+    changes = [("D", "/etc"), ("C", "/etc/squid")]
+    assert unexpected_changes(changes, [], ["/etc/squid/squid.conf"]) == ["/etc"]
+
+
+def test_tmpfs_options_are_not_part_of_the_mount_path() -> None:
+    changes = [("A", "/var/spool/squid/cache.db"), ("A", "/var/spool/squidevil")]
+    tmpfs = ["/var/spool/squid:uid=13,gid=13"]
+    assert unexpected_changes(changes, tmpfs, []) == ["/var/spool/squidevil"]
