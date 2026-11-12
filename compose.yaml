@@ -404,6 +404,9 @@ networks:
     ipam:
       config:
         - subnet: 10.250.10.0/24
+          # Automatic addresses come from the top half only, so they never
+          # reuse a fixed one (all fixed addresses are below .128).
+          ip_range: 10.250.10.128/25
   egress_out:
     internal: false
 

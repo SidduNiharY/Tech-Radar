@@ -30,3 +30,18 @@ def test_egress_services_have_unique_fixed_addresses_in_the_subnet():
         assert addr not in seen, (name, seen.get(addr))
         seen[addr] = name
     assert {"squid", "bot", "fetcher", "clamav-update", "egress-probe"} <= set(seen.values())
+
+
+def test_dynamic_addresses_never_reuse_a_fixed_one():
+    # A container added without a fixed address must not get, say, the
+    # fetcher's address while fetcher is down: its denials would be logged as
+    # fetcher's, which are only warnings (from the automated review).
+    data = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
+    cfg = data["networks"]["egress_internal"]["ipam"]["config"][0]
+    dynamic = ipaddress.ip_network(cfg["ip_range"])
+    assert dynamic.subnet_of(ipaddress.ip_network(cfg["subnet"]))
+    for name, svc in data["services"].items():
+        nets = svc.get("networks") or {}
+        if isinstance(nets, dict) and "egress_internal" in nets:
+            addr = ipaddress.ip_address(nets["egress_internal"]["ipv4_address"])
+            assert addr not in dynamic, name
