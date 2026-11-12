@@ -170,3 +170,14 @@ def test_falco_web_server_is_off():
     root = Path(__file__).resolve().parents[2]
     cfg = yaml.safe_load((root / "infra/falco/techradar-output.yaml").read_text())
     assert cfg["webserver"]["enabled"] is False
+
+
+def test_aide_uses_its_own_database_file():
+    # Ubuntu's dailyaidecheck uses /var/lib/aide/aide.db with the stock
+    # config; sharing it meant each check overwrote the other's baseline
+    # (they collided on the TUF on 2026-11-13).
+    root = Path(__file__).resolve().parents[2]
+    conf = (root / "infra/host/aide/techradar.conf").read_text()
+    assert "database_in=file:@@{DBDIR}/techradar.db\n" in conf
+    assert "database_out=file:@@{DBDIR}/techradar.db.new\n" in conf
+    assert "/aide.db" not in conf

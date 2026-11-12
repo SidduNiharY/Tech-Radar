@@ -552,7 +552,7 @@ sudo OWNER="$USER" bash infra/host/install_host.sh
 # Before Telegram is set up (no alerter token yet), leave the alerter off:
 #   sudo OWNER="$USER" SKIP_ALERTER=1 bash infra/host/install_host.sh
 sudo aide --init --config /etc/aide/techradar.conf
-sudo mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+sudo mv /var/lib/aide/techradar.db.new /var/lib/aide/techradar.db
 uv run python scripts/plant_honeytokens.py --files     # decoy files; --db later, once the database secrets exist
 uv run python scripts/plant_honeytokens.py --verify
 ```
