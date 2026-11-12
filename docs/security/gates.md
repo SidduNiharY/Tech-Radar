@@ -1,22 +1,22 @@
 # Security Validation Gates
 
-Record of verification gates and external exposure reviews across system deployment phases.
+One row per gate from the overview plan (`docs/superpowers/plans/2026-11-07-techradar-00-overview.md`, "Security gates"). A gate is signed only when every check in its definition has passed, with the evidence named here. Columns follow Phase 1 Task 19.
 
-| Gate | Target Phase | Date | Git Commit | nmap LAN Result | nmap Tailnet Result | Heartbeat Verified | Status | Signed Off |
-|---|---|---|---|---|---|---|---|---|
-| Gate 1 | Phase 1: Hardened Foundation | 2026-11-08 | `c8d6021` | No open ports | Port 22/tcp (Tailscale SSH) only | ✅ Received via Alert Bot | PASS | SidduNiharY |
-| Gate 2 | Phase 2: Ingest & Markdown Vault | 2026-11-08 | `89dc8f0` | No network leak (parser/clamav isolated) | 12/12 Redteam Contained | ✅ Gate 2 automated suite passed | PASS | SidduNiharY |
-| Gate 2b | Phase 2b: RAG Knowledge Index & Ask | 2026-11-08 | `e24a85a` | RAG isolation (no httpx/subprocess) | 4/4 Poisoned Notes Contained | ✅ Gate 2b automated suite passed | PASS | SidduNiharY |
-| Gate 2c | Phase 2c: The Library (Large PDFs, Videos) | 2026-11-08 | `c988d96` | No network in parser; media sandbox protocol_whitelist=file | 54/54 Library suite passed | ✅ Gate 2c automated suite passed | PASS | SidduNiharY |
-| Gate 3 | Phase 3: Daily Briefing, Practice & Alerts | 2026-11-08 | `c988d96` | Squid allowlist checked; dual-model quiz key agreement | 90/90 Briefing & Practice passed | ✅ Gate 3 automated suite passed | PASS | SidduNiharY |
-| Gate 4 | Phase 4: Web Application v1 API & Client | 2026-11-08 | `c988d96` | 127.0.0.1 trusted host only; HMAC tickets; 64KB max | 29/29 API suite passed | ✅ Gate 4 automated suite passed | PASS | SidduNiharY |
-| Gate 5 | Phase 5: Planner & Progress Tracking | 2026-11-08 | Pending | In-memory & DB isolation; sleep correlation pattern | 54/54 Planner & Ops passed | ✅ Gate 5 automated suite passed | PASS | SidduNiharY |
-| Gate 6 | Phase 6: Jarvis Voice Assistant | Pending | | | | | | |
-| Gate 7 | Phase 7: Web Dashboard & Ops | Pending | | | | | | |
-| Gate 8 | Phase 8: Automation Engine | Pending | | | | | | |
-| Gate 9 | Phase 9: Peer Practice Network | Pending | | | | | | |
-| Gate 10 | Phase 10: Multi-Agent Deep Research | Pending | | | | | | |
-| Gate 11 | Phase 11: Local Knowledge Distillation | Pending | | | | | | |
-| Gate 12 | Phase 12: Continuous Adversarial Defense | Pending | | | | | | |
-| Gate 13 | Phase 13: Distributed Backup & DR | Pending | | | | | | |
-| Gate 14 | Phase 14: Mobile Companion & PWA | Pending | | | | | | |
+**Reset on 2026-11-12.** The rows recorded on 2026-11-08 (gates 1, 2, 2b, 2c, 3, 4 and 5 marked PASS) are withdrawn. They cited nmap scans and a received heartbeat although the Linux server did not exist yet, the `make gate-N` targets ran far less than the gate definitions, gate 4 was signed before the web UI was committed, and the rows for gates 6 to 14 named phases that are not in the plans (there are no phases 13 or 14). An audit on 2026-11-10 found the database code had never run against Postgres.
+
+| Gate | Date | Commit | nmap LAN | nmap tailnet | Heartbeat | Notes | Signed |
+|---|---|---|---|---|---|---|---|
+| gate-1: Secure foundation | | | not run | not run | not set up | NOT PASSED. Verified 2026-11-12 on the TUF: unit and policy tests (757), all 31 db tests, compose policy, import contracts, egress denials (7 of 8; the allowlisted-request test waits for the connection stage). Missing: semgrep, OSV-Scanner, gitleaks, Trivy, hadolint in `make security`; restore test; `check_host.sh` (needs auditd/AIDE/Falco/alerter/timers installed); simulated attacks; nmap; heartbeat; disk encryption skipped by owner decision (accepted risk, will show as FAIL). | |
+| gate-2: Secure ingest and vault | | | | | | NOT PASSED. Verified: the Intake Gateway now runs on every parser job (2026-11-12); end-to-end fake pipeline on Postgres; import contracts. Missing: `clamav` no-network test, parser no-network runtime test, promptfoo on real models, `make guard-eval` (needs the injection model). | |
+| gate-2b: Knowledge index and Ask | | | | | | NOT PASSED. Verified: RAG db tests. Missing: poisoned-note tests on the server, `make rag-eval` with real models. | |
+| gate-2c: Library | | | | | | NOT PASSED. Most of the plan's tasks are not built yet. | |
+| gate-3: Briefing, practice, exam alerts | | | | | | NOT PASSED. Not wired yet; needs the owner's 50-MCQ check. | |
+| gate-4: Web app v1 | | | | | | NOT PASSED. API fails closed since 2026-11-12; web pages still show placeholder data; no Playwright, ZAP or axe suite yet. | |
+| gate-5: Planner, progress, reliability | | | | | | NOT PASSED. Logic only; no tables or jobs yet. | |
+| gate-6: Voice Coach and English | | | | | | NOT PASSED. Not started. | |
+| gate-7: Understanding and World | | | | | | NOT PASSED. Not started. | |
+| gate-8: Exams | | | | | | NOT PASSED. Not started. | |
+| gate-9: Study smarter and live voice | | | | | | NOT PASSED. Not started. | |
+| gate-10: Models admin and tech extras | | | | | | NOT PASSED. Not started. | |
+| gate-11: Feedback and self-improvement | | | | | | NOT PASSED. Not started. | |
+| gate-12: Jarvis (last gate) | | | | | | NOT PASSED. Not started. | |
