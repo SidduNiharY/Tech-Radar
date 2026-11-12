@@ -13,3 +13,6 @@ infra/host/evidence.pub
 *.egg-info/
 dist/
 build/
+
+# Honeytoken excludes list when /var/lib/techradar-honey is not writable
+/var/
