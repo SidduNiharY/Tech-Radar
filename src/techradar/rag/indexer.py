@@ -232,7 +232,7 @@ async def collect_clipping_results(deps: IndexDeps) -> int:
             if chunks:
                 for i in range(0, len(chunks), 16):
                     batch = [c.text for c in chunks[i : i + 16]]
-                    embs = await deps.embedder(batch)
+                    embs = await deps.embedder.embed(batch)
                     embeddings.extend(embs)
 
             async with deps.session_factory() as session:
@@ -348,7 +348,7 @@ async def sync_index(deps: IndexDeps) -> dict[str, int]:
             if chunks:
                 for i in range(0, len(chunks), 16):
                     batch = [c.text for c in chunks[i : i + 16]]
-                    embs = await deps.embedder(batch)
+                    embs = await deps.embedder.embed(batch)
                     embeddings.extend(embs)
 
             # Atomic chunk replacement

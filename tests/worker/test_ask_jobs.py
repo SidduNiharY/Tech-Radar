@@ -40,7 +40,8 @@ async def seed_answer(
 ) -> AsyncGenerator[int]:
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("techradar.worker.tasks.settings.data_dir", tmp_path)
+    job_settings = db_settings.model_copy(update={"data_dir": tmp_path})
+    monkeypatch.setattr("techradar.worker.tasks._get_settings", lambda: job_settings)
 
     app_engine = make_engine("app", db_settings)
     session_factory = async_sessionmaker(app_engine, expire_on_commit=False)
@@ -48,8 +49,9 @@ async def seed_answer(
     ans_id: int
     async with session_factory() as session:
         ans = AnswerModel(
+            chat_id=1,
             question="What is the repo rate?",
-            answer="RBI repo rate is 6.5%.",
+            text="RBI repo rate is 6.5%.",
             citations=[{"doc_path": "notes/policy.md", "title": "RBI"}],
             status="answered",
             used_unverified=False,
@@ -64,6 +66,10 @@ async def seed_answer(
         yield ans_id
     finally:
         async with session_factory() as session:
+            await session.execute(
+                text("DELETE FROM techradar.outbox WHERE ref_id = :id AND purpose = 'answer_saved'"),
+                {"id": ans_id},
+            )
             await session.execute(
                 text("DELETE FROM techradar.answers WHERE id = :id"),
                 {"id": ans_id},
