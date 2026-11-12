@@ -182,3 +182,50 @@ def test_client_map_is_only_consulted_for_denials(tmp_path):
     d = AlerterDaemon(settings(tmp_path), client_map=cmap)
     d.handle("squid", "1794514104.903 0 10.250.10.11 TCP_MISS/200 512 GET http://ok/ - x")
     assert calls == []
+
+
+def test_unreadable_source_file_raises_a_critical_alert(tmp_path):
+    # A log the alerter cannot read must not be a silent blind spot.
+    from techradar.hostsec.alerter import check_sources
+
+    readable = tmp_path / "events.json"
+    readable.write_text("")
+    missing = tmp_path / "nope" / "audit.log"
+    alerts = check_sources(
+        [("falco", ["tail", "-F", str(readable)]), ("auditd", ["tail", "-F", str(missing)])]
+    )
+    assert [(a.level.value, a.rule, a.source) for a in alerts] == [
+        ("critical", "alerter source unreadable: auditd", "alerter")
+    ]
+
+
+def test_main_logs_unreadable_sources_before_following(monkeypatch, tmp_path):
+    monkeypatch.setattr("techradar.hostsec.alerter.get_settings", lambda: settings(tmp_path))
+    monkeypatch.setattr("techradar.hostsec.alerter.run_streams", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "techradar.hostsec.alerter.stream_commands",
+        lambda: [("falco", ["tail", "-F", str(tmp_path / "missing.json")])],
+    )
+    main([])
+    assert [a["rule"] for a in logged(tmp_path)] == ["alerter source unreadable: falco"]
+
+
+def test_stream_errors_reach_the_journal():
+    import inspect
+
+    from techradar.hostsec import alerter
+
+    assert "DEVNULL" not in inspect.getsource(alerter.popen_lines)
+
+
+def test_detection_streams_are_handled_before_log_streams():
+    import queue as q
+
+    from techradar.hostsec.alerter import next_line
+
+    high, low = q.Queue(), q.Queue()
+    low.put(("squid", "a"))
+    low.put(("squid", "b"))
+    high.put(("falco", "x"))
+    assert next_line(high, low, timeout_s=0.01) == ("falco", "x")
+    assert next_line(high, low, timeout_s=0.01) == ("squid", "a")

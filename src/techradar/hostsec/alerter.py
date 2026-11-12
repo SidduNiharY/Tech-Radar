@@ -268,13 +268,62 @@ def popen_lines(kind: str, cmd: list[str]) -> Iterator[str]:
     with subprocess.Popen(  # noqa: S603
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        # stderr is inherited, so a stream's errors land in the journal.
         text=True,
         bufsize=1,
     ) as proc:
         if proc.stdout is None:
             return
         yield from proc.stdout
+
+
+# Streams handled before the others (see run_streams).
+HIGH_PRIORITY = frozenset({"falco", "auditd", "journal"})
+
+
+def next_line(
+    high: queue.Queue[tuple[str, str]],
+    low: queue.Queue[tuple[str, str]],
+    *,
+    timeout_s: float,
+) -> tuple[str, str] | None:
+    """The next line to handle: detection lines first, then log lines."""
+    try:
+        return high.get_nowait()
+    except queue.Empty:
+        pass
+    try:
+        return low.get(timeout=timeout_s)
+    except queue.Empty:
+        return None
+
+
+def check_sources(streams: Sequence[tuple[str, list[str]]]) -> list[Alert]:
+    """A critical alert for each followed log file the alerter cannot read.
+
+    `tail -F` waits quietly for a file it cannot open, so without this an
+    unreadable source would be a silent blind spot.
+    """
+    alerts: list[Alert] = []
+    for kind, cmd in streams:
+        if not cmd or cmd[0] != "tail":
+            continue
+        path = Path(cmd[-1])
+        try:
+            with path.open("rb"):
+                pass
+        except OSError as exc:
+            alerts.append(
+                Alert(
+                    level=Level.CRITICAL,
+                    source="alerter",
+                    rule=f"alerter source unreadable: {kind}",
+                    service=None,
+                    summary=f"{path}: {exc.strerror or exc}"[:200],
+                    at=datetime.now(UTC),
+                )
+            )
+    return alerts
 
 
 def run_streams(
@@ -292,30 +341,32 @@ def run_streams(
     started again after `restart_delay_s`.
     """
     stop = stop or threading.Event()
-    lines: queue.Queue[tuple[str, str]] = queue.Queue()
+    # Detection streams have their own queue and are always handled first, so
+    # a flood of Squid or Postgres lines cannot delay a Falco or audit alert.
+    # The log queue is bounded: when full, only the log streams wait.
+    high: queue.Queue[tuple[str, str]] = queue.Queue()
+    low: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=10_000)
 
     def pump(kind: str, cmd: list[str]) -> None:
+        target = high if kind in HIGH_PRIORITY else low
         while not stop.is_set():
             try:
                 for line in spawn(kind, cmd):
-                    lines.put((kind, line))
+                    target.put((kind, line))
                     if stop.is_set():
                         return
             except Exception as exc:
                 logger.error("Alerter stream %s failed: %s", kind, exc)
+            logger.warning("Alerter stream %s ended; restarting in %ss", kind, restart_delay_s)
             stop.wait(restart_delay_s)
 
     for kind, cmd in streams:
         threading.Thread(target=pump, args=(kind, cmd), name=f"alerter-{kind}", daemon=True).start()
 
     while not stop.is_set():
-        try:
-            kind, line = lines.get(timeout=0.2)
-        except queue.Empty:
-            if on_idle:
-                on_idle()
-            continue
-        daemon.handle(kind, line)
+        item = next_line(high, low, timeout_s=0.2)
+        if item is not None:
+            daemon.handle(*item)
         if on_idle:
             on_idle()
 
@@ -337,7 +388,10 @@ def main(args: Sequence[str] | None = None) -> int:
 
     daemon = AlerterDaemon(settings)
     logger.info("TechRadar hostsec alerter daemon starting...")
-    run_streams(daemon, stream_commands())
+    streams = stream_commands()
+    for alert in check_sources(streams):
+        daemon.process_alert(alert)
+    run_streams(daemon, streams)
     return 0
 
 
