@@ -1,0 +1,10 @@
+#!/bin/sh
+# Stand-in for gosu: run a command as another user, as gosu does.
+# The image's gosu is a Go binary whose bundled standard library scanners
+# flag (26 HIGH/CRITICAL); the entrypoint only needs "become postgres, then
+# exec", which util-linux's setpriv does.
+#   gosu <user> <command> [args...]
+set -eu
+user="$1"
+shift
+exec setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups -- "$@"

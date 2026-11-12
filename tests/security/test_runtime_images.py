@@ -65,3 +65,18 @@ def test_uv_downloads_are_cached_between_builds():
     assert syncs
     for ln in syncs:
         assert "--mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000" in ln, ln
+
+
+PG_DOCKERFILE = ROOT / "infra" / "postgres" / "Dockerfile"
+
+
+def test_postgres_image_replaces_gosu_and_pins_apt_fixes():
+    # gosu is a Go binary whose bundled stdlib carried 26 HIGH/CRITICAL
+    # findings; the entrypoint only uses it to switch to the postgres user,
+    # which util-linux's setpriv does.
+    text = PG_DOCKERFILE.read_text(encoding="utf-8")
+    assert "infra/postgres/gosu /usr/local/bin/gosu" in text
+    shim = (ROOT / "infra" / "postgres" / "gosu").read_text(encoding="utf-8")
+    assert "exec setpriv" in shim and "--init-groups" in shim
+    for pin in ("apt=2.6.2", "libapt-pkg6.0=2.6.2"):
+        assert pin in text, pin
