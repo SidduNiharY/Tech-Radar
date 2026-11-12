@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import func, select
 
+from techradar.db.models import Fact, IntakeLog, Item, RawItem
 from techradar.pipeline.process import (
     PipelineDeps,
     collect_results,
@@ -40,6 +42,21 @@ GOOD_READER = {
     },
     "entities": ["RBI"],
 }
+
+
+async def count_rows(deps: PipelineDeps, model: type) -> int:
+    async with deps.session_factory() as s:
+        return int((await s.execute(select(func.count()).select_from(model))).scalar_one())
+
+
+async def item_flags(deps: PipelineDeps) -> list[str]:
+    async with deps.session_factory() as s:
+        return sorted((await s.execute(select(Item.flags))).scalar_one())
+
+
+async def fact_statuses(deps: PipelineDeps) -> set[str]:
+    async with deps.session_factory() as s:
+        return set((await s.execute(select(Fact.status))).scalars().all())
 
 
 @pytest.fixture
@@ -162,7 +179,7 @@ async def test_collect_feed_result_inserts_only_allowlisted_links(
     deps, feed_result_with_one_bad_link
 ):
     counts = await collect_results(deps)
-    assert counts["skipped_links"] == 1
+    assert counts["skipped_links"] == 1 and await count_rows(deps, RawItem) == 1
 
 
 @pytest.mark.db
@@ -196,9 +213,12 @@ async def test_ollama_error_marks_needs_review(
     await collect_results(deps_with_failing_completer)
     for _ in range(3):
         await process_new_items(deps_with_failing_completer)
+    assert await item_flags(deps_with_failing_completer) == ["model_unavailable"]
 
 
 @pytest.mark.db
 async def test_flagged_item_facts_never_verified(deps, flagged_page_result_from_two_domains):
     await collect_results(deps)
     await process_new_items(deps)
+    assert await fact_statuses(deps) == {"unverified"}
+    assert await count_rows(deps, IntakeLog) == 2

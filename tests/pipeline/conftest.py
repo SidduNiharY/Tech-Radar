@@ -11,6 +11,7 @@ against a database that holds real notes.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -23,7 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from techradar.db.engine import make_engine
 from techradar.db.models import Fact, FactSource, Item, QuarantineItem, RawItem, Source
+from techradar.llm.client import Completer
 from techradar.pipeline.process import PipelineDeps
+from techradar.schemas.pipeline import CleanDoc, FeedEntry, IntakeStep, IntakeVerdict, ParseResult
 from techradar.settings import Settings
 from tests.fakes import FakeCompleter, FakeEmbedder
 
@@ -40,6 +43,30 @@ PIPELINE_TABLES = (
     "sources",
 )
 OFFICIAL = frozenset({"rbi.org.in"})
+ALLOWED = frozenset({"rbi.org.in", "pib.gov.in"})
+
+# One story, as two newspapers might publish it.
+STORY_TITLE = "RBI keeps the repo rate at 5.5%"
+STORY_TEXT = "The Reserve Bank of India kept the repo rate at 5.5% in its policy review."
+STORY_KEY = f"{STORY_TITLE}\n\n{STORY_TEXT}"  # what process_item embeds
+PROFILE_LINE = "Economy & Banking"
+RELATED = [1.0, 0.0, 0.0, 0.0]
+UNRELATED = [0.0, 1.0, 0.0, 0.0]
+
+READER_OUTPUT = {
+    "summary": "RBI kept the repo rate unchanged at its policy review.",
+    "section": "economy",
+    "exam_tags": ["bank"],
+    "facts": [{"statement": "The repo rate is 5.5%.", "subject": "repo rate", "value": "5.5%"}],
+    "four_questions": {
+        "what_happened": "RBI held the repo rate.",
+        "why": "Inflation is within the target band.",
+        "what_changes": "Loan rates stay where they are.",
+        "how_it_affects_me": "EMIs do not change for now.",
+    },
+    "entities": ["RBI"],
+}
+SUPPORTED = {"supported": True, "quote": "kept the repo rate at 5.5%"}
 
 
 @dataclass
@@ -49,6 +76,13 @@ class FactsHolder:
     new_from_news_only: int
     older_official: int
     repeat_of_old_value: int
+
+
+class FailingCompleter(Completer):
+    """Behaves like Ollama being down."""
+
+    async def complete(self, *args: object, **kwargs: object) -> str:
+        raise ConnectionError("ollama unreachable")
 
 
 @pytest.fixture
@@ -154,25 +188,137 @@ async def facts(session: AsyncSession) -> FactsHolder:
     )
 
 
-@pytest.fixture
-def deps(pipeline_db: None, db_settings: Settings, tmp_path: Path) -> PipelineDeps:
-    """Pipeline deps on the real database, with fake models."""
+async def _make_deps(
+    settings: Settings,
+    tmp_path: Path,
+    completer: Completer,
+    profile_vector: list[float],
+) -> PipelineDeps:
     vault, clean, jobs, raw = (tmp_path / d for d in ("vault", "clean", "parse-jobs", "raw"))
-    for d in (vault, clean, jobs, raw, db_settings.data_dir / "quarantine"):
+    for d in (vault / "context", clean, jobs, raw, settings.data_dir / "quarantine"):
         d.mkdir(parents=True, exist_ok=True)
-    engine = make_engine("app", db_settings)
+    (vault / "context" / "interests.md").write_text(f"# Goals\n{PROFILE_LINE}\n", encoding="utf-8")
+    engine = make_engine("app", settings)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    # Pipeline code stores every new raw item under source_id=1.
+    async with factory() as s:
+        s.add(
+            Source(
+                name="test-feed",
+                url="https://pib.gov.in/rss.xml",
+                host="pib.gov.in",
+                section="economy",
+                trust_tier="official",
+            )
+        )
+        await s.commit()
+    embedder = FakeEmbedder(dim=4, table={PROFILE_LINE: profile_vector, STORY_KEY: RELATED})
     return PipelineDeps(
-        session_factory=async_sessionmaker(engine, expire_on_commit=False),
-        completer=FakeCompleter([]),
-        embedder=FakeEmbedder(dim=4),
-        settings=db_settings,
+        session_factory=factory,
+        completer=completer,
+        embedder=embedder,
+        settings=settings,
         vault_root=vault,
         clean_dir=clean,
         jobs_dir=jobs,
         raw_dir=raw,
-        allowed=frozenset({"rbi.org.in", "pib.gov.in"}),
+        allowed=ALLOWED,
         official=OFFICIAL,
     )
+
+
+def _story_responses(items: int, checked: bool = True) -> FakeCompleter:
+    per_item = [json.dumps(READER_OUTPUT)] + ([json.dumps(SUPPORTED)] if checked else [])
+    return FakeCompleter(per_item * items)
+
+
+@pytest.fixture
+async def deps(pipeline_db: None, db_settings: Settings, tmp_path: Path) -> PipelineDeps:
+    """Pipeline deps on the real database, with fake models (enough for two stories)."""
+    return await _make_deps(db_settings, tmp_path, _story_responses(2), RELATED)
+
+
+@pytest.fixture
+async def deps_with_unrelated_profile(
+    pipeline_db: None, db_settings: Settings, tmp_path: Path
+) -> PipelineDeps:
+    return await _make_deps(db_settings, tmp_path, _story_responses(1), UNRELATED)
+
+
+@pytest.fixture
+async def deps_with_failing_completer(
+    pipeline_db: None, db_settings: Settings, tmp_path: Path
+) -> PipelineDeps:
+    return await _make_deps(db_settings, tmp_path, FailingCompleter(), RELATED)
+
+
+def _write_result(clean_dir: Path, result: ParseResult) -> None:
+    (clean_dir / f"{result.job_id}.result.json").write_text(
+        result.model_dump_json(), encoding="utf-8"
+    )
+
+
+def _page(n: int, domain: str, verdict: str = "pass") -> ParseResult:
+    outcome = "flag" if verdict == "flag" else "ok"
+    return ParseResult(
+        job_id=f"{n:032x}",
+        kind="page",
+        status="ok",
+        doc=CleanDoc(
+            url=f"https://www.{domain}/business/repo-rate-{n}",
+            title=STORY_TITLE,
+            text=STORY_TEXT,
+            lang="en",
+        ),
+        intake=IntakeVerdict(
+            verdict=verdict,
+            steps=[IntakeStep(name="injection", outcome=outcome)],
+            reasons=["injection_pattern"] if verdict == "flag" else [],
+        ),
+    )
+
+
+@pytest.fixture
+def page_result_from_news_domain(request: pytest.FixtureRequest) -> None:
+    deps = _deps_of(request)
+    _write_result(deps.clean_dir, _page(1, "thehindu.com"))
+
+
+@pytest.fixture
+def same_story_from_two_domains(deps: PipelineDeps) -> None:
+    _write_result(deps.clean_dir, _page(1, "thehindu.com"))
+    _write_result(deps.clean_dir, _page(2, "indianexpress.com"))
+
+
+@pytest.fixture
+def flagged_page_result_from_two_domains(deps: PipelineDeps) -> None:
+    deps.completer = _story_responses(2, checked=False)  # flagged facts are never checked
+    _write_result(deps.clean_dir, _page(1, "thehindu.com", verdict="flag"))
+    _write_result(deps.clean_dir, _page(2, "indianexpress.com", verdict="flag"))
+
+
+@pytest.fixture
+def feed_result_with_one_bad_link(deps: PipelineDeps) -> None:
+    _write_result(
+        deps.clean_dir,
+        ParseResult(
+            job_id="f" * 32,
+            kind="feed",
+            status="ok",
+            entries=[
+                FeedEntry(title="Allowed", link="https://pib.gov.in/PressRelease.aspx?id=1"),
+                FeedEntry(title="Not allowed", link="https://evil.example/phish"),
+            ],
+        ),
+    )
+
+
+def _deps_of(request: pytest.FixtureRequest) -> PipelineDeps:
+    """Whichever deps fixture the test asked for."""
+    for name in ("deps_with_unrelated_profile", "deps_with_failing_completer", "deps"):
+        if name in request.fixturenames:
+            return request.getfixturevalue(name)
+    raise LookupError("page_result_from_news_domain needs a deps fixture")
 
 
 @pytest.fixture
