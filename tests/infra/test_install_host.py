@@ -212,3 +212,18 @@ def test_installer_gives_settings_a_chat_id_placeholder_before_telegram():
     text = SCRIPT.read_text()
     assert "TR_TELEGRAM_OWNER_CHAT_ID=0" in text
     assert 'sudo -u "$OWNER"' in text[text.index("TR_TELEGRAM_OWNER_CHAT_ID=0") - 300 :]
+
+
+def test_falco_unit_is_exempt_from_journald_rate_limits(tmp_path):
+    # Falco's events reach the alerter through the journal; journald drops
+    # messages from a unit that logs too fast, which would hide events.
+    dest = run_install(tmp_path)
+    dropin = dest / "etc/systemd/system/falco-modern-bpf.service.d/techradar-logging.conf"
+    text = dropin.read_text()
+    assert "[Service]" in text and "LogRateLimitIntervalSec=0" in text
+
+
+def test_alerter_watches_journald_itself():
+    from techradar.hostsec.alerter import stream_commands
+
+    assert "systemd-journald" in dict(stream_commands())["journal"]

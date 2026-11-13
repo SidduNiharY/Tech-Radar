@@ -229,3 +229,15 @@ def test_postgres_role_class_is_read_from_the_audit_field() -> None:
     )
     a = from_postgres(line, migrating=False)
     assert a is not None and a.rule == "unauthorized role change"
+
+
+def test_journald_suppressing_messages_is_critical() -> None:
+    # If journald rate-limits a unit, events are lost: that must be loud.
+    a = from_journal(
+        {
+            "SYSLOG_IDENTIFIER": "systemd-journald",
+            "MESSAGE": "Suppressed 4213 messages from falco-modern-bpf.service",
+        }
+    )
+    assert a is not None and a.level is Level.CRITICAL
+    assert a.rule == "journal suppressed messages"

@@ -51,6 +51,8 @@ render "$FALCO/generated_lists.yaml" "$DESTDIR/etc/falco/rules.d/10-techradar-li
 render "$FALCO/techradar_rules.yaml" "$DESTDIR/etc/falco/rules.d/20-techradar-rules.yaml" 0644
 render "$FALCO/techradar-output.yaml" "$DESTDIR/etc/falco/config.d/techradar-output.yaml" 0644
 render "$FALCO/logrotate" "$DESTDIR/etc/logrotate.d/falco-techradar" 0644
+render "$FALCO/falco-logging.conf" \
+    "$DESTDIR/etc/systemd/system/falco-modern-bpf.service.d/techradar-logging.conf" 0644
 
 if [ -n "$DESTDIR" ]; then
     echo "Wrote files under $DESTDIR (nothing enabled)."
@@ -67,6 +69,7 @@ install -d -m 0750 -o root -g adm /var/log/falco
 if systemctl cat falco-modern-bpf.service >/dev/null 2>&1; then
     # Checks the whole configured set (our rules use Falco's default macros).
     falco --dry-run
+    systemctl daemon-reload  # picks up the logging drop-in
     systemctl restart falco-modern-bpf.service
 else
     echo "Falco is not installed yet (RUNBOOK section 22.3); its rules are in place for when it is."

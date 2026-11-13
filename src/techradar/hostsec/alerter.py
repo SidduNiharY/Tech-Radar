@@ -137,6 +137,10 @@ class AlerterDaemon:
                 # A journal entry; Falco's own startup lines and journald's
                 # byte-array messages are not events and are skipped.
                 message = json.loads(line).get("MESSAGE")
+                if isinstance(message, list):
+                    # journald's form for a message with non-UTF-8 bytes; an
+                    # attacker can cause it, so decode instead of dropping.
+                    message = bytes(message).decode("utf-8", "replace")
                 if isinstance(message, str) and message.startswith("{"):
                     self.process_falco_line(message)
             elif kind == "auditd":
@@ -224,6 +228,7 @@ class AlerterDaemon:
 JOURNAL_IDENTIFIERS = (
     "sudo",
     "systemd-logind",
+    "systemd-journald",
     "aide",
     "techradar-integrity",
     "techradar-resources",

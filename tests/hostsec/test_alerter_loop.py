@@ -256,5 +256,15 @@ def test_round_robin_returns_none_when_every_queue_is_empty():
 def test_falco_journal_noise_is_ignored(tmp_path):
     d = AlerterDaemon(settings(tmp_path))
     d.handle("falco", json.dumps({"MESSAGE": "Falco initialized with configuration files:"}))
-    d.handle("falco", json.dumps({"MESSAGE": [70, 97, 108]}))  # journald's byte-array form
     assert logged(tmp_path) == []
+
+
+def test_falco_event_stored_as_bytes_is_still_processed(tmp_path):
+    # journald stores a message with non-UTF-8 bytes as a list of ints. An
+    # attacker can put such a byte in a command line; the event must not be
+    # dropped (automated review of 025d755).
+    raw = FALCO_EVENT.encode().replace(b"Shell spawned", b"Shell \xff spawned")
+    d = AlerterDaemon(settings(tmp_path))
+    d.handle("falco", json.dumps({"MESSAGE": list(raw)}))
+    [a] = logged(tmp_path)
+    assert a["rule"] == "TR shell or package manager in container"

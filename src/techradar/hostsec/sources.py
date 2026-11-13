@@ -151,6 +151,19 @@ def from_journal(entry: dict) -> Alert | None:
             at=at,
         )
 
+    if ident == "systemd-journald":
+        # journald rate-limited a unit: events from it were lost.
+        if msg.startswith("Suppressed"):
+            return Alert(
+                level=Level.CRITICAL,
+                source="journal",
+                rule="journal suppressed messages",
+                service=None,
+                summary=summary,
+                at=at,
+            )
+        return None
+
     if ident == "systemd-logind":
         if "New session" in msg:
             return Alert(
