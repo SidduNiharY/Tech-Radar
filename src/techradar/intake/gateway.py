@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from techradar.intake.av import AvScanner, check_av
-from techradar.intake.filetype import check_size, check_source, check_type, detect_mime
+from techradar.intake.filetype import check_size, check_source, check_type, detect_file_mime
 from techradar.intake.links import check_links, extract_links
 from techradar.intake.pdfscan import check_pdf
 from techradar.intake.rules import check_rules
@@ -44,6 +44,10 @@ def quarantine_file(raw_path: Path, quarantine_dir: Path, job_id: str) -> Path:
     return target_path
 
 
+MEDIA_KINDS = frozenset({"video", "audio"})
+MEDIA_SCAN_BYTES = 8 * 1024 * 1024
+
+
 def gate_job(
     job: ParseJob,
     raw_dir: Path,
@@ -73,17 +77,34 @@ def gate_job(
             intake=IntakeVerdict(verdict="reject", steps=[step], reasons=["raw file missing"]),
         )
 
-    data = raw_path.read_bytes()
     steps: list[IntakeStep] = []
 
     # 1. Source check
     steps.append(check_source(job, allowed_hosts))
 
-    # 2. Size check
-    steps.append(check_size(job, len(data), limits))
+    # 2. Size check, from the file system: an oversized file is never read.
+    size = raw_path.stat().st_size
+    steps.append(check_size(job, size, limits))
+    if steps[-1].outcome == "reject":
+        reasons = [s.detail for s in steps if s.outcome == "reject" and s.detail][:10]
+        print(f"INTAKE reject {job.job_id} {reasons}")
+        return ParseResult(
+            job_id=job.job_id,
+            kind=job.kind,
+            status="rejected",
+            intake=IntakeVerdict(verdict="reject", steps=steps, reasons=reasons),
+        )
+
+    # Media (up to 4 GB) is never loaded whole: the byte checks below see its
+    # first MEDIA_SCAN_BYTES; ffprobe checks the container in the structure step.
+    if job.kind in MEDIA_KINDS:
+        with raw_path.open("rb") as fh:
+            data = fh.read(MEDIA_SCAN_BYTES)
+    else:
+        data = raw_path.read_bytes()
 
     # 3. Type check
-    mime = detect_mime(data[:8192])
+    mime = detect_file_mime(raw_path)
     steps.append(check_type(job, mime, data[:1024]))
 
     # 4. Structure check (PDFs only)

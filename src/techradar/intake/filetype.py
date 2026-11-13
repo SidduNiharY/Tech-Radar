@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import contextlib
 import urllib.parse
+import zipfile
 from collections.abc import Mapping
+from pathlib import Path
 
 from techradar.schemas.pipeline import IntakeStep, JobKind, ParseJob
 from techradar.security.urls import host_allowed, registrable_domain
+
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+EPUB_MIME = "application/epub+zip"
 
 ALLOWED_MIME: dict[JobKind, frozenset[str]] = {
     "feed": frozenset(
@@ -19,13 +24,17 @@ ALLOWED_MIME: dict[JobKind, frozenset[str]] = {
     "page": frozenset({"text/html"}),
     "pdf": frozenset({"application/pdf"}),
     "md": frozenset({"text/plain", "text/markdown"}),
-    # Task 3 fills the library kinds below; empty means every file is refused until then.
-    "docx": frozenset(),
-    "epub": frozenset(),
-    "video": frozenset(),
-    "audio": frozenset(),
-    "image": frozenset(),
+    "docx": frozenset({DOCX_MIME}),
+    "epub": frozenset({EPUB_MIME}),
+    "video": frozenset({"video/mp4", "video/x-matroska", "video/webm", "video/quicktime"}),
+    "audio": frozenset({"audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/ogg"}),
+    "image": frozenset({"image/png", "image/jpeg"}),
 }
+
+# Kinds whose files are ZIP archives; only these may start with the ZIP header.
+ZIP_KINDS: frozenset[str] = frozenset({"docx", "epub"})
+# Zip directories larger than this are not inspected here (check_zip rejects them).
+_MAX_ZIP_ENTRIES = 10_000
 
 
 def detect_mime(head: bytes) -> str:
@@ -42,6 +51,18 @@ def detect_mime(head: bytes) -> str:
         return "application/x-executable"
     if head.startswith(b"PK\x03\x04"):
         return "application/zip"
+
+    # Playlists and concat lists: text that makes ffmpeg open other files.
+    # Never media, whatever the file is called (checked before any media type).
+    stripped = head.lstrip(b"\xef\xbb\xbf \t\r\n")
+    if stripped.startswith(b"#EXTM3U"):
+        return "application/vnd.apple.mpegurl"
+    if stripped.startswith(b"ffconcat"):
+        return "text/x-ffconcat"
+
+    media = _media_mime(head)
+    if media is not None:
+        return media
 
     # PDF
     if head.startswith(b"%PDF-") or b"%PDF-" in head[:1024]:
@@ -64,6 +85,61 @@ def detect_mime(head: bytes) -> str:
             return kind.mime
 
     return "text/plain"
+
+
+def _media_mime(head: bytes) -> str | None:
+    """Media and image types from their signatures (no external library)."""
+    if len(head) >= 12 and head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in (b"M4A ", b"M4B "):
+            return "audio/mp4"
+        if brand == b"qt  ":
+            return "video/quicktime"
+        return "video/mp4"
+    if head.startswith(b"\x1a\x45\xdf\xa3"):  # EBML: Matroska or WebM
+        return "video/webm" if b"webm" in head[:64] else "video/x-matroska"
+    if head.startswith(b"ID3") or head[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return "audio/mpeg"
+    if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head.startswith(b"OggS"):
+        return "audio/ogg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    return None
+
+
+def detect_file_mime(path: Path) -> str:
+    """detect_mime, plus a look inside ZIP archives to tell DOCX and EPUB apart.
+
+    Only the central directory and the tiny EPUB "mimetype" entry are read;
+    check_zip later inspects every entry.
+    """
+    with path.open("rb") as fh:
+        head = fh.read(8192)
+    if not head.startswith(b"PK\x03\x04"):
+        return detect_mime(head)
+    try:
+        with zipfile.ZipFile(path) as z:
+            infos = z.infolist()
+            if len(infos) > _MAX_ZIP_ENTRIES:
+                return "application/zip"
+            names = {i.filename for i in infos}
+            mt = next((i for i in infos if i.filename == "mimetype"), None)
+            if (
+                mt is not None
+                and mt.file_size <= 64
+                and z.read(mt).strip() == EPUB_MIME.encode()
+                and "META-INF/container.xml" in names
+            ):
+                return EPUB_MIME
+            if "[Content_Types].xml" in names and "word/document.xml" in names:
+                return DOCX_MIME
+    except zipfile.BadZipFile, OSError, RuntimeError, ValueError:
+        pass
+    return "application/zip"
 
 
 def check_source(job: ParseJob, allowed_hosts: frozenset[str]) -> IntakeStep:
@@ -136,8 +212,10 @@ def check_type(job: ParseJob, mime: str, head: bytes) -> IntakeStep:
             detail=f"Mime '{mime}' not permitted for kind '{job.kind}'",
         )
 
-    # Reject polyglots / executable headers even if labeled as other types
-    if head.startswith(b"MZ") or head.startswith(b"\x7fELF") or head.startswith(b"PK\x03\x04"):
+    # Reject polyglots / executable headers even if labeled as other types.
+    # DOCX and EPUB are ZIP archives, so only they may start with the ZIP header.
+    zip_head = head.startswith(b"PK\x03\x04") and job.kind not in ZIP_KINDS
+    if head.startswith(b"MZ") or head.startswith(b"\x7fELF") or zip_head:
         return IntakeStep(
             name="type",
             outcome="reject",
