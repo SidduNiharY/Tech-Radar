@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Sequence
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import yaml
 from pydantic import BaseModel, Field
@@ -21,18 +20,6 @@ class ChapterSummary(BaseModel):
     summary_markdown: str
     key_ideas: list[str] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
-
-
-def is_night_window(now_dt: datetime, tz_name: str = "Asia/Kolkata") -> bool:
-    """Return True only if local time is between 01:00 and 05:00 in given timezone."""
-    tz = ZoneInfo(tz_name)
-    if now_dt.tzinfo is None:
-        local_dt = now_dt.replace(tzinfo=tz)
-    else:
-        local_dt = now_dt.astimezone(tz)
-
-    t = local_dt.time()
-    return time(1, 0) <= t < time(5, 0)
 
 
 def check_key_idea_citations(key_ideas: Sequence[str]) -> bool:

@@ -162,6 +162,22 @@ def upgrade() -> None:
         schema=SCHEMA,
     )
 
+    op.create_index(
+        "ux_library_parts_doc_ordinal",
+        "library_parts",
+        ["doc_id", "ordinal"],
+        unique=True,
+        schema=SCHEMA,
+    )
+    op.create_index(
+        "ux_library_chapters_doc_ordinal",
+        "library_chapters",
+        ["doc_id", "ordinal"],
+        unique=True,
+        schema=SCHEMA,
+    )
+    op.create_index("ix_book_evals_doc_id", "book_evals", ["doc_id"], schema=SCHEMA)
+
     op.add_column("chunks", sa.Column("doc_id", sa.BigInteger(), nullable=True), schema=SCHEMA)
     op.add_column("chunks", sa.Column("chapter_id", sa.BigInteger(), nullable=True), schema=SCHEMA)
     op.add_column("chunks", sa.Column("page", sa.Integer(), nullable=True), schema=SCHEMA)

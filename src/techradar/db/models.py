@@ -432,6 +432,7 @@ class LibraryPart(Base):
     __tablename__ = "library_parts"
     __table_args__ = (
         CheckConstraint("status IN ('pending','done','failed')", name="ck_library_parts_status"),
+        Index("ux_library_parts_doc_ordinal", "doc_id", "ordinal", unique=True),
         {"schema": "techradar"},
     )
 
@@ -454,7 +455,10 @@ class LibraryChapter(Base):
     """A chapter (or video segment) of a library doc."""
 
     __tablename__ = "library_chapters"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        Index("ux_library_chapters_doc_ordinal", "doc_id", "ordinal", unique=True),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     doc_id: Mapped[int] = mapped_column(ForeignKey("techradar.library_docs.id"), nullable=False)
@@ -476,7 +480,7 @@ class BookEval(Base):
     """A retrieval check question for a library doc."""
 
     __tablename__ = "book_evals"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (Index("ix_book_evals_doc_id", "doc_id"), {"schema": "techradar"})
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     doc_id: Mapped[int] = mapped_column(ForeignKey("techradar.library_docs.id"), nullable=False)

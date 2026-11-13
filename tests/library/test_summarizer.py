@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
@@ -11,57 +9,8 @@ from techradar.library.models import Chapter
 from techradar.library.summarizer import (
     ChapterSummary,
     check_key_idea_citations,
-    is_night_window,
     render_chapter_vault_note,
 )
-
-
-def test_is_night_window_asia_kolkata() -> None:
-    tz = ZoneInfo("Asia/Kolkata")
-
-    # 00:30 False
-    dt_0030 = datetime(2026, 11, 8, 0, 30, tzinfo=tz)
-    assert not is_night_window(dt_0030)
-
-    # 01:00 True (start boundary)
-    dt_0100 = datetime(2026, 11, 8, 1, 0, tzinfo=tz)
-    assert is_night_window(dt_0100)
-
-    # 02:00 True
-    dt_0200 = datetime(2026, 11, 8, 2, 0, tzinfo=tz)
-    assert is_night_window(dt_0200)
-
-    # 04:59 True
-    dt_0459 = datetime(2026, 11, 8, 4, 59, tzinfo=tz)
-    assert is_night_window(dt_0459)
-
-    # 05:00 False (end boundary)
-    dt_0500 = datetime(2026, 11, 8, 5, 0, tzinfo=tz)
-    assert not is_night_window(dt_0500)
-
-    # 05:01 False
-    dt_0501 = datetime(2026, 11, 8, 5, 1, tzinfo=tz)
-    assert not is_night_window(dt_0501)
-
-    # 14:00 False
-    dt_1400 = datetime(2026, 11, 8, 14, 0, tzinfo=tz)
-    assert not is_night_window(dt_1400)
-
-
-def test_is_night_window_utc_conversion() -> None:
-    # 02:00 Asia/Kolkata (+05:30) is 20:30 UTC of previous day
-    dt_utc_night = datetime(2026, 11, 7, 20, 30, tzinfo=UTC)
-    assert is_night_window(dt_utc_night)
-
-    # 14:00 Asia/Kolkata (+05:30) is 08:30 UTC of same day
-    dt_utc_day = datetime(2026, 11, 8, 8, 30, tzinfo=UTC)
-    assert not is_night_window(dt_utc_day)
-
-
-def test_is_night_window_naive_datetime() -> None:
-    # Naive datetimes are assumed in local timezone
-    assert is_night_window(datetime(2026, 11, 8, 3, 0))
-    assert not is_night_window(datetime(2026, 11, 8, 15, 0))
 
 
 def test_check_key_idea_citations() -> None:

@@ -11,6 +11,7 @@ from techradar.bot.render import render_answer
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.library.inbox import load_limits, plan_library_intake
+from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import Button, enqueue_message
@@ -21,7 +22,6 @@ from techradar.rag.answer import answer_question
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
-    collect_library_results,
     plan_clipping_jobs,
     scan_vault,
     sync_index,
@@ -124,8 +124,8 @@ LIMITS_PATHS = (Path("/infra/intake/limits.yaml"), Path("infra/intake/limits.yam
 
 
 async def _queue_doc(doc_id: int) -> None:
-    """Placeholder until the `bulk` queue exists (Phase 2c Task 4): the doc stays `queued`."""
-    logger.info("library doc %s queued for processing", doc_id)
+    """Hand a freshly stored library doc to the `bulk` queue."""
+    await plan_doc_job.defer_async(doc_id=doc_id)
 
 
 async def intake_library(settings: Settings, deps: IndexDeps) -> list[int]:
@@ -162,7 +162,6 @@ async def index_sync() -> None:
     settings = _get_settings()
     deps = get_index_deps()
     await intake_library(settings, deps)
-    await collect_library_results(deps)
     scanned = scan_vault(deps.vault_root, skip=deps.skip)
     plan_clipping_jobs(deps.vault_root, scanned, deps.raw_dir, deps.jobs_dir)
     await collect_clipping_results(deps)
@@ -262,3 +261,60 @@ async def save_answer_job(answer_id: int) -> None:
             ref_id=answer_id,
         )
         await session.commit()
+
+
+# --- bulk queue (Phase 2c Task 4) -------------------------------------------------
+# Served by the `worker-bulk` container (`--queues=bulk`). That worker has no start hook:
+# `resume_bulk_job` runs every 5 minutes and re-queues work lost to a restart, so a restarted
+# worker-bulk heals itself within 5 minutes without any extra wiring.
+
+
+@app.task(queue="bulk", name="plan_doc_job")
+async def plan_doc_job(doc_id: int) -> None:
+    """Turn one queued library doc into its first parse job (probe/full/media)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        await plan_doc(
+            session,
+            doc_id,
+            jobs_dir=settings.data_dir / "parse-jobs",
+            library_dir=settings.data_dir / "library",
+        )
+        await session.commit()
+
+
+@app.periodic(cron="* * * * *")
+@app.task(queue="bulk", lock="bulk_collect", name="collect_bulk_results_job")
+async def collect_bulk_results_job() -> None:
+    """Apply finished library parse results (probe, parts, whole docs)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        counts = await collect_bulk_results(
+            session,
+            clean_dir=settings.data_dir / "clean",
+            jobs_dir=settings.data_dir / "parse-jobs",
+            library_dir=settings.data_dir / "library",
+            part_pages=settings.library_part_pages,
+        )
+    if counts["handled"]:
+        logger.info("bulk results handled: %s", counts)
+
+
+@app.periodic(cron="*/5 * * * *")
+@app.task(queue="bulk", lock="bulk_collect", name="resume_bulk_job")
+async def resume_bulk_job() -> None:
+    """Re-queue lost parse jobs of every `processing` library doc."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        resumed = await resume_all(
+            session,
+            jobs_dir=settings.data_dir / "parse-jobs",
+            library_dir=settings.data_dir / "library",
+            clean_dir=settings.data_dir / "clean",
+        )
+        await session.commit()
+    if any(resumed.values()):
+        logger.info("bulk resume re-queued parts: %s", resumed)

@@ -4,15 +4,21 @@ import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from pydantic import BaseModel
 
 from techradar.library.parts import split_pdf_parts
 from techradar.security.text import sanitize_text
 
-if TYPE_CHECKING:
-    from techradar.parser.pdf import OutlineEntry
+
+class OutlineEntry(Protocol):
+    """Shape of the parser's outline entries (not imported: contract 5 forbids it)."""
+
+    title: str
+    page: int
+    level: int
+
 
 MAX_TITLE = 300
 _MARKER = re.compile(r"^<!-- page (\d+) -->$", re.MULTILINE)
