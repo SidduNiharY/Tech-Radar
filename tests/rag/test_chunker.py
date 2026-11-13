@@ -115,3 +115,41 @@ def test_context_label_format_and_cap():
     assert context_label("Book", "", [" ", "Sec"]) == "Book › Sec"
     long = context_label("B" * 150, "C" * 150, ["S" * 150])
     assert len(long) == 200 and long.startswith("B")
+
+
+# --- Oversized blocks (an OCR wall of text must not fail a whole chapter) ---
+
+
+def _check_chunks(chunks, limit=10_000):
+    assert chunks
+    assert [c.ordinal for c in chunks] == list(range(len(chunks)))
+    assert all(0 < len(c.text) <= limit for c in chunks)
+
+
+def test_huge_paragraph_is_split_not_rejected():
+    para = " ".join(f"word{i}" for i in range(6_000))  # one paragraph, about 40,000 chars
+    chunks = split_markdown("# T\n\n" + para, "t.md")
+    _check_chunks(chunks)
+    seen = {w for c in chunks for w in c.text.split()}
+    assert {"word0", "word3000", "word5999"} <= seen  # nothing lost
+
+
+def test_huge_code_fence_is_split_not_rejected():
+    code = "\n".join(f"line_{i} = {i}" for i in range(3_000))
+    chunks = split_markdown("# T\n\n```python\n" + code + "\n```", "t.md")
+    _check_chunks(chunks)
+    assert "line_2999" in " ".join(c.text for c in chunks)
+
+
+def test_unbroken_text_blob_is_hard_split():
+    blob = "x" * 35_000  # no spaces at all (bad OCR)
+    chunks = split_markdown("# T\n\n" + blob, "t.md")
+    _check_chunks(chunks)
+    assert sum(len(c.text) for c in chunks) >= 35_000
+
+
+def test_normal_documents_are_unchanged_by_the_block_cap():
+    md = "# T\n\n" + "\n\n".join(f"Paragraph {i} about the repo rate." for i in range(30))
+    chunks = split_markdown(md, "t.md", target_tokens=40)
+    assert len(chunks) > 1
+    assert all("Paragraph" in c.text for c in chunks)

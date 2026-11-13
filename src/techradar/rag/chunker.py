@@ -176,6 +176,45 @@ def _split_big_table(table: str, limit: int = MAX_TABLE_CHARS) -> list[str]:
     return [p[:_MAX_CHUNK_CHARS] for p in pieces]
 
 
+BLOCK_CAP_CHARS = 8_000  # one block never exceeds this; a chunk is at most 10,000
+SOFT_CHUNK_CHARS = 9_000  # flush a chunk before it gets near the 10,000 limit
+OVERLAP_MAX_CHARS = 600  # words can be huge (OCR blobs); the overlap never is
+
+
+def _hard_split(text: str, limit: int) -> list[str]:
+    """Pieces of at most `limit` chars, cut at whitespace where possible."""
+    pieces: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        cut = max(rest.rfind("\n", 0, limit), rest.rfind(" ", 0, limit))
+        if cut < limit // 2:  # no usable break (an unbroken OCR blob): cut hard
+            cut = limit
+        pieces.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    if rest.strip():
+        pieces.append(rest)
+    return [p for p in pieces if p.strip()]
+
+
+def _cap_block(block: str, limit: int = BLOCK_CAP_CHARS) -> list[str]:
+    """Split a paragraph or code fence longer than `limit` so no chunk is rejected.
+
+    A code fence stays a fence: each piece is wrapped in the same fence markers.
+    Tables are handled separately (_split_big_table) and are returned unchanged.
+    """
+    if len(block) <= limit or _is_table_block(block):
+        return [block]
+    lines = block.splitlines()
+    if lines and lines[0].lstrip().startswith(("```", "~~~")):
+        fence = lines[0].strip()
+        marker = fence[:3]
+        body = "\n".join(lines[1:])
+        if body.rstrip().endswith(marker):
+            body = body.rstrip()[: -len(marker)].rstrip()
+        return [f"{fence}\n{piece}\n{marker}" for piece in _hard_split(body, limit - 20)]
+    return _hard_split(block, limit)
+
+
 def split_markdown(
     md: str,
     doc_path: str,
@@ -200,6 +239,7 @@ def split_markdown(
     chunks: list[Chunk] = []
 
     def emit(section: _Section, text: str) -> None:
+        text = text[:_MAX_CHUNK_CHARS]  # safety net: a chunk is never rejected for length
         chunks.append(
             Chunk(
                 doc_path=doc_path,
@@ -214,7 +254,8 @@ def split_markdown(
         current_blocks: list[str] = []
         last_chunk_text: str | None = None
 
-        for block in section.blocks:
+        blocks = [piece for b in section.blocks for piece in _cap_block(b)]
+        for block in blocks:
             if keep_tables and len(block) > MAX_TABLE_CHARS and _is_table_block(block):
                 chunk_text = "\n\n".join(current_blocks).strip()
                 if chunk_text and chunk_text != last_chunk_text:
@@ -229,7 +270,9 @@ def split_markdown(
             candidate_text = "\n\n".join(candidate_blocks).strip()
             candidate_tokens = estimate_tokens(candidate_text)
 
-            if candidate_tokens > target_tokens and current_blocks:
+            if (
+                candidate_tokens > target_tokens or len(candidate_text) > SOFT_CHUNK_CHARS
+            ) and current_blocks:
                 # Emit current chunk
                 chunk_text = "\n\n".join(current_blocks).strip()
                 if chunk_text:
@@ -246,6 +289,7 @@ def split_markdown(
                     overlap_str = " ".join(words[-overlap_tokens:])
                 else:
                     overlap_str = chunk_text
+                overlap_str = overlap_str[-OVERLAP_MAX_CHARS:]
 
                 current_blocks = [overlap_str, block]
             else:
