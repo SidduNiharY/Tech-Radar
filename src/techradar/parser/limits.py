@@ -9,8 +9,8 @@ from pathlib import Path
 
 from techradar.parser.feed import feed_to_entries
 from techradar.parser.html import html_to_doc
-from techradar.parser.pdf import pdf_to_doc
-from techradar.schemas.pipeline import ParseJob, ParseResult
+from techradar.parser.pdf import pdf_part_to_doc, pdf_probe, pdf_to_doc
+from techradar.schemas.pipeline import CleanDoc, ParseJob, ParseResult
 
 
 def parse_job(job: ParseJob, raw_dir: Path, max_chars: int = 100_000) -> ParseResult:
@@ -42,6 +42,23 @@ def parse_job(job: ParseJob, raw_dir: Path, max_chars: int = 100_000) -> ParseRe
         doc = html_to_doc(data, job.url, max_chars)
         status = "ok" if doc else "empty"
         return ParseResult(job_id=job.job_id, kind="page", status=status, doc=doc)
+    if job.kind == "pdf" and job.mode == "probe":
+        try:
+            probe = pdf_probe(raw_path)
+        except ValueError:
+            return ParseResult(job_id=job.job_id, kind="pdf", status="error")
+        doc = CleanDoc(url=job.url, title="probe", text=probe.model_dump_json(), lang="other")
+        return ParseResult(job_id=job.job_id, kind="pdf", status="ok", doc=doc)
+    if job.kind == "pdf" and job.mode == "part":
+        start, end = job.page_start, job.page_end
+        if start is None or end is None or start < 1 or end < start:
+            return ParseResult(job_id=job.job_id, kind="pdf", status="error")
+        try:
+            doc = pdf_part_to_doc(raw_path, job.url, start, end, max_chars)
+        except Exception:
+            return ParseResult(job_id=job.job_id, kind="pdf", status="error")
+        status = "ok" if doc else "empty"
+        return ParseResult(job_id=job.job_id, kind="pdf", status=status, doc=doc)
     if job.kind == "pdf":
         doc = pdf_to_doc(raw_path, job.url, max_chars)
         status = "ok" if doc else "empty"
