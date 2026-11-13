@@ -157,5 +157,7 @@ def test_media_is_never_read_whole(tmp_path, monkeypatch):
         parse=lambda j: ParseResult(job_id=j.job_id, kind=j.kind, status="error"),
         today=TODAY,
     )
-    # It got past the byte checks to the parse step (the fake parse errors).
-    assert res.status == "error"
+    # It got past the size and type checks to the structure step without the
+    # file ever being read whole (no_full_read would have raised).
+    assert any(s.name == "type" and s.outcome == "ok" for s in res.intake.steps)
+    assert any(s.name == "structure" for s in res.intake.steps)

@@ -10,9 +10,11 @@ from typing import Any
 from techradar.intake.av import AvScanner, check_av
 from techradar.intake.filetype import check_size, check_source, check_type, detect_file_mime
 from techradar.intake.links import check_links, extract_links
+from techradar.intake.office import check_office, epub_xml_safe, office_xml_safe
 from techradar.intake.pdfscan import check_pdf
 from techradar.intake.rules import check_rules
 from techradar.intake.textcheck import check_injection, pattern_hits
+from techradar.intake.zipcheck import check_zip
 from techradar.schemas.pipeline import (
     IntakeStep,
     IntakeVerdict,
@@ -45,7 +47,28 @@ def quarantine_file(raw_path: Path, quarantine_dir: Path, job_id: str) -> Path:
 
 
 MEDIA_KINDS = frozenset({"video", "audio"})
+TEXT_KINDS = frozenset({"feed", "page", "md"})
 MEDIA_SCAN_BYTES = 8 * 1024 * 1024
+
+
+def structure_steps(job: ParseJob, raw_path: Path, data: bytes) -> list[IntakeStep]:
+    """Step 4 for each kind. Later checks run only if the earlier ones passed."""
+    if job.kind == "pdf":
+        return [check_pdf(data)]
+    if job.kind in ("docx", "epub"):
+        zip_step = check_zip(raw_path)
+        if zip_step.outcome != "ok":
+            return [zip_step]
+        if job.kind == "docx":
+            return [zip_step, check_office(raw_path), office_xml_safe(raw_path)]
+        return [zip_step, epub_xml_safe(raw_path)]
+    if job.kind in TEXT_KINDS:
+        return []  # parsed as text with their own safe parsers (phase 2)
+    return [
+        IntakeStep(
+            name="structure", outcome="reject", detail=f"no structure check for kind {job.kind}"
+        )
+    ]
 
 
 def gate_job(
@@ -107,9 +130,9 @@ def gate_job(
     mime = detect_file_mime(raw_path)
     steps.append(check_type(job, mime, data[:1024]))
 
-    # 4. Structure check (PDFs only)
-    if job.kind == "pdf":
-        steps.append(check_pdf(data))
+    # 4. Structure check, per kind. A kind with no check here is refused
+    # (fail closed), so a new kind can never skip this step by accident.
+    steps.extend(structure_steps(job, raw_path, data))
 
     # 5. Antivirus check
     av_res = av.scan(raw_path)
