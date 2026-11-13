@@ -9,6 +9,8 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 
 from techradar.intake.rebuild import pixel_rebuild as pixel_rebuild_text
+from techradar.parser.docx import docx_to_doc
+from techradar.parser.epub import epub_to_chapters
 from techradar.parser.feed import feed_to_entries
 from techradar.parser.html import html_to_doc
 from techradar.parser.pdf import MAX_PART_PAGES, pdf_part_to_doc, pdf_probe, pdf_to_doc
@@ -59,6 +61,25 @@ def parse_job(
         doc = html_to_doc(raw_path.read_bytes(), job.url, max_chars)
         status = "ok" if doc else "empty"
         return ParseResult(job_id=job.job_id, kind="page", status=status, doc=doc)
+    if job.kind == "epub":
+        try:
+            chapters = epub_to_chapters(raw_path, max_chars)
+        except ValueError:
+            return ParseResult(job_id=job.job_id, kind="epub", status="error")
+        if not chapters:
+            return ParseResult(job_id=job.job_id, kind="epub", status="empty")
+        # One doc; each chapter starts with a marker the library job splits on.
+        text = "\n\n".join(
+            f"<!-- chapter {i}: {c.title} -->\n{c.text}" for i, c in enumerate(chapters, 1)
+        )[:max_chars]
+        doc = CleanDoc(url=job.url, title=chapters[0].title, text=text, lang=detect_lang(text))
+        return ParseResult(job_id=job.job_id, kind="epub", status="ok", doc=doc)
+    if job.kind == "docx":
+        try:
+            doc = docx_to_doc(raw_path, job.url, max_chars)
+        except Exception:
+            return ParseResult(job_id=job.job_id, kind="docx", status="error")
+        return ParseResult(job_id=job.job_id, kind="docx", status="ok" if doc else "empty", doc=doc)
     if job.kind == "pdf" and pixel_rebuild:
         return _rebuild_pdf(job, raw_path, max_chars, artifacts_path)
     if job.kind == "pdf" and job.mode == "probe":
