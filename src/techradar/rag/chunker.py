@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+_MAX_CHUNK_CHARS = 10000
 
 
 class Chunk(BaseModel):
@@ -18,7 +21,7 @@ class Chunk(BaseModel):
     doc_path: str
     heading_path: list[str]
     ordinal: int
-    text: str = Field(min_length=1, max_length=10000)
+    text: str = Field(min_length=1, max_length=_MAX_CHUNK_CHARS)
     token_estimate: int
 
 
@@ -56,8 +59,20 @@ class _Section:
         self.blocks: list[str] = []
 
 
-def _parse_sections(body: str) -> list[_Section]:
-    """Parse markdown body into sections delineated by headings # to ###."""
+def _is_table_line(line: str) -> bool:
+    return line.lstrip().startswith("|")
+
+
+def _is_table_block(block: str) -> bool:
+    return all(_is_table_line(line) for line in block.splitlines())
+
+
+def _parse_sections(body: str, *, keep_tables: bool = True) -> list[_Section]:
+    """Parse markdown body into sections delineated by headings # to ###.
+
+    With keep_tables, a run of consecutive lines starting with `|` is always its own block,
+    even when no blank line separates it from the text around it.
+    """
     lines = body.splitlines()
     sections: list[_Section] = []
     current_heading_path: list[str] = []
@@ -121,10 +136,44 @@ def _parse_sections(body: str) -> list[_Section]:
         if not stripped:
             flush_block()
         else:
+            if (
+                keep_tables
+                and current_block_lines
+                and _is_table_line(line) != _is_table_line(current_block_lines[-1])
+            ):
+                flush_block()
             current_block_lines.append(line)
 
     flush_block()
     return [s for s in sections if s.blocks]
+
+
+MAX_TABLE_CHARS = 4000
+_SEPARATOR_ROW = re.compile(r"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$")
+
+
+def _split_big_table(table: str, limit: int = MAX_TABLE_CHARS) -> list[str]:
+    """Split a table at row boundaries; every piece repeats the header and `|---|` line.
+
+    A single row longer than the limit stays whole (cut only to fit Chunk.text).
+    """
+    lines = table.splitlines()
+    header: list[str] = []
+    if len(lines) >= 2 and _SEPARATOR_ROW.match(lines[1].strip()):
+        header, lines = lines[:2], lines[2:]
+    head_text = "\n".join(header)
+    pieces: list[str] = []
+    rows: list[str] = []
+    size = len(head_text)
+    for row in lines:
+        if rows and size + 1 + len(row) > limit:
+            pieces.append("\n".join([*header, *rows]))
+            rows, size = [], len(head_text)
+        rows.append(row)
+        size += 1 + len(row)
+    if rows:
+        pieces.append("\n".join([*header, *rows]))
+    return [p[:_MAX_CHUNK_CHARS] for p in pieces]
 
 
 def split_markdown(
@@ -133,24 +182,49 @@ def split_markdown(
     *,
     target_tokens: int = 500,
     overlap_tokens: int = 60,
+    keep_tables: bool = True,
 ) -> list[Chunk]:
-    """Split markdown text into structured chunks keeping headings, code fences and overlaps."""
+    """Split markdown text into structured chunks keeping headings, code fences and overlaps.
+
+    With keep_tables, a Markdown table is never split, except one over 4,000 characters:
+    that becomes its own chunks, cut at row boundaries, each with the header row repeated.
+    """
     _, body = parse_front_matter(md)
     if not body.strip():
         return []
 
-    sections = _parse_sections(body)
+    sections = _parse_sections(body, keep_tables=keep_tables)
     if not sections:
         return []
 
     chunks: list[Chunk] = []
-    ordinal = 0
+
+    def emit(section: _Section, text: str) -> None:
+        chunks.append(
+            Chunk(
+                doc_path=doc_path,
+                heading_path=list(section.heading_path),
+                ordinal=len(chunks),
+                text=text,
+                token_estimate=estimate_tokens(text),
+            )
+        )
 
     for section in sections:
         current_blocks: list[str] = []
         last_chunk_text: str | None = None
 
         for block in section.blocks:
+            if keep_tables and len(block) > MAX_TABLE_CHARS and _is_table_block(block):
+                chunk_text = "\n\n".join(current_blocks).strip()
+                if chunk_text and chunk_text != last_chunk_text:
+                    emit(section, chunk_text)
+                for piece in _split_big_table(block):
+                    emit(section, piece)
+                current_blocks = []
+                last_chunk_text = None
+                continue
+
             candidate_blocks = list(current_blocks) + [block]
             candidate_text = "\n\n".join(candidate_blocks).strip()
             candidate_tokens = estimate_tokens(candidate_text)
@@ -159,19 +233,14 @@ def split_markdown(
                 # Emit current chunk
                 chunk_text = "\n\n".join(current_blocks).strip()
                 if chunk_text:
-                    chunks.append(
-                        Chunk(
-                            doc_path=doc_path,
-                            heading_path=list(section.heading_path),
-                            ordinal=ordinal,
-                            text=chunk_text,
-                            token_estimate=estimate_tokens(chunk_text),
-                        )
-                    )
-                    ordinal += 1
+                    emit(section, chunk_text)
                     last_chunk_text = chunk_text
 
-                # Start new chunk with overlap from last chunk
+                # Start new chunk with overlap from last chunk; never carry row fragments
+                # of a table into the next chunk.
+                if keep_tables and _is_table_block(current_blocks[-1]):
+                    current_blocks = [block]
+                    continue
                 words = chunk_text.split()
                 if len(words) > overlap_tokens:
                     overlap_str = " ".join(words[-overlap_tokens:])
@@ -185,15 +254,28 @@ def split_markdown(
         if current_blocks:
             chunk_text = "\n\n".join(current_blocks).strip()
             if chunk_text and chunk_text != last_chunk_text:
-                chunks.append(
-                    Chunk(
-                        doc_path=doc_path,
-                        heading_path=list(section.heading_path),
-                        ordinal=ordinal,
-                        text=chunk_text,
-                        token_estimate=estimate_tokens(chunk_text),
-                    )
-                )
-                ordinal += 1
+                emit(section, chunk_text)
 
     return chunks
+
+
+_PAGE_MARKER = re.compile(r"<!--[ \t]*page[ \t]+(\d{1,6})[ \t]*-->[ \t]*\n?")
+MAX_LABEL_CHARS = 200
+
+
+def page_of(chunk_text: str, last_page: int | None) -> tuple[int | None, str]:
+    """The page a chunk ends on, and the chunk text without its `<!-- page N -->` markers.
+
+    The page is the last marker inside the chunk; a chunk with no marker gets `last_page`
+    (the page the caller saw most recently). Only that exact marker form is removed.
+    """
+    found = _PAGE_MARKER.findall(chunk_text)
+    page = int(found[-1]) if found else last_page
+    return page, _PAGE_MARKER.sub("", chunk_text).strip()
+
+
+def context_label(book: str, chapter: str, heading_path: Sequence[str]) -> str:
+    """`<book> › <chapter> › <section>` (empty parts left out), cut to 200 characters."""
+    section = " › ".join(h.strip() for h in heading_path if h.strip())
+    parts = [p.strip() for p in (book, chapter, section) if p and p.strip()]
+    return " › ".join(parts)[:MAX_LABEL_CHARS]
