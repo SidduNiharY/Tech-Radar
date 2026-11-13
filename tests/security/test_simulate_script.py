@@ -152,9 +152,13 @@ def test_simulation_never_needs_the_network_to_run_its_own_code():
     assert ".venv/bin/python scripts/integrity_check.py" in sh
 
 
-def test_gpu_attack_needs_the_image_already_pulled():
-    # Pulling inside the 60-second wait failed (DNS down). The script now
-    # checks first and says what to do instead of timing out.
+def test_gpu_attack_runs_a_process_that_really_uses_the_gpu():
+    # `sleep` in a --gpus container never opens the GPU, so nvidia-smi never
+    # listed it (seen on the TUF 2026-11-13). The worker image's PyTorch
+    # creates a real CUDA context; the image is local, so no download.
     sh = (REPO_ROOT / "security/simulate/phase1.sh").read_text()
-    assert 'docker image inspect "$CUDA_IMAGE"' in sh
-    assert "--pull never" in sh
+    attack8 = sh[sh.index("Attack 8") :]
+    assert "--pull never" in attack8 and "--network none" in attack8
+    assert 'device="cuda"' in attack8 or "device='cuda'" in attack8
+    assert "docker image inspect techradar-worker" in attack8
+    assert "sleep 90" not in attack8

@@ -221,6 +221,9 @@ def test_falco_unit_is_exempt_from_journald_rate_limits(tmp_path):
     dropin = dest / "etc/systemd/system/falco-modern-bpf.service.d/techradar-logging.conf"
     text = dropin.read_text()
     assert "[Service]" in text and "LogRateLimitIntervalSec=0" in text
+    # The packaged unit sets StandardOutput=null, which threw every event
+    # away (seen on the TUF 2026-11-13: zero events after the switch).
+    assert "StandardOutput=journal" in text
 
 
 def test_alerter_watches_journald_itself():

@@ -5,7 +5,6 @@ set -euo pipefail
 # Simulates representative attacks and verifies alert generation within 60s.
 
 ALERT_LOG="${TR_ALERT_LOG:-/var/lib/techradar-alerter/alerts.jsonl}"
-CUDA_IMAGE="nvidia/cuda:12.6.3-base-ubuntu24.04@sha256:c87e78933f4c16e3272123bf2f75537306596d0fbaa395a29696a22786e5ee0e"
 
 echo "=== Starting Phase 1 Security Simulation ==="
 
@@ -111,13 +110,17 @@ wait_for_alert "postgres digest mismatch" "critical" 60 || echo "[FAIL] Attack 7
 
 # 8. Unknown GPU process detection
 echo "--- Attack 8: Unknown GPU process detection ---"
+# A process that really opens the GPU (sleep in a --gpus container never
+# does, so nvidia-smi would not list it): PyTorch from the local worker image,
+# with no network. The resources timer runs every minute.
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-    if ! docker image inspect "$CUDA_IMAGE" >/dev/null 2>&1; then
-        echo "[SKIP] Attack 8: pull the test image once first: docker pull $CUDA_IMAGE"
+    if ! docker image inspect techradar-worker >/dev/null 2>&1; then
+        echo "[SKIP] Attack 8: build the worker image first: docker compose build worker"
     else
-        docker run --rm --pull never --gpus all "$CUDA_IMAGE" sleep 90 >/dev/null 2>&1 &
+        docker run --rm --pull never --network none --gpus all --entrypoint python techradar-worker \
+            -c 'import time, torch; x = torch.zeros(1, device="cuda"); time.sleep(90)' >/dev/null 2>&1 &
         GPU_PID=$!
-        wait_for_alert "unknown GPU process" "critical" 60 || echo "[FAIL] Attack 8"
+        wait_for_alert "unknown GPU process" "critical" 90 || echo "[FAIL] Attack 8"
         kill "$GPU_PID" 2>/dev/null || true
     fi
 else
