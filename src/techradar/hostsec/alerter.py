@@ -134,7 +134,11 @@ class AlerterDaemon:
             return
         try:
             if kind == "falco":
-                self.process_falco_line(line)
+                # A journal entry; Falco's own startup lines and journald's
+                # byte-array messages are not events and are skipped.
+                message = json.loads(line).get("MESSAGE")
+                if isinstance(message, str) and message.startswith("{"):
+                    self.process_falco_line(message)
             elif kind == "auditd":
                 # audit.log is read directly (journald gets no audit records on
                 # this host); only the SYSCALL record carries the watch key.
@@ -233,7 +237,11 @@ def stream_commands() -> list[tuple[str, list[str]]]:
         journal += ["-t", ident]
     logs = ["docker", "compose", "logs", "-f", "--no-color", "--no-log-prefix", "--since", "0s"]
     return [
-        ("falco", ["tail", "-n", "0", "-F", "/var/log/falco/events.json"]),
+        # Falco's JSON events, from the journal of Falco's own unit.
+        (
+            "falco",
+            ["journalctl", "-f", "-n", "0", "-o", "json", "_SYSTEMD_UNIT=falco-modern-bpf.service"],
+        ),
         ("auditd", ["tail", "-n", "0", "-F", "/var/log/audit/audit.log"]),
         ("journal", journal),
         ("squid", [*logs, "squid"]),

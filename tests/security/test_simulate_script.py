@@ -142,3 +142,19 @@ def test_admin_backup_attack_goes_through_password_auth():
     sh = (REPO_ROOT / "security/simulate/phase1.sh").read_text()
     assert "psql -h 127.0.0.1 -U admin_backup" not in sh
     assert "host='postgres', user='admin_backup', password='wrong'" in sh
+
+
+def test_simulation_never_needs_the_network_to_run_its_own_code():
+    # 2026-11-13: `uv run` tried to rebuild the project and fetch hatchling
+    # from PyPI; with DNS down, attack 7 never ran. The repo's .venv is used.
+    sh = (REPO_ROOT / "security/simulate/phase1.sh").read_text()
+    assert "uv run" not in sh
+    assert ".venv/bin/python scripts/integrity_check.py" in sh
+
+
+def test_gpu_attack_needs_the_image_already_pulled():
+    # Pulling inside the 60-second wait failed (DNS down). The script now
+    # checks first and says what to do instead of timing out.
+    sh = (REPO_ROOT / "security/simulate/phase1.sh").read_text()
+    assert 'docker image inspect "$CUDA_IMAGE"' in sh
+    assert "--pull never" in sh

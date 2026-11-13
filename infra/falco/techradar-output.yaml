@@ -1,12 +1,16 @@
 json_output: true
 
+# Events go to stdout, which systemd puts in the journal. The alerter reads
+# them there, filtered on Falco's own unit (a field local users cannot set).
+# Falco creates its file output 0600 root:root, so the alerter could never
+# read /var/log/falco/events.json.
 file_output:
-  enabled: true
+  enabled: false
   keep_alive: false
   filename: /var/log/falco/events.json
 
 stdout_output:
-  enabled: false
+  enabled: true
 
 syslog_output:
   enabled: false

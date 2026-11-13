@@ -68,6 +68,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   migrate:
     <<: *hardened-baseline
@@ -327,6 +328,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   egress-probe:
     <<: *hardened-baseline

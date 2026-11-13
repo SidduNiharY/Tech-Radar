@@ -155,3 +155,10 @@ def test_exceptions_have_reasons(exceptions_data):
             assert len(entry.get("reason", "")) >= 20, (
                 f"{group_name}.{name} reason must be >= 20 chars"
             )
+
+
+def test_always_on_services_come_back_after_a_reboot(compose_data):
+    # 2026-11-13: after the TUF rebooted, postgres and squid stayed down
+    # (no restart policy), so the integrity check had nothing to check.
+    for name in ["postgres", "squid"]:
+        assert compose_data["services"][name].get("restart") == "unless-stopped", name

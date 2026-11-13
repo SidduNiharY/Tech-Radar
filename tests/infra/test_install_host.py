@@ -194,10 +194,16 @@ def test_alerter_runs_offline_and_only_the_heartbeat_waits_for_telegram():
     assert "SKIP_ALERTER" in text  # the old name still works
 
 
-def test_alerter_can_read_falco_events():
-    # The alerter runs as the owner with the adm group; /var/log/falco was root-only.
-    text = SCRIPT.read_text()
-    assert "install -d -m 0750 -o root -g adm /var/log/falco" in text
+def test_falco_events_go_to_the_journal():
+    # Falco creates its file output 0600 root:root (seen on the TUF), so the
+    # alerter could never read it; events go to stdout (the journal) instead.
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = yaml.safe_load((root / "infra/falco/techradar-output.yaml").read_text())
+    assert cfg["stdout_output"]["enabled"] is True
+    assert cfg["file_output"]["enabled"] is False
+    assert cfg["json_output"] is True
 
 
 def test_installer_gives_settings_a_chat_id_placeholder_before_telegram():

@@ -17,7 +17,7 @@ from techradar.hostsec.alerter import (
 )
 from techradar.settings import Settings
 
-FALCO_LINE = json.dumps(
+FALCO_EVENT = json.dumps(
     {
         "time": "2026-11-13T02:00:00.000000000Z",
         "rule": "TR shell or package manager in container",
@@ -26,6 +26,9 @@ FALCO_LINE = json.dumps(
         "output_fields": {"container.name": "techradar-bot-1"},
     }
 )
+# Falco writes JSON events to stdout; the alerter reads them from the journal
+# (filtered on Falco's own unit), so each line is a journal entry.
+FALCO_LINE = json.dumps({"_SYSTEMD_UNIT": "falco-modern-bpf.service", "MESSAGE": FALCO_EVENT})
 AUDIT_LINE = (
     "type=SYSCALL msg=audit(1794514104.903:812): arch=c000003e syscall=257 success=yes "
     'exit=3 comm="cat" exe="/usr/bin/cat" key="tr_honey"'
@@ -123,9 +126,12 @@ def test_run_streams_pumps_every_stream_until_stopped(tmp_path):
 
 def test_stream_commands_follow_the_plan_sources():
     cmds = dict(stream_commands())
-    assert cmds["falco"][-1] == "/var/log/falco/events.json"
+    # Falco's file is root-only (it creates it 0600); journald's unit field
+    # cannot be set by a local user, unlike a syslog identifier.
+    assert cmds["falco"][:2] == ["journalctl", "-f"]
+    assert "_SYSTEMD_UNIT=falco-modern-bpf.service" in cmds["falco"]
     assert cmds["auditd"][-1] == "/var/log/audit/audit.log"
-    assert "-F" in cmds["falco"] and "-F" in cmds["auditd"]
+    assert "-F" in cmds["auditd"]
     assert cmds["journal"][:2] == ["journalctl", "-f"]
     for ident in ["sudo", "systemd-logind", "aide", "techradar-integrity", "techradar-resources"]:
         assert ident in cmds["journal"]
@@ -134,6 +140,7 @@ def test_stream_commands_follow_the_plan_sources():
         assert "--no-log-prefix" in cmds[svc] and cmds[svc][-1] == svc
     # Start from now: old lines must not raise alerts again after a restart.
     assert "0" in cmds["falco"] and "0s" in cmds["squid"]
+    assert "0" in cmds["auditd"]
 
 
 def test_main_runs_the_loop_instead_of_returning(monkeypatch, tmp_path):
@@ -244,3 +251,10 @@ def test_round_robin_returns_none_when_every_queue_is_empty():
 
     rr = RoundRobin({"falco": q.Queue(), "squid": q.Queue()})
     assert rr.next(timeout_s=0.01) is None
+
+
+def test_falco_journal_noise_is_ignored(tmp_path):
+    d = AlerterDaemon(settings(tmp_path))
+    d.handle("falco", json.dumps({"MESSAGE": "Falco initialized with configuration files:"}))
+    d.handle("falco", json.dumps({"MESSAGE": [70, 97, 108]}))  # journald's byte-array form
+    assert logged(tmp_path) == []

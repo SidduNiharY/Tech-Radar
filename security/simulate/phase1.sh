@@ -104,17 +104,22 @@ fi
 # 7. Image digest mismatch simulation
 echo "--- Attack 7: Image digest mismatch detection ---"
 # The alerter reads integrity results from the journal (as the timer writes them).
-uv run python scripts/integrity_check.py --pinned-override postgres=sha256:0000000000000000000000000000000000000000000000000000000000000000 2>&1 \
+# The repo's .venv directly: uv would rebuild the project and need the network.
+.venv/bin/python scripts/integrity_check.py --pinned-override postgres=sha256:0000000000000000000000000000000000000000000000000000000000000000 2>&1 \
     | systemd-cat -t techradar-integrity || true
 wait_for_alert "postgres digest mismatch" "critical" 60 || echo "[FAIL] Attack 7"
 
 # 8. Unknown GPU process detection
 echo "--- Attack 8: Unknown GPU process detection ---"
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-    docker run --rm --gpus all "$CUDA_IMAGE" sleep 90 >/dev/null 2>&1 &
-    GPU_PID=$!
-    wait_for_alert "unknown GPU process" "critical" 60 || echo "[FAIL] Attack 8"
-    kill "$GPU_PID" 2>/dev/null || true
+    if ! docker image inspect "$CUDA_IMAGE" >/dev/null 2>&1; then
+        echo "[SKIP] Attack 8: pull the test image once first: docker pull $CUDA_IMAGE"
+    else
+        docker run --rm --pull never --gpus all "$CUDA_IMAGE" sleep 90 >/dev/null 2>&1 &
+        GPU_PID=$!
+        wait_for_alert "unknown GPU process" "critical" 60 || echo "[FAIL] Attack 8"
+        kill "$GPU_PID" 2>/dev/null || true
+    fi
 else
     echo "NVIDIA GPU not detected; skipping GPU simulation."
 fi
