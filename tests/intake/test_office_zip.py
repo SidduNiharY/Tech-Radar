@@ -2,7 +2,7 @@
 
 import zipfile
 
-from techradar.intake.office import check_office, office_xml_safe
+from techradar.intake.office import check_office, epub_xml_safe, office_xml_safe
 from techradar.intake.zipcheck import check_zip
 
 from .library_fixtures import (
@@ -106,3 +106,26 @@ def test_xxe_docx_rejected(tmp_path):
 
 def test_clean_docx_xml_is_safe(tmp_path):
     assert office_xml_safe(make_docx(tmp_path / "ok.docx")).outcome == "ok"
+
+
+def test_xml_part_with_any_name_is_checked(tmp_path):
+    # Parts are chosen by declared content type, not by name, so a renamed
+    # XML part with an entity must still be refused (automated review).
+    p = make_docx(tmp_path / "r.docx", extra={"word/custom.dat": XXE_DOCUMENT.encode()})
+    assert office_xml_safe(p).outcome == "reject"
+
+
+def test_epub_part_with_any_name_is_checked(tmp_path):
+    p = make_epub(tmp_path / "r.epub")
+    with zipfile.ZipFile(p, "a") as z:
+        z.writestr(
+            "OEBPS/notes.bin",
+            '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>',
+        )
+    assert epub_xml_safe(p).outcome == "reject"
+
+
+def test_binary_entries_are_not_parsed_as_xml(tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"\0" * 200
+    p = make_docx(tmp_path / "img.docx", extra={"word/media/image1.png": png})
+    assert office_xml_safe(p).outcome == "ok"

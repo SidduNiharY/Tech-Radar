@@ -15,7 +15,6 @@ from defusedxml import ElementTree as SafeET
 from techradar.schemas.pipeline import IntakeStep
 
 _MAX_XML_PART = 50_000_000
-_XML_PART = re.compile(r"(\.xml|\.rels)$", re.IGNORECASE)
 
 
 def _step(outcome: str, detail: str) -> IntakeStep:
@@ -58,18 +57,36 @@ def check_office(path: Path) -> IntakeStep:
     return _step("ok", "no macros")
 
 
-_EPUB_XML_PART = re.compile(r"(\.xml|\.opf|\.ncx|\.xhtml|\.html?)$", re.IGNORECASE)
+_ENTITY = re.compile(rb"<!ENTITY", re.IGNORECASE)
+_BOM_AND_SPACE = b"\xef\xbb\xbf \t\r\n"
 
 
-def _xml_safe(path: Path, part: re.Pattern[str], *, forbid_dtd: bool) -> IntakeStep:
+def _looks_like_xml(data: bytes) -> bool:
+    return data.lstrip(_BOM_AND_SPACE).startswith(b"<")
+
+
+def _xml_safe(path: Path, *, forbid_dtd: bool) -> IntakeStep:
+    """Check every entry, whatever its name.
+
+    Parts are chosen by their declared content type, not their name, so any
+    entry can be XML. An entity declaration anywhere is refused, and every
+    entry whose content starts like XML is parsed with defusedxml.
+    """
     try:
         with zipfile.ZipFile(path) as z:
             for info in z.infolist():
-                if info.is_dir() or not part.search(info.filename):
+                if info.is_dir():
                     continue
                 if info.file_size > _MAX_XML_PART:
-                    return _step("reject", "xml_part_too_large")
+                    with z.open(info) as fh:
+                        if _looks_like_xml(fh.read(1024)):
+                            return _step("reject", "xml_part_too_large")
+                    continue
                 data = z.read(info)
+                if _ENTITY.search(data):
+                    return _step("reject", "xml_entities")
+                if not _looks_like_xml(data):
+                    continue
                 try:
                     SafeET.fromstring(
                         data, forbid_dtd=forbid_dtd, forbid_entities=True, forbid_external=True
@@ -77,7 +94,7 @@ def _xml_safe(path: Path, part: re.Pattern[str], *, forbid_dtd: bool) -> IntakeS
                 except DefusedXmlException:
                     return _step("reject", "xml_entities")
                 except SafeET.ParseError:
-                    return _step("reject", "xml_invalid")
+                    return _step("reject", f"xml_invalid: {info.filename[:80]!r}")
     except (zipfile.BadZipFile, OSError) as exc:
         return _step("reject", f"unreadable archive ({type(exc).__name__})")
     return _step("ok", "xml safe")
@@ -85,7 +102,7 @@ def _xml_safe(path: Path, part: re.Pattern[str], *, forbid_dtd: bool) -> IntakeS
 
 def office_xml_safe(path: Path) -> IntakeStep:
     """Reject DOCX XML parts with any DTD or entities (XXE, billion laughs)."""
-    return _xml_safe(path, _XML_PART, forbid_dtd=True)
+    return _xml_safe(path, forbid_dtd=True)
 
 
 def epub_xml_safe(path: Path) -> IntakeStep:
@@ -94,4 +111,4 @@ def epub_xml_safe(path: Path) -> IntakeStep:
     A plain DOCTYPE is allowed: EPUB 2 XHTML commonly declares one. Entity
     declarations and external references are still refused.
     """
-    return _xml_safe(path, _EPUB_XML_PART, forbid_dtd=False)
+    return _xml_safe(path, forbid_dtd=False)
