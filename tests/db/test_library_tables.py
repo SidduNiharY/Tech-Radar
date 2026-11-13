@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from techradar.db.engine import make_engine
 from techradar.db.models import (
@@ -118,6 +118,10 @@ async def test_library_doc_rejects_bad_kind(app_conn):
 
 @pytest.mark.db
 async def test_chunk_page_columns_exist(app_conn):
+    await app_conn.execute(text("DELETE FROM techradar.chunks WHERE doc_path = 'lib-test'"))
+    await app_conn.execute(
+        text("DELETE FROM techradar.library_docs WHERE sha256 = :s"), {"s": "c" * 64}
+    )
     doc_id = (await app_conn.execute(text(_INSERT_DOC), {"sha": "c" * 64})).scalar_one()
     try:
         await app_conn.execute(
@@ -150,6 +154,9 @@ async def test_chunk_page_columns_exist(app_conn):
 
 @pytest.mark.db
 async def test_library_part_defaults(app_conn):
+    await app_conn.execute(
+        text("DELETE FROM techradar.library_docs WHERE sha256 = :s"), {"s": "d" * 64}
+    )
     doc_id = (await app_conn.execute(text(_INSERT_DOC), {"sha": "d" * 64})).scalar_one()
     try:
         row = (
@@ -174,3 +181,54 @@ async def test_library_part_defaults(app_conn):
         await app_conn.execute(
             text("DELETE FROM techradar.library_docs WHERE id = :d"), {"d": doc_id}
         )
+
+
+@pytest.fixture
+async def ro_conn(db_settings: Settings):
+    engine = make_engine("ro", db_settings)
+    async with engine.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
+        yield conn
+    await engine.dispose()
+
+
+@pytest.mark.db
+@pytest.mark.parametrize(
+    "table",
+    [
+        "library_docs",
+        "library_parts",
+        "library_chapters",
+        "book_evals",
+        "starter_packs",
+        "starter_pack_items",
+    ],
+)
+async def test_read_only_role_cannot_write_library_tables(ro_conn, table):
+    # The read-only role (Ask, the web UI) must never change the library.
+    with pytest.raises(DBAPIError, match="permission denied"):
+        await ro_conn.execute(text(f"DELETE FROM techradar.{table}"))  # noqa: S608
+
+
+@pytest.mark.db
+async def test_part_must_belong_to_an_existing_doc(app_conn):
+    with pytest.raises(IntegrityError):
+        await app_conn.execute(
+            text("INSERT INTO techradar.library_parts (doc_id, ordinal) VALUES (-1, 0)")
+        )
+
+
+@pytest.mark.db
+async def test_library_doc_rejects_bad_status_and_trust(app_conn):
+    for status, trust in [("bogus", "open"), ("queued", "bogus")]:
+        with pytest.raises(IntegrityError):
+            await app_conn.execute(
+                text(
+                    """
+                    INSERT INTO techradar.library_docs
+                        (sha256, title, kind, origin, original_path, size_bytes, status, trust)
+                    VALUES (:sha, 't', 'pdf', 'library', 'x', 1, :st, :tr)
+                    """
+                ),
+                {"sha": "e" * 64, "st": status, "tr": trust},
+            )
