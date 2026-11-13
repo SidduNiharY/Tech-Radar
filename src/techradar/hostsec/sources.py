@@ -39,10 +39,13 @@ def from_falco(line: str) -> Alert | None:
     container_name = str(output_fields.get("container.name", "")).strip()
 
     service: str | None = None
+    container: str | None = None
     if container_name:
         match = _FALCO_CONTAINER_REGEX.match(container_name)
         if match:
             service = match.group(1)
+            # Only TechRadar's own containers can be contained.
+            container = container_name
         elif _SERVICE_REGEX.match(container_name) and container_name != "host":
             service = container_name
 
@@ -65,6 +68,7 @@ def from_falco(line: str) -> Alert | None:
         source="falco",
         rule=rule,
         service=service,
+        container=container,
         summary=summary,
         at=at,
     )

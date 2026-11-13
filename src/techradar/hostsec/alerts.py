@@ -42,6 +42,9 @@ class Alert(BaseModel):
     ]
     rule: str = Field(max_length=80)
     service: str | None = Field(default=None, pattern=r"^[a-z0-9-]{1,40}$")
+    # The exact Docker container (e.g. techradar-migrate-run-f6d730fa172a);
+    # containment acts on it, while `service` is for grouping and display.
+    container: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     summary: str = Field(max_length=200)
     at: datetime
 

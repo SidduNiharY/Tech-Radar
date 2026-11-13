@@ -35,7 +35,7 @@ class Evidence(BaseModel):
 
 
 def collect_evidence(
-    service: str,
+    container: str,
     run: Runner,
     out_root: Path,
     pubkey: Path,
@@ -44,7 +44,7 @@ def collect_evidence(
 ) -> Evidence:
     """Collect container state, diffs, logs, and Falco events, encrypted with age."""
     ts = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H%M")
-    evidence_dir = out_root / f"{ts}-{service}"
+    evidence_dir = out_root / f"{ts}-{container}"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(evidence_dir, 0o700)
@@ -52,17 +52,17 @@ def collect_evidence(
         pass
 
     # 1. Logs
-    logs_res = run(["docker", "compose", "logs", "--no-color", "--tail", "5000", service])
+    logs_res = run(["docker", "logs", "--tail", "5000", container])
     logs_file = evidence_dir / "logs.txt"
     logs_file.write_text(logs_res.stdout or "", encoding="utf-8")
 
     # 2. Inspect
-    inspect_res = run(["docker", "inspect", service])
+    inspect_res = run(["docker", "inspect", container])
     inspect_file = evidence_dir / "inspect.json"
     inspect_file.write_text(inspect_res.stdout or "", encoding="utf-8")
 
     # 3. Diff
-    diff_res = run(["docker", "diff", service])
+    diff_res = run(["docker", "diff", container])
     diff_file = evidence_dir / "diff.txt"
     diff_text = diff_res.stdout or ""
     diff_file.write_text(diff_text, encoding="utf-8")
@@ -82,7 +82,7 @@ def collect_evidence(
                 path_in_container = parts[1]
                 safe_name = "fs_" + path_in_container.lstrip("/").replace("/", "_")
                 cp_target = evidence_dir / safe_name
-                run(["docker", "cp", f"{service}:{path_in_container}", str(cp_target)])
+                run(["docker", "cp", f"{container}:{path_in_container}", str(cp_target)])
 
     # 6. Encrypt each file with age -R <pubkey>, delete plain copy, set mode 0o400
     encrypted_files: list[str] = []
@@ -102,11 +102,11 @@ def collect_evidence(
     return Evidence(dir=evidence_dir, files=sorted(encrypted_files))
 
 
-def contain(service: str, run: Runner) -> list[list[str]]:
-    """Disconnect container from all networks and stop the service."""
+def contain(container: str, run: Runner) -> list[list[str]]:
+    """Disconnect the exact container from every network, then stop it."""
     commands_run: list[list[str]] = []
 
-    inspect_cmd = ["docker", "inspect", service]
+    inspect_cmd = ["docker", "inspect", container]
     inspect_res = run(inspect_cmd)
     commands_run.append(inspect_cmd)
 
@@ -121,15 +121,24 @@ def contain(service: str, run: Runner) -> list[list[str]]:
             logger.debug("Failed parsing networks from docker inspect: %s", exc)
 
     for net in networks:
-        disconnect_cmd = ["docker", "network", "disconnect", net, service]
+        disconnect_cmd = ["docker", "network", "disconnect", net, container]
         run(disconnect_cmd)
         commands_run.append(disconnect_cmd)
 
-    stop_cmd = ["docker", "compose", "stop", service]
+    # docker stop, not `docker compose stop <service>`: a one-off run
+    # container is not the service's main container.
+    stop_cmd = ["docker", "stop", container]
     run(stop_cmd)
     commands_run.append(stop_cmd)
 
     return commands_run
+
+
+def container_for(service: str, run: Runner) -> str | None:
+    """The running container of a Compose service, or None."""
+    res = run(["docker", "compose", "ps", "-q", service])
+    ids = [x.strip() for x in (res.stdout or "").splitlines() if x.strip()]
+    return ids[0] if res.returncode == 0 and ids else None
 
 
 def respond(
@@ -143,16 +152,20 @@ def respond(
     now: datetime | None = None,
 ) -> str:
     """Take automated containment actions if enabled, returning action summary."""
-    if mode == "on" and a.level == Level.CRITICAL and a.service:
+    if mode == "on" and a.level == Level.CRITICAL and (a.container or a.service):
+        # Docker commands need the exact container; `service` names a group.
+        target = a.container or container_for(a.service or "", run)
+        if target is None:
+            return "alert only (no running container)"
         collect_evidence(
-            a.service,
+            target,
             run,
             out_root,
             pubkey,
             falco_events=falco_events,
             now=now or a.at,
         )
-        contain(a.service, run)
+        contain(target, run)
         return "contained after saving evidence"
 
     return "alert only"

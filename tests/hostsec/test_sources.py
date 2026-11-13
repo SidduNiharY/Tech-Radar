@@ -256,3 +256,4 @@ def test_falco_run_container_maps_to_its_service() -> None:
     )
     a = from_falco(line)
     assert a is not None and a.service == "migrate"
+    assert a.container == "techradar-migrate-run-f6d730fa172a"
