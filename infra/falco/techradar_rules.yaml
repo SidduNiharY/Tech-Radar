@@ -9,7 +9,7 @@
   condition: >
     proc.is_exe_upper_layer = false and (
       proc.exepath = /usr/bin/runc or
-      (proc.exepath = /runc and proc.pexepath = /usr/bin/runc)
+      (evt.type in (execve, execveat) and proc.exepath = /runc and proc.pexepath = /usr/bin/runc)
     )
 
 - rule: TR shell or package manager in container
@@ -184,9 +184,11 @@
     condition: append
 
 - rule: Fileless execution via memfd_create
-  # Runs inside the new GPU container while NVIDIA's hook sets it up.
+  # Runs inside the new GPU container while NVIDIA's hook sets it up; only
+  # for our GPU service, so any other GPU container start still alerts.
   condition: >
-    and not (proc.pexepath = /usr/bin/nvidia-cdi-hook
+    and not (container.name startswith "techradar-ollama"
+             and proc.pexepath = /usr/bin/nvidia-cdi-hook
              and proc.exepath = "memfd:runc_cloned:ldconfig")
   override:
     condition: append
