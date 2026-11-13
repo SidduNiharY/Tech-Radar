@@ -92,3 +92,36 @@ def test_write_rule_allowlist_is_narrow():
             rf'\s+\(?[^)]*fd\.name startswith "{path}"'
         )
         assert re.search(pattern, cond), service
+
+
+def _rule(name: str) -> dict:
+    rules = yaml.safe_load((ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8"))
+    return next(r for r in rules if r.get("rule") == name)
+
+
+def test_peer_rule_only_looks_at_network_sockets():
+    # 2026-11-13: failed local-socket connects (no address) from postgres
+    # raised a CRITICAL every 5 seconds.
+    assert "fd.type in (ipv4, ipv6)" in _rule("TR connection outside allowed peers")["condition"]
+
+
+def test_container_rules_skip_docker_runtime_setup():
+    # runc's setup steps (seen on every health check) are not the service.
+    for name in [
+        "TR unexpected program",
+        "TR write outside tmpfs or volumes",
+        "TR secret read by unexpected program",
+    ]:
+        assert "not tr_runtime_setup" in _rule(name)["condition"], name
+
+
+def test_default_rule_exceptions_are_narrow_appends():
+    rules = yaml.safe_load((ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8"))
+    overrides = {r["rule"]: r for r in rules if "override" in r}
+    sensitive = overrides["Read sensitive file untrusted"]
+    assert sensitive["override"] == {"condition": "append"}
+    assert (
+        'container.name startswith "techradar-postgres" and proc.name = pg_isready'
+        in (sensitive["condition"])
+    )
+    assert overrides["Fileless execution via memfd_create"]["override"] == {"condition": "append"}

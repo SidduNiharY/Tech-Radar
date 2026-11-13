@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from techradar.hostsec.alerts import Alert, Level
 
 _SERVICE_REGEX = re.compile(r"^[a-z0-9-]{1,40}$")
-_FALCO_CONTAINER_REGEX = re.compile(r"^techradar-([a-z0-9-]+)-\d+$")
+# techradar-<service>-<n>, or techradar-<service>-run-<id> from `docker compose run`.
+_FALCO_CONTAINER_REGEX = re.compile(r"^techradar-([a-z0-9-]+?)(?:-run-[0-9a-f]+|-\d+)$")
 _IPV4_REGEX = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
 
 

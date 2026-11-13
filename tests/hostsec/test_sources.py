@@ -241,3 +241,18 @@ def test_journald_suppressing_messages_is_critical() -> None:
     )
     assert a is not None and a.level is Level.CRITICAL
     assert a.rule == "journal suppressed messages"
+
+
+def test_falco_run_container_maps_to_its_service() -> None:
+    import json
+
+    line = json.dumps(
+        {
+            "rule": "TR connection outside allowed peers",
+            "priority": "Critical",
+            "output": "x",
+            "output_fields": {"container.name": "techradar-migrate-run-f6d730fa172a"},
+        }
+    )
+    a = from_falco(line)
+    assert a is not None and a.service == "migrate"

@@ -230,3 +230,10 @@ def test_alerter_watches_journald_itself():
     from techradar.hostsec.alerter import stream_commands
 
     assert "systemd-journald" in dict(stream_commands())["journal"]
+
+
+def test_installer_restarts_the_alerter_so_new_code_runs():
+    # 2026-11-13: enable --now left the alerter from the 08:44 boot running
+    # old code, so the Falco change never took effect.
+    text = SCRIPT.read_text()
+    assert "systemctl restart techradar-alerter.service" in text

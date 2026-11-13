@@ -89,6 +89,8 @@ fi
 # from the start. The heartbeat only sends to Telegram: SKIP_TELEGRAM=1 (or
 # the old name SKIP_ALERTER=1) leaves it off until the Telegram stage.
 systemctl enable --now techradar-alerter.service
+# enable --now leaves a running alerter alone; restart so updated code runs.
+systemctl restart techradar-alerter.service
 if [ "${SKIP_TELEGRAM:-${SKIP_ALERTER:-0}}" = "1" ]; then
     echo "Heartbeat installed but NOT enabled (SKIP_TELEGRAM=1)."
 else

@@ -1,3 +1,11 @@
+- macro: tr_runtime_setup
+  # Docker's own setup steps inside a container (runc preparing a health
+  # check or a new container: "runc:[1:CHILD]", and its "6 init" stage).
+  # Seen on every health check on the TUF (2026-11-13); they are not the
+  # service's programs. Known limit: a process that renames itself to match
+  # would be skipped by the rules that use this macro.
+  condition: (proc.name startswith "runc:" or (proc.name = "6" and proc.cmdline = "6 init"))
+
 - rule: TR shell or package manager in container
   desc: A shell or package manager was spawned inside an application container
   condition: >
@@ -22,7 +30,7 @@
   desc: A process outside the service allowed list started inside a container
   condition: >
     evt.type in (execve, execveat) and
-    tr_app_container and (
+    tr_app_container and not tr_runtime_setup and (
       (container.name startswith "techradar-bot" and not proc.name in (tr_bot_programs)) or
       (container.name startswith "techradar-migrate" and not proc.name in (tr_migrate_programs)) or
       (container.name startswith "techradar-postgres" and not proc.name in (tr_postgres_programs)) or
@@ -60,8 +68,9 @@
       container.name startswith "techradar-postgres" or
       container.name startswith "techradar-ollama" or
       container.name startswith "techradar-voice-worker"
-    ) and not (
-      fd.rnet in (127.0.0.0/8, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16)
+    ) and fd.type in (ipv4, ipv6) and not (
+      fd.rnet in (127.0.0.0/8, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16) or
+      fd.rip = "::1"
     )
   output: "Internal-only container connecting outside allowed peers (container=%container.name fd.name=%fd.name)"
   priority: CRITICAL
@@ -76,8 +85,9 @@
       container.name startswith "techradar-changedetection" or
       container.name startswith "techradar-searxng" or
       container.name startswith "techradar-clamav-update"
-    ) and not (
-      fd.rnet in (127.0.0.0/8, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16)
+    ) and fd.type in (ipv4, ipv6) and not (
+      fd.rnet in (127.0.0.0/8, 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16) or
+      fd.rip = "::1"
     )
   output: "Outbound connection not routed via squid (container=%container.name fd.name=%fd.name)"
   priority: CRITICAL
@@ -88,7 +98,7 @@
   condition: >
     evt.type in (open, openat, openat2) and
     fd.name startswith "/run/secrets/" and
-    tr_app_container and (
+    tr_app_container and not tr_runtime_setup and (
       (container.name startswith "techradar-bot" and not proc.name in (tr_bot_programs)) or
       (container.name startswith "techradar-migrate" and not proc.name in (tr_migrate_programs)) or
       (container.name startswith "techradar-postgres" and not proc.name in (tr_postgres_programs)) or
@@ -109,7 +119,7 @@
   condition: >
     evt.type in (open, openat, openat2) and
     evt.is_open_write = true and
-    tr_app_container and
+    tr_app_container and not tr_runtime_setup and
     not (
       fd.name startswith "/tmp/" or
       fd.name startswith "/dev/" or
@@ -150,3 +160,19 @@
   output: "Docker socket accessed from inside container (container=%container.name proc=%proc.name cmdline=%proc.cmdline)"
   priority: CRITICAL
   tags: [security, container]
+
+# Narrow exceptions to Falco's default rules (appended to their conditions).
+# Seen on the TUF 2026-11-13: Debian's pg_isready wrapper (Postgres health
+# check, every 5 s) and Lynis (monthly audit) read /etc/shadow; NVIDIA's
+# container hook runs ldconfig from a memfd while starting GPU containers.
+- rule: Read sensitive file untrusted
+  condition: >
+    and not (container.name startswith "techradar-postgres" and proc.name = pg_isready)
+    and not (container.id = host and proc.pname = lynis)
+  override:
+    condition: append
+
+- rule: Fileless execution via memfd_create
+  condition: and not (container.id = host and proc.pname = nvidia-cdi-hook)
+  override:
+    condition: append
