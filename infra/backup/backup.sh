@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-BACKUP_DIR="${BACKUP_DIR:-/data/backup}"
-VAULT_DIR="${VAULT_DIR:-/data/vault}"
+BACKUP_DIR="${BACKUP_DIR:-data/backup}"
+VAULT_DIR="${VAULT_DIR:-data/vault}"
 SECRETS_DIR="${SECRETS_DIR:-secrets}"
 RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-/mnt/backup/restic}"
 RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-$SECRETS_DIR/restic_password}"

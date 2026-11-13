@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-BACKUP_DIR="${BACKUP_DIR:-/data/backup}"
+BACKUP_DIR="${BACKUP_DIR:-data/backup}"
 
 # shellcheck disable=SC2012
 NEWEST_DUMP=$(ls -1t "$BACKUP_DIR/pg"/techradar-*.dump 2>/dev/null | head -n 1)

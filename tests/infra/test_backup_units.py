@@ -34,3 +34,15 @@ def test_backup_scripts_have_strict_mode() -> None:
             check=False,
         )
         assert res.returncode == 0, f"bash -n failed on {script.name}: {res.stderr}"
+
+
+def test_host_backup_scripts_default_to_the_repo_data_folder():
+    # Both scripts run on the host from the repo (the backup unit sets
+    # BACKUP_DIR=<repo>/data/backup). make gate-1 runs restore_test.sh with
+    # no BACKUP_DIR, and /data/backup does not exist on the host.
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    for name in ["backup.sh", "restore_test.sh"]:
+        text = (root / "infra/backup" / name).read_text()
+        assert 'BACKUP_DIR="${BACKUP_DIR:-data/backup}"' in text, name
