@@ -340,13 +340,21 @@ def _result_files(clean_dir: Path) -> list[Path]:
 
 
 def _withdraw_doc_jobs(doc_id: int, jobs_dir: Path, library_dir: Path) -> None:
-    """Stop a doc: remove its not-yet-run job files. Records stay so stragglers are consumed."""
-    rec_dir = _records_dir(library_dir)
-    if rec_dir.exists():
-        for rec_file in rec_dir.glob("*.json"):
-            rec = _read_record(library_dir, rec_file.stem)
-            if rec and rec.doc_id == doc_id and rec.kind != "media":
-                (jobs_dir / f"{rec_file.stem}.job.json").unlink(missing_ok=True)
+    """Stop a doc: delete every job file in jobs_dir that belongs to it.
+
+    Matches on the job file's own doc_id (purpose library), not on records: a record is gone
+    once its result was consumed, yet that job file can still linger (e.g. the probe's).
+    Records stay so stragglers are consumed as stale.
+    """
+    if not jobs_dir.exists():
+        return
+    for job_file in jobs_dir.glob("*.job.json"):
+        try:
+            job = ParseJob.model_validate_json(job_file.read_text(encoding="utf-8"))
+        except OSError, ValidationError:
+            continue
+        if job.purpose == "library" and job.doc_id == doc_id:
+            job_file.unlink(missing_ok=True)
 
 
 def _save_text(path: Path, text: str) -> None:
