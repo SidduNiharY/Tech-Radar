@@ -290,3 +290,29 @@ def test_probe_stops_walking_a_huge_outline(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("techradar.parser.pdf.pdfium.PdfDocument", lambda path: Pdf())
     probe = pdf_probe(tmp_path / "any.pdf")
     assert probe.outline == [] and seen["n"] <= 5_001
+
+
+def test_model_jobs_get_room_for_their_address_space():
+    # Measured on the TUF 2026-11-13: Docling with PyTorch/ONNX needs about
+    # 16 GB of *virtual* address space to load (4 and 8 GB failed). Real
+    # memory stays bounded by the parser container's 3 GB cgroup limit; the
+    # light jobs keep the tight 2.5 GB address-space limit.
+    from techradar.parser.limits import LIGHT_AS_BYTES, MODEL_AS_BYTES, address_space_for
+
+    def job(**kw):
+        kind = kw.pop("kind", "pdf")
+        return ParseJob(
+            job_id="a" * 32,
+            kind=kind,
+            raw_name="b" * 64 + "." + kind,
+            url="u",
+            source_id=1,
+            **kw,
+        )
+
+    assert address_space_for(job(mode="part", page_start=1, page_end=2)) == MODEL_AS_BYTES
+    assert address_space_for(job(), pixel_rebuild=True) == MODEL_AS_BYTES
+    assert address_space_for(job(kind="docx")) == MODEL_AS_BYTES
+    assert address_space_for(job(mode="probe")) == LIGHT_AS_BYTES
+    assert address_space_for(job()) == LIGHT_AS_BYTES
+    assert MODEL_AS_BYTES >= 16_000_000_000 and LIGHT_AS_BYTES == 2_500_000_000

@@ -17,6 +17,21 @@ from techradar.parser.pdf import MAX_PART_PAGES, pdf_part_to_doc, pdf_probe, pdf
 from techradar.schemas.pipeline import CleanDoc, ParseJob, ParseResult
 from techradar.security.text import detect_lang, sanitize_text
 
+# Address-space (RLIMIT_AS) ceilings per job. Docling, PyTorch and ONNX
+# reserve far more virtual address space than they use: on the TUF a part job
+# needed about 16 GB to load (4 and 8 GB failed). Real memory is bounded by
+# the parser container's cgroup limit (compose mem_limit 3g); this ceiling
+# only stops runaway mappings. Light jobs keep the tight limit.
+LIGHT_AS_BYTES = 2_500_000_000
+MODEL_AS_BYTES = 24_000_000_000
+
+
+def address_space_for(job: ParseJob, *, pixel_rebuild: bool = False) -> int:
+    """The RLIMIT_AS for a job: model-backed modes need room to load."""
+    if pixel_rebuild or job.kind == "docx" or (job.kind == "pdf" and job.mode == "part"):
+        return MODEL_AS_BYTES
+    return LIGHT_AS_BYTES
+
 
 def parse_job(
     job: ParseJob,

@@ -12,7 +12,7 @@ from techradar.intake.av import AvScanner, ClamdScanner, IntakeWait
 from techradar.intake.gateway import gate_job
 from techradar.intake.guard import TransformersGuard, run_guard_with_limits
 from techradar.intake.rules import load_rules
-from techradar.parser.limits import run_with_limits
+from techradar.parser.limits import address_space_for, run_with_limits
 from techradar.schemas.pipeline import ParseJob, ParseResult
 from techradar.security.urls import load_allowlist
 
@@ -75,6 +75,7 @@ def build_gate(
                 raw_dir,
                 max_bytes=limits.get(j.origin, {}).get(j.kind, 5_000_000),
                 artifacts_path=docling_artifacts(),
+                mem_bytes=address_space_for(j),
             ),
             parse_pixels=lambda j: run_with_limits(
                 j,
@@ -82,6 +83,7 @@ def build_gate(
                 max_bytes=limits.get(j.origin, {}).get(j.kind, 5_000_000),
                 artifacts_path=docling_artifacts(),
                 pixel_rebuild=True,
+                mem_bytes=address_space_for(j, pixel_rebuild=True),
             ),
             guard_score=guard_score,
         )
