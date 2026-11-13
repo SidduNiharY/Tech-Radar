@@ -12,6 +12,13 @@ from techradar.security.text import detect_lang, sanitize_text
 MIN_TEXT_CHARS = 200
 MAX_OUTLINE_ENTRIES = 500
 MAX_OUTLINE_TITLE = 300
+# Bookmarks read before giving up, kept or not (entries without a page are
+# skipped but still count, so a hostile outline cannot loop until timeout).
+MAX_OUTLINE_SCAN = 5_000
+# Pages one part job may convert, and Docling's own time budget, kept under
+# the parser's 120 s process timeout.
+MAX_PART_PAGES = 100
+DOCLING_TIMEOUT_S = 100.0
 
 
 class OutlineEntry(BaseModel):
@@ -43,8 +50,8 @@ def pdf_probe(path: Path) -> PdfProbe:
         pdf = pdfium.PdfDocument(path)
         n_pages = len(pdf)
         outline: list[OutlineEntry] = []
-        for item in pdf.get_toc():
-            if len(outline) >= MAX_OUTLINE_ENTRIES:
+        for scanned, item in enumerate(pdf.get_toc(), start=1):
+            if len(outline) >= MAX_OUTLINE_ENTRIES or scanned > MAX_OUTLINE_SCAN:
                 break
             dest = item.get_dest()
             index = dest.get_index() if dest is not None else None
@@ -67,6 +74,13 @@ class _Converter(Protocol):
 
 
 def _docling_converter(artifacts_path: Path | None) -> _Converter:
+    """Docling with models from a local folder only.
+
+    Without a model folder Docling and RapidOCR download models from the
+    internet; the parser has no network, so that is refused here instead.
+    """
+    if artifacts_path is None or not Path(artifacts_path).is_dir():
+        raise ValueError("Docling needs its offline models folder (TR_DOCLING_ARTIFACTS)")
     # Imported here: Docling is heavy and only part mode needs it.
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
@@ -77,6 +91,7 @@ def _docling_converter(artifacts_path: Path | None) -> _Converter:
         ocr_options=RapidOcrOptions(),
         artifacts_path=artifacts_path,
         enable_remote_services=False,
+        document_timeout=DOCLING_TIMEOUT_S,
     )
     return DocumentConverter(  # type: ignore[no-any-return]
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
@@ -97,20 +112,28 @@ def pdf_part_to_doc(
     Each page's text is preceded by a `<!-- page N -->` line. Returns None when no
     page produced any text.
     """
+    n_pages = len(pdfium.PdfDocument(path))
+    if page_start > n_pages:
+        raise ValueError(f"part starts past the end (page {page_start} of {n_pages})")
+    page_end = min(page_end, n_pages)
     conv = converter or _docling_converter(artifacts_path)
     result = conv.convert(path, page_range=(page_start, page_end))
+    # Each page gets an equal share of max_chars, so a dense page can't push
+    # later pages (and their markers) out of the text.
+    n = page_end - page_start + 1
+    per_page = max(0, max_chars // n - len("<!-- page 0000000 -->\n\n\n"))
     blocks: list[str] = []
     any_text = False
-    for n in range(page_start, page_end + 1):
-        page_text = sanitize_text(result.document.export_to_markdown(page_no=n) or "")
+    truncated = False
+    for page in range(page_start, page_end + 1):
+        page_text = sanitize_text(result.document.export_to_markdown(page_no=page) or "")
         any_text = any_text or bool(page_text)
-        blocks.append(f"<!-- page {n} -->\n{page_text}".rstrip())
+        if len(page_text) > per_page:
+            page_text, truncated = page_text[:per_page], True
+        blocks.append(f"<!-- page {page} -->\n{page_text}".rstrip())
     if not any_text:
         return None
-    text = "\n\n".join(blocks)
-    truncated = len(text) > max_chars
-    if truncated:
-        text = text[:max_chars]
+    text = "\n\n".join(blocks)[:max_chars]
     return CleanDoc(
         url=url,
         title=f"pages {page_start}-{page_end}",

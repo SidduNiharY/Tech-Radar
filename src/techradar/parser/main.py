@@ -43,6 +43,12 @@ def default_guard_score(model_dir: Path = GUARD_MODEL_DIR) -> Callable[[str], fl
     return lambda text: run_guard_with_limits(text, guard)
 
 
+def docling_artifacts() -> Path | None:
+    """Docling's offline model folder, baked into the parser image."""
+    value = os.environ.get("TR_DOCLING_ARTIFACTS", "")
+    return Path(value) if value else None
+
+
 def build_gate(
     raw_dir: Path,
     quarantine_dir: Path,
@@ -64,7 +70,12 @@ def build_gate(
             rules=rules,
             allowed_hosts=allowed_hosts,
             limits=limits,
-            parse=lambda j: run_with_limits(j, raw_dir),
+            parse=lambda j: run_with_limits(
+                j,
+                raw_dir,
+                max_bytes=limits.get(j.origin, {}).get(j.kind, 5_000_000),
+                artifacts_path=docling_artifacts(),
+            ),
             guard_score=guard_score,
         )
 

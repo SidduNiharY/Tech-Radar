@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -180,8 +181,112 @@ def test_part_mode_requires_valid_range(tmp_path: Path):
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(
+    not os.environ.get("TR_DOCLING_ARTIFACTS"),
+    reason="needs the offline Docling models (TR_DOCLING_ARTIFACTS); runs in the parser image",
+)
 def test_part_mode_real_docling(tmp_path: Path):
-    doc = pdf_part_to_doc(FIXTURES_DIR / "tiny.pdf", "https://example.com/t.pdf", 1, 1)
+    doc = pdf_part_to_doc(
+        FIXTURES_DIR / "tiny.pdf",
+        "https://example.com/t.pdf",
+        1,
+        1,
+        artifacts_path=Path(os.environ["TR_DOCLING_ARTIFACTS"]),
+    )
     assert doc is not None
     assert doc.text.startswith("<!-- page 1 -->")
     assert "repo rate" in doc.text.lower()
+
+
+# --- Sandbox limits for part mode (Opus review of 31d56a0) ---
+
+
+def test_part_mode_never_runs_docling_without_offline_models(tmp_path: Path):
+    # Without a baked-in model folder Docling downloads models; in the
+    # no-network parser that must be an error, never an attempt.
+    p = tmp_path / "b.pdf"
+    p.write_bytes(make_pdf(3, []))
+    with pytest.raises(ValueError, match="offline models"):
+        pdf_part_to_doc(p, "u", 1, 2, artifacts_path=None)
+    with pytest.raises(ValueError, match="offline models"):
+        pdf_part_to_doc(p, "u", 1, 2, artifacts_path=tmp_path / "missing")
+
+
+def test_part_range_is_clamped_to_the_document(tmp_path: Path):
+    p = tmp_path / "b.pdf"
+    p.write_bytes(make_pdf(30, []))
+    conv = FakeConverter()
+    doc = pdf_part_to_doc(p, "u", 26, 10**9, converter=conv)
+    assert conv.calls == [("b.pdf", (26, 30))]
+    assert doc is not None and "<!-- page 31 -->" not in doc.text
+
+
+def test_part_starting_past_the_end_is_refused(tmp_path: Path):
+    p = tmp_path / "b.pdf"
+    p.write_bytes(make_pdf(5, []))
+    with pytest.raises(ValueError, match="past the end"):
+        pdf_part_to_doc(p, "u", 6, 9, converter=FakeConverter())
+
+
+def test_part_span_is_capped(tmp_path: Path):
+    job = _job(tmp_path, make_pdf(3, []), mode="part", page_start=1, page_end=101)
+    assert parse_job(job, tmp_path).status == "error"
+
+
+class LongDoc:
+    def export_to_markdown(self, page_no: int | None = None) -> str:
+        return "w " * 30_000  # 60k chars per page
+
+
+class LongConverter:
+    def convert(self, source, *, page_range):
+        return SimpleNamespace(document=LongDoc())
+
+
+def test_long_pages_keep_every_page_marker(tmp_path: Path):
+    # Truncating the joined text dropped later pages without a trace; each
+    # page is now capped on its own, so every marker survives.
+    p = tmp_path / "b.pdf"
+    p.write_bytes(make_pdf(10, []))
+    doc = pdf_part_to_doc(p, "u", 1, 10, max_chars=100_000, converter=LongConverter())
+    assert doc is not None and doc.truncated
+    assert len(doc.text) <= 100_000
+    for n in range(1, 11):
+        assert f"<!-- page {n} -->" in doc.text
+
+
+def test_library_pdf_over_5_mb_is_parsed_with_its_own_limit(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "techradar.parser.limits.pdf_probe",
+        lambda p: PdfProbe(n_pages=1, outline=[]),
+    )
+    data = make_pdf(1, []) + b"\n%" + b"x" * 6_000_000
+    job = _job(tmp_path, data, mode="probe")
+    assert parse_job(job, tmp_path).status == "too_large"  # default 5 MB
+    assert parse_job(job, tmp_path, max_bytes=300_000_000).status == "ok"
+
+
+def test_probe_stops_walking_a_huge_outline(tmp_path: Path, monkeypatch):
+    seen = {"n": 0}
+
+    class Item:
+        level = 0
+
+        def get_dest(self):
+            return None  # no destination: never kept, but still counted
+
+        def get_title(self):
+            return "x"
+
+    class Pdf:
+        def __len__(self):
+            return 1
+
+        def get_toc(self):
+            while True:
+                seen["n"] += 1
+                yield Item()
+
+    monkeypatch.setattr("techradar.parser.pdf.pdfium.PdfDocument", lambda path: Pdf())
+    probe = pdf_probe(tmp_path / "any.pdf")
+    assert probe.outline == [] and seen["n"] <= 5_001
