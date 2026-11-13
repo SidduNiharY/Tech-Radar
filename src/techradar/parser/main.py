@@ -76,6 +76,13 @@ def build_gate(
                 max_bytes=limits.get(j.origin, {}).get(j.kind, 5_000_000),
                 artifacts_path=docling_artifacts(),
             ),
+            parse_pixels=lambda j: run_with_limits(
+                j,
+                raw_dir,
+                max_bytes=limits.get(j.origin, {}).get(j.kind, 5_000_000),
+                artifacts_path=docling_artifacts(),
+                pixel_rebuild=True,
+            ),
             guard_score=guard_score,
         )
 

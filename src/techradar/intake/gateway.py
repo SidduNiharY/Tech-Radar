@@ -91,6 +91,7 @@ def gate_job(
     allowed_hosts: frozenset[str],
     limits: Mapping[str, Mapping[str, int]],
     parse: Callable[[ParseJob], ParseResult],
+    parse_pixels: Callable[[ParseJob], ParseResult] | None = None,
     guard_score: Callable[[str], float] | None = None,
     today: date | None = None,
     max_media_s: int = 14_400,
@@ -174,8 +175,26 @@ def gate_job(
                 intake=IntakeVerdict(verdict="reject", steps=steps, reasons=reasons),
             )
 
-    # 7. Rebuild / Parse step
-    parsed = parse(job)
+    # 7. Rebuild / Parse step. A flagged PDF's text layer is attacker-controlled,
+    # so its text comes from pixels (render + OCR, D36). Without a rebuild it is
+    # rejected: never fall back to the structure's own text.
+    if early_verdict == "flag" and job.kind == "pdf":
+        if parse_pixels is None:
+            steps.append(
+                IntakeStep(name="rebuild", outcome="reject", detail="pixel rebuild unavailable")
+            )
+            reasons = _reasons(steps, ("reject",))
+            print(f"INTAKE reject {job.job_id} {reasons}")
+            return ParseResult(
+                job_id=job.job_id,
+                kind=job.kind,
+                status="rejected",
+                intake=IntakeVerdict(verdict="reject", steps=steps, reasons=reasons),
+            )
+        steps.append(IntakeStep(name="rebuild", outcome="ok", detail="text from pixels (OCR)"))
+        parsed = parse_pixels(job)
+    else:
+        parsed = parse(job)
     if parsed.status != "ok":
         return parsed
 
