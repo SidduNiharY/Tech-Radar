@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
@@ -9,6 +10,8 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from techradar.ops.gpu import free_gpu
+
+log = logging.getLogger(__name__)
 
 Defer = Callable[[datetime, dict[str, Any]], Awaitable[None]]
 Free = Callable[[], Awaitable[object]]
@@ -58,6 +61,7 @@ def _default_defer(task_name: str) -> Defer:
 def night_only(
     fn: Callable[..., Awaitable[Any]] | None = None,
     *,
+    task_name: str | None = None,
     defer: Defer | None = None,
     free: Free | None = None,
     now: Callable[[], datetime] | None = None,
@@ -71,7 +75,13 @@ def night_only(
     start and nothing runs. Inside it, the GPU is freed first. Use it under the task
     decorator, `@app.task` on top, with the job taking keyword arguments. Every option
     can be injected for tests; the defaults come from settings and the worker app.
+
+    `task_name` is the exact procrastinate task name and is required unless `defer` is
+    injected: a wrong name would defer a job that no worker runs. A failure while freeing
+    the GPU is logged and the job still runs.
     """
+    if defer is None and task_name is None:
+        raise ValueError("night_only needs task_name when the default defer is used")
 
     def decorate(f: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @functools.wraps(f)
@@ -86,10 +96,13 @@ def night_only(
             zone = ZoneInfo(win[2])
             now_local = (now or _utc_now)().astimezone(zone)
             if not in_night_window(now_local, win[0], win[1]):
-                run_defer = defer or _default_defer(f"{f.__module__}.{f.__qualname__}")
+                run_defer = defer or _default_defer(str(task_name))
                 await run_defer(next_window_start(now_local, win[0]), kwargs)
                 return None
-            await (free or _default_free)()
+            try:
+                await (free or _default_free)()
+            except (httpx.HTTPError, OSError) as exc:
+                log.warning("could not free the GPU before the night job: %s", exc)
             return await f(**kwargs)
 
         return wrapper

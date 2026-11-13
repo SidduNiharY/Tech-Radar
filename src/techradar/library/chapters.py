@@ -9,11 +9,17 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from techradar.library.parts import split_pdf_parts
+from techradar.security.text import sanitize_text
 
 if TYPE_CHECKING:
     from techradar.parser.pdf import OutlineEntry
 
+MAX_TITLE = 300
 _MARKER = re.compile(r"^<!-- page (\d+) -->$", re.MULTILINE)
+
+
+def _clean_title(title: str) -> str:
+    return " ".join(sanitize_text(title).split())[:MAX_TITLE]
 
 
 class ChapterSpec(BaseModel):
@@ -29,7 +35,7 @@ def _from_starts(starts: Iterable[tuple[int, str]], n_pages: int) -> list[Chapte
     for page, title in sorted(starts, key=lambda s: s[0]):
         page = max(page, 1)
         if page <= n_pages and page not in seen:
-            seen[page] = title
+            seen[page] = _clean_title(title)
     if len(seen) < 2:
         return None
     pages = list(seen)
@@ -85,14 +91,28 @@ def _note(first: int, last: int) -> str:
     return f"> Pages {first}–{last} couldn't be read."
 
 
-def assemble_chapter_text(
-    part_texts: Mapping[int, str], ch: ChapterSpec, failed_pages: Sequence[int]
-) -> str:
-    """Join the chapter's pages in order, noting unreadable ranges where they fall."""
+def _page_map(part_texts: Mapping[int, str]) -> dict[int, str]:
     pages: dict[int, str] = {}
     for text in part_texts.values():
         pages.update(_split_pages(text))
+    return pages
+
+
+def missing_pages(
+    part_texts: Mapping[int, str], ch: ChapterSpec, failed_pages: Sequence[int]
+) -> list[int]:
+    """Pages of the chapter that failed or are absent from the part texts, in order."""
+    pages = _page_map(part_texts)
     failed = set(failed_pages)
+    return [n for n in range(ch.page_start, ch.page_end + 1) if n in failed or n not in pages]
+
+
+def assemble_chapter_text(
+    part_texts: Mapping[int, str], ch: ChapterSpec, failed_pages: Sequence[int]
+) -> str:
+    """Join the chapter's pages in order, noting unreadable or missing ranges in place."""
+    pages = _page_map(part_texts)
+    missing = set(missing_pages(part_texts, ch, failed_pages))
     out: list[str] = []
     run: list[int] = []
 
@@ -102,12 +122,11 @@ def assemble_chapter_text(
             run.clear()
 
     for n in range(ch.page_start, ch.page_end + 1):
-        if n in failed:
+        if n in missing:
             run.append(n)
             continue
         flush()
-        if n in pages:
-            out.append(pages[n])
+        out.append(pages[n])
     flush()
     return "\n\n".join(out)
 

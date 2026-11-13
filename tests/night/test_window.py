@@ -85,3 +85,78 @@ async def test_night_only_frees_gpu_then_runs_inside_window():
     job, _ = _make(rec, datetime(2026, 11, 7, 20, 30, tzinfo=UTC))
     assert await job(doc_id=9) == "done"
     assert rec.events == [("free",), ("run", 9)]
+
+
+async def test_night_only_runs_job_when_free_gpu_fails():
+    import httpx
+
+    rec = Recorder()
+
+    async def bad_free():
+        raise httpx.ConnectError("ollama down")
+
+    calls: list = []
+
+    @night_only(
+        defer=rec.defer,
+        free=bad_free,
+        now=lambda: datetime(2026, 11, 7, 20, 30, tzinfo=UTC),
+        start=START,
+        end=END,
+        tz="Asia/Kolkata",
+    )
+    async def job(doc_id: int):
+        calls.append(doc_id)
+        return "done"
+
+    assert await job(doc_id=1) == "done"
+    assert calls == [1]
+
+
+async def test_night_only_default_defer_uses_given_task_name(monkeypatch):
+    import sys
+    import types
+
+    seen: dict = {}
+
+    class _Configured:
+        async def defer_async(self, **kwargs):
+            seen["kwargs"] = kwargs
+
+    class _App:
+        def configure_task(self, name, **opts):
+            seen["name"] = name
+            seen["opts"] = opts
+            return _Configured()
+
+    fake = types.ModuleType("techradar.worker.app")
+    fake.app = _App()  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "techradar.worker.app", fake)
+
+    @night_only(
+        task_name="techradar.night.my_task",
+        free=lambda: _noop(),
+        now=lambda: datetime(2026, 11, 8, 0, 30, tzinfo=UTC),
+        start=START,
+        end=END,
+        tz="Asia/Kolkata",
+    )
+    async def job(doc_id: int):
+        raise AssertionError("must not run")
+
+    assert await job(doc_id=3) is None
+    assert seen["name"] == "techradar.night.my_task"
+    assert seen["kwargs"] == {"doc_id": 3}
+    assert seen["opts"]["schedule_at"] == datetime(2026, 11, 9, 1, 0, tzinfo=IST)
+
+
+async def _noop():
+    return None
+
+
+def test_night_only_default_defer_requires_task_name():
+    with pytest.raises(ValueError, match="task_name"):
+
+        @night_only(start=START, end=END, tz="Asia/Kolkata")
+        async def job(doc_id: int):
+            return None

@@ -6,6 +6,7 @@ from techradar.library.chapters import (
     ChapterSpec,
     assemble_chapter_text,
     detect_chapters,
+    missing_pages,
     write_chapter_text,
 )
 from techradar.parser.pdf import OutlineEntry
@@ -66,18 +67,20 @@ def test_detect_chapters_empty_document():
 
 
 def test_failed_part_noted_in_chapter():
+    present = "\n\n".join(f"<!-- page {n} -->\nP{n}" for n in range(1, 26))
     text = assemble_chapter_text(
-        {1: "<!-- page 1 -->\nA"},
+        {1: present},
         ChapterSpec(ordinal=1, title="T", page_start=1, page_end=50),
         failed_pages=range(26, 51),
     )
     assert "> Pages 26–50 couldn't be read." in text
-    assert "<!-- page 1 -->\nA" in text
+    assert "<!-- page 1 -->\nP1" in text
 
 
 def test_assemble_keeps_page_markers_in_order_and_notes_gap_in_place():
     parts = {
-        1: "<!-- page 1 -->\nA\n\n<!-- page 2 -->\nB",
+        1: "<!-- page 1 -->\nA\n\n<!-- page 2 -->\nB\n\n<!-- page 6 -->\nF",
+        8: "\n\n".join(f"<!-- page {n} -->\nP{n}" for n in range(8, 26)),
         26: "<!-- page 26 -->\nC",
     }
     ch = ChapterSpec(ordinal=1, title="T", page_start=2, page_end=26)
@@ -93,3 +96,29 @@ def test_write_chapter_text(tmp_path: Path):
     assert p == tmp_path / "text" / "7" / "03.md"
     assert p.read_text(encoding="utf-8") == "hello"
     assert p.stat().st_mode & 0o777 == 0o640
+
+
+def test_page_missing_from_parts_is_noted_like_a_failed_page():
+    parts = {1: "<!-- page 1 -->\nA\n\n<!-- page 3 -->\nC\n\n<!-- page 5 -->\nE"}
+    ch = ChapterSpec(ordinal=1, title="T", page_start=1, page_end=6)
+    text = assemble_chapter_text(parts, ch, failed_pages=[6])
+    assert text.index("<!-- page 1 -->") < text.index("> Page 2 couldn't be read.")
+    assert text.index("> Page 2 couldn't be read.") < text.index("<!-- page 3 -->")
+    assert text.index("<!-- page 3 -->") < text.index("> Page 4 couldn't be read.")
+    assert text.index("<!-- page 5 -->") < text.index("> Page 6 couldn't be read.")
+
+
+def test_missing_pages_lists_gaps_and_failed_pages():
+    parts = {1: "<!-- page 1 -->\nA\n\n<!-- page 3 -->\nC"}
+    ch = ChapterSpec(ordinal=1, title="T", page_start=1, page_end=5)
+    assert missing_pages(parts, ch, failed_pages=[5]) == [2, 4, 5]
+    assert missing_pages(parts, ch, failed_pages=[]) == [2, 4, 5]
+
+
+def test_heading_titles_are_cleaned_and_capped():
+    dirty = "Intro\x00\x07 to\n  things " + "x" * 500
+    chs = detect_chapters(10, [], [(1, 1, dirty), (6, 1, "Two")])
+    t = chs[0].title
+    assert len(t) == 300
+    assert "\x00" not in t and "\x07" not in t and "\n" not in t
+    assert t.startswith("Intro to things x")
