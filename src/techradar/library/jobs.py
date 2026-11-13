@@ -19,16 +19,24 @@ Pending parts are also in `library_parts` (status pending, job_id set). A crash 
 
 Status ownership: this module sets `processing` (plan_doc), `rejected`/`quarantined`/`failed`.
 After chapters are built the doc STAYS `processing` with `pages` set (and chapter rows
-present); Task 6 (indexing and summaries) sets `ready`. Video/audio `media` results are left
-in place for Task 5, unless they are rejected/quarantined.
+present); Task 6 (indexing and summaries) sets `ready`.
+
+Video/audio (Task 5) work like PDFs: a probe (duration), then one `media` job per 600 s segment
+(a `library_parts` row with ts_start/ts_end). Each segment result is validated strictly
+(media_results.py); its audio file path goes into `result_path` and its slides are merged into
+`media/<doc_id>/slides.json`. When all segments settled the doc becomes
+`awaiting_transcription` (transcripts come with phase 6), the original video is deleted unless
+`keep_media`, and the owner gets one message.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
+import stat
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -47,7 +55,14 @@ from techradar.library.chapters import (
     missing_pages,
     write_chapter_text,
 )
+from techradar.library.media_results import (
+    Slide,
+    parse_probe,
+    parse_segment_result,
+    segment_bounds,
+)
 from techradar.library.parts import split_pdf_parts
+from techradar.messaging.outbox import enqueue_message
 from techradar.schemas.pipeline import ParseJob, ParseResult
 
 logger = logging.getLogger(__name__)
@@ -145,6 +160,8 @@ def _make_job(
         mode=mode,
         page_start=part.page_start if part else None,
         page_end=part.page_end if part else None,
+        ts_start=part.ts_start if part else None,
+        ts_end=part.ts_end if part else None,
         doc_id=doc.id,
         part_id=part.id if part else None,
     )
@@ -195,9 +212,9 @@ async def plan_doc(
             mode="full",
             kind=_FULL_KIND[doc.kind],
         )
-    else:  # video, audio: Task 5 handles the result
+    else:  # video, audio: a probe first, then one media job per segment
         _queue(
-            doc, jobs_dir, library_dir, job_id=job_id, rec_kind="media", mode="media", kind=doc.kind
+            doc, jobs_dir, library_dir, job_id=job_id, rec_kind="probe", mode="probe", kind=doc.kind
         )
     doc.status = "processing"
     await session.flush()
@@ -332,6 +349,13 @@ async def _build_full_chapters(
     return len(rows)
 
 
+def _part_job_args(doc: LibraryDoc) -> tuple[JobRecordKind, Literal["part", "media"], str]:
+    """(record kind, parse mode, parser kind) of a part job of this doc."""
+    if doc.kind in ("video", "audio"):
+        return "media", "media", doc.kind
+    return "part", "part", "pdf"
+
+
 def _result_files(clean_dir: Path) -> list[Path]:
     return sorted(clean_dir.glob("*.result.json")) if clean_dir.exists() else []
 
@@ -439,9 +463,10 @@ async def _handle_part(
         if result.status in _RETRYABLE and part.attempts < MAX_ATTEMPTS:
             part.job_id = _new_job_id()
             await session.flush()
+            rec_kind, mode, kind = _part_job_args(doc)
             _queue(
                 doc, jobs_dir, library_dir,
-                job_id=part.job_id, rec_kind="part", mode="part", kind="pdf", part=part,
+                job_id=part.job_id, rec_kind=rec_kind, mode=mode, kind=kind, part=part,
             )  # fmt: skip
         else:
             part.status = "failed"
@@ -481,6 +506,154 @@ async def _handle_full(
     await _build_full_chapters(session, doc, result.doc.text, library_dir)
 
 
+# --- media (video, audio) -------------------------------------------------------
+
+
+def _media_dir(library_dir: Path, doc_id: int) -> Path:
+    return library_dir / "media" / str(doc_id)
+
+
+def _merge_slides(library_dir: Path, doc_id: int, slides: list[Slide]) -> None:
+    """Append slides to media/<doc_id>/slides.json, kept sorted by ts_s, written atomically."""
+    path = _media_dir(library_dir, doc_id) / "slides.json"
+    existing: list[dict] = []
+    with contextlib.suppress(OSError, ValueError):
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, list):
+            existing = [x for x in loaded if isinstance(x, dict)]
+    merged = existing + [s.model_dump() for s in slides]
+    merged.sort(key=lambda x: float(x.get("ts_s", 0)))
+    _save_text(path, json.dumps(merged))
+
+
+def _delete_original(library_dir: Path, doc: LibraryDoc) -> None:
+    """Delete a video's original: only a regular file (never a symlink) in originals/."""
+    if doc.kind != "video" or doc.keep_media:
+        return
+    path = library_dir / doc.original_path
+    try:
+        if path.parent.resolve() != (library_dir / "originals").resolve():
+            return
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return
+        os.unlink(path)
+    except OSError:
+        logger.warning("could not delete original of doc %s", doc.id)
+
+
+async def _handle_media(
+    session: AsyncSession,
+    doc: LibraryDoc,
+    rec: JobRecord,
+    result: ParseResult,
+    *,
+    jobs_dir: Path,
+    library_dir: Path,
+    owner_chat_id: int | None,
+) -> None:
+    if rec.kind == "probe":
+        await _handle_media_probe(session, doc, result, jobs_dir=jobs_dir, library_dir=library_dir)
+        return
+    part = await session.get(LibraryPart, rec.part_id) if rec.part_id else None
+    if part is None or part.status != "pending" or part.job_id != result.job_id:
+        return  # stale: already applied or superseded by a retry
+    status = result.status
+    seg = None
+    if status == "ok":
+        seg = (
+            parse_segment_result(result.doc.text, part.ts_start or 0.0, part.ts_end or 0.0)
+            if result.doc and part.ts_start is not None and part.ts_end is not None
+            else None
+        )
+        if seg is None:
+            status = "error"  # untrusted output that breaks the contract
+    if seg is not None:
+        _merge_slides(library_dir, doc.id, seg.slides)
+        part.result_path = f"media/{doc.id}/{seg.audio_file}"
+        part.status = "done"
+    else:
+        part.attempts += 1
+        if status in _RETRYABLE and part.attempts < MAX_ATTEMPTS:
+            part.job_id = _new_job_id()
+            await session.flush()
+            rec_kind, mode, kind = _part_job_args(doc)
+            _queue(
+                doc, jobs_dir, library_dir,
+                job_id=part.job_id, rec_kind=rec_kind, mode=mode, kind=kind, part=part,
+            )  # fmt: skip
+        else:
+            part.status = "failed"
+    await session.flush()
+    await _finish_media_if_settled(session, doc, library_dir, owner_chat_id)
+
+
+async def _handle_media_probe(
+    session: AsyncSession,
+    doc: LibraryDoc,
+    result: ParseResult,
+    *,
+    jobs_dir: Path,
+    library_dir: Path,
+) -> None:
+    existing = (
+        await session.execute(select(LibraryPart.id).where(LibraryPart.doc_id == doc.id).limit(1))
+    ).first()
+    if existing is not None:
+        return
+    probe = parse_probe(result.doc.text) if result.status == "ok" and result.doc else None
+    if probe is None or not (probe.has_audio or probe.has_video):
+        doc.status = "failed"
+        return
+    doc.duration_s = probe.duration_s
+    parts = [
+        LibraryPart(
+            doc_id=doc.id,
+            ordinal=i,
+            ts_start=start,
+            ts_end=end,
+            status="pending",
+            attempts=0,
+            job_id=_new_job_id(),
+        )  # fmt: skip
+        for i, (start, end) in enumerate(segment_bounds(probe.duration_s))
+    ]
+    session.add_all(parts)
+    await session.flush()
+    rec_kind, mode, kind = _part_job_args(doc)
+    for p in parts:
+        _queue(
+            doc, jobs_dir, library_dir, job_id=p.job_id or "", rec_kind=rec_kind, mode=mode,
+            kind=kind, part=p,
+        )  # fmt: skip
+
+
+async def _finish_media_if_settled(
+    session: AsyncSession, doc: LibraryDoc, library_dir: Path, owner_chat_id: int | None
+) -> None:
+    statuses = (
+        (await session.execute(select(LibraryPart.status).where(LibraryPart.doc_id == doc.id)))
+        .scalars()
+        .all()
+    )
+    if not statuses or "pending" in statuses:
+        return
+    if "done" not in statuses:
+        doc.status = "failed"
+        return
+    doc.status = "awaiting_transcription"
+    _delete_original(library_dir, doc)
+    if owner_chat_id is not None:
+        await enqueue_message(
+            session,
+            owner_chat_id,
+            f"Got {doc.title}: audio and slides are ready; "
+            "the transcript comes when phase 6 is built.",
+            purpose="library_ready",
+            ref_id=doc.id,
+        )
+    await session.flush()
+
+
 async def collect_bulk_results(
     session: AsyncSession,
     *,
@@ -489,12 +662,13 @@ async def collect_bulk_results(
     library_dir: Path,
     part_pages: int,
     commit: bool = True,
+    owner_chat_id: int | None = None,
 ) -> dict[str, int]:
     """Apply every result that belongs to a library job; leave all other files alone.
 
     Each result is applied, committed, and only then deleted together with its job record,
     so a crash re-runs the result harmlessly (see module docstring). `commit=False` only
-    flushes (for tests that roll back).
+    flushes (for tests that roll back). `owner_chat_id` receives the "media ready" message.
     """
     counts = {"handled": 0, "skipped": 0, "stale": 0}
     for rpath in _result_files(clean_dir):
@@ -513,10 +687,13 @@ async def collect_bulk_results(
             counts["skipped"] += 1
             continue
         doc = await session.get(LibraryDoc, rec.doc_id)
-        if rec.kind == "media" and result.status not in ("rejected", "quarantined"):
-            counts["skipped"] += 1  # Task 5 consumes media results
-            continue
-        if doc is None or doc.status in ("rejected", "quarantined", "failed", "ready"):
+        if doc is None or doc.status in (
+            "rejected",
+            "quarantined",
+            "failed",
+            "ready",
+            "awaiting_transcription",
+        ):
             counts["stale"] += 1
         elif result.status in ("rejected", "quarantined"):
             doc.status = result.status
@@ -524,7 +701,12 @@ async def collect_bulk_results(
             _withdraw_doc_jobs(doc.id, jobs_dir, library_dir)
             counts["handled"] += 1
         else:
-            if rec.kind == "probe":
+            if doc.kind in ("video", "audio") and rec.kind in ("probe", "media"):
+                await _handle_media(
+                    session, doc, rec, result, jobs_dir=jobs_dir, library_dir=library_dir,
+                    owner_chat_id=owner_chat_id,
+                )  # fmt: skip
+            elif rec.kind == "probe":
                 await _handle_probe(
                     session, doc, result, jobs_dir=jobs_dir, library_dir=library_dir,
                     part_pages=part_pages,
@@ -587,8 +769,9 @@ async def resume_parts(
             continue
         if clean_dir is not None and (clean_dir / f"{p.job_id}.result.json").exists():
             continue
+        rec_kind, mode, kind = _part_job_args(doc)
         _queue(
-            doc, jobs_dir, library_dir, job_id=p.job_id, rec_kind="part", mode="part", kind="pdf",
+            doc, jobs_dir, library_dir, job_id=p.job_id, rec_kind=rec_kind, mode=mode, kind=kind,
             part=p,
         )  # fmt: skip
         requeued.append(p.ordinal)
@@ -605,7 +788,7 @@ async def _requeue_single_job(
     clean_dir: Path | None,
 ) -> None:
     """Probe (PDF) or full (docx/epub/html) job lost before it produced anything."""
-    if doc.kind == "pdf":
+    if doc.kind in ("pdf", "video", "audio"):
         rec_kind: JobRecordKind = "probe"
         done = (
             await session.execute(
@@ -613,7 +796,7 @@ async def _requeue_single_job(
             )
         ).first()
         mode: Literal["full", "probe", "part", "media"] = "probe"
-        kind = "pdf"
+        kind = "pdf" if doc.kind == "pdf" else doc.kind
     elif doc.kind in _FULL_KIND:
         rec_kind, mode, kind = "full", "full", _FULL_KIND[doc.kind]
         done = (
@@ -622,7 +805,7 @@ async def _requeue_single_job(
             )
         ).first()
     else:
-        return  # media jobs belong to Task 5
+        return
     if done is not None:
         return
     rec_dir = _records_dir(library_dir)

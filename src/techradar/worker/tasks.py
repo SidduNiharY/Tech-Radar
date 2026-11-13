@@ -300,6 +300,7 @@ async def collect_bulk_results_job() -> None:
             jobs_dir=settings.data_dir / "parse-jobs",
             library_dir=settings.data_dir / "library",
             part_pages=settings.library_part_pages,
+            owner_chat_id=settings.telegram_owner_chat_id,
         )
     if counts["handled"]:
         logger.info("bulk results handled: %s", counts)
