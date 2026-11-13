@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from techradar.library.bulk import (
-    BulkDocumentManager,
-    DuplicateDocumentError,
-    compute_file_sha256,
-    is_file_settled,
+from techradar.library.inbox import (
+    MIME_TO_KIND,
+    InboxFile,
+    IntakeDecision,
+    LibraryKind,
+    classify,
+    plan_library_intake,
+    sha256_file,
+    stable_files,
 )
 from techradar.library.media import (
     MAX_AUDIO_SIZE_BYTES,
@@ -28,14 +32,20 @@ from techradar.library.summarizer import (
 from techradar.library.toc import chunk_by_page_ranges, extract_outline_chapters
 
 __all__ = [
+    "MIME_TO_KIND",
+    "InboxFile",
+    "IntakeDecision",
+    "LibraryKind",
+    "classify",
+    "plan_library_intake",
+    "sha256_file",
+    "stable_files",
     "MAX_AUDIO_SIZE_BYTES",
     "MAX_VIDEO_DURATION_S",
     "MAX_VIDEO_SIZE_BYTES",
     "BookMeta",
-    "BulkDocumentManager",
     "Chapter",
     "ChapterSummary",
-    "DuplicateDocumentError",
     "LibraryDoc",
     "LibraryPart",
     "MediaInfo",
@@ -47,9 +57,7 @@ __all__ = [
     "build_ffmpeg_frame_extract_args",
     "check_media_limits",
     "chunk_by_page_ranges",
-    "compute_file_sha256",
     "extract_outline_chapters",
-    "is_file_settled",
     "is_night_window",
     "probe_media",
     "render_chapter_vault_note",

@@ -476,6 +476,16 @@ Obsidian vault syncing between the TUF server and the macOS client occurs strict
    ```
 8. Set the Obsidian Web Clipper destination to `Clippings/`.
 
+### Library folder (books, videos, packs)
+The Library inbox is a second Syncthing folder, one-way from the Mac to the server.
+
+1. On the Mac, create `~/TechRadar Library` and share it as a folder of type "Send Only".
+2. On the server, add it as `data/library-inbox` with type "Receive Only".
+3. Ignore patterns on both sides: `.DS_Store`, `*.partial`, `~*`.
+4. The worker moves each file out of `data/library-inbox` into `done/` or `rejected/` (the originals go to `data/library/originals/`). Syncthing will show these as "Locally Changed Items" on the Receive Only side. Never press "Revert Local Changes", which would delete them. Dropping files into the Mac folder is the only way in.
+5. The worker waits 60 seconds after a file stops changing before it takes it. Refusals arrive in Telegram as "Couldn't add <name>: <reason>.", and the file waits in `data/library-inbox/rejected/`.
+6. `data/library-packs` (starter packs) is not synced; only the owner places files there on the server.
+
 ---
 
 ## 22. Install the Host Tools

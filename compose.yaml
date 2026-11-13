@@ -206,7 +206,9 @@ services:
       - ./data/parse-jobs:/data/parse-jobs
       - ./data/vault:/data/vault
       - ./data/library-inbox:/data/library-inbox
+      - ./data/library-packs:/data/library-packs
       - ./data/library:/data/library
+      - ./infra/intake/limits.yaml:/infra/intake/limits.yaml:ro
       - ./infra/sources:/infra/sources:ro
       - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro
       - ./infra/models/roles.yaml:/infra/models/roles.yaml:ro

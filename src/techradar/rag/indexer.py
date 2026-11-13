@@ -18,7 +18,7 @@ from techradar.fetcher.store import store_raw, write_job
 from techradar.llm.client import Embedder
 from techradar.pipeline.writer import slugify
 from techradar.rag.chunker import parse_front_matter, split_markdown
-from techradar.schemas.pipeline import JobKind, ParseJob, ParseResult
+from techradar.schemas.pipeline import ParseJob, ParseResult
 from techradar.security.text import detect_lang, sanitize_text
 
 logger = logging.getLogger(__name__)
@@ -118,55 +118,6 @@ class IndexDeps:
     jobs_dir: Path
     clean_dir: Path
     skip: Sequence[str] = ()
-
-
-def plan_library_jobs(
-    library_inbox: Path,
-    originals_dir: Path,
-    jobs_dir: Path | None = None,
-) -> list[ParseJob]:
-    """Scan library-inbox, store originals in library/originals, create ParseJobs, move to done."""
-    jobs: list[ParseJob] = []
-    if not library_inbox.exists():
-        return jobs
-
-    done_dir = library_inbox / "done"
-    done_dir.mkdir(parents=True, exist_ok=True)
-    originals_dir.mkdir(parents=True, exist_ok=True)
-
-    for item in sorted(library_inbox.iterdir()):
-        if not item.is_file() or item.is_symlink():
-            continue
-        ext = item.suffix.lstrip(".").lower()
-        if ext not in ("pdf", "html"):
-            continue
-        if item.stat().st_size > 5_000_000 or item.stat().st_size == 0:
-            continue
-
-        data = item.read_bytes()
-        raw_name = store_raw(data, originals_dir, ext=ext)  # type: ignore[arg-type]
-        job_id = hashlib.md5(
-            f"library:{item.name}:{raw_name}".encode(), usedforsecurity=False
-        ).hexdigest()
-        kind: JobKind = "pdf" if ext == "pdf" else "page"
-        job = ParseJob(
-            job_id=job_id,
-            purpose="library",
-            origin="library",
-            kind=kind,
-            raw_name=raw_name,
-            url=f"library:{item.name}",
-            source_id=0,
-        )
-        if jobs_dir is not None:
-            write_job(job, jobs_dir)
-
-        # Move processed file to done
-        target_done = done_dir / item.name
-        item.replace(target_done)
-        jobs.append(job)
-
-    return jobs
 
 
 def plan_clipping_jobs(

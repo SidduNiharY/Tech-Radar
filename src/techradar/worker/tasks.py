@@ -1,5 +1,7 @@
 """Procrastinate task definitions for pipeline processing and retention."""
 
+import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,6 +10,7 @@ import yaml
 from techradar.bot.render import render_answer
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
+from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import Button, enqueue_message
@@ -20,7 +23,6 @@ from techradar.rag.indexer import (
     collect_clipping_results,
     collect_library_results,
     plan_clipping_jobs,
-    plan_library_jobs,
     scan_vault,
     sync_index,
 )
@@ -28,6 +30,8 @@ from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
+
+logger = logging.getLogger(__name__)
 
 
 def _get_settings() -> Settings:
@@ -116,17 +120,48 @@ def get_index_deps() -> IndexDeps:
     )
 
 
+LIMITS_PATHS = (Path("/infra/intake/limits.yaml"), Path("infra/intake/limits.yaml"))
+
+
+async def _queue_doc(doc_id: int) -> None:
+    """Placeholder until the `bulk` queue exists (Phase 2c Task 4): the doc stays `queued`."""
+    logger.info("library doc %s queued for processing", doc_id)
+
+
+async def intake_library(settings: Settings, deps: IndexDeps) -> list[int]:
+    """Take settled files from the library and pack inboxes into the library."""
+    limits_path = next((p for p in LIMITS_PATHS if p.exists()), LIMITS_PATHS[0])
+    session_factory = deps.session_factory
+    async with session_factory() as session:
+
+        async def send(text: str) -> None:
+            await enqueue_message(
+                session,
+                chat_id=settings.telegram_owner_chat_id,
+                text=text,
+                purpose="library_intake",
+            )
+
+        ids = await plan_library_intake(
+            session,
+            [(deps.library_inbox, "library"), (settings.library_packs_dir, "pack")],
+            deps.library_dir,
+            time.time(),
+            load_limits(limits_path),
+            queue_doc=_queue_doc,
+            send=send,
+        )
+        await session.commit()
+    return ids
+
+
 @app.periodic(cron="*/10 * * * *")
 @app.task(queue="io")
 async def index_sync() -> None:
     """Run periodic vault and library indexing."""
     settings = _get_settings()
     deps = get_index_deps()
-    plan_library_jobs(
-        deps.library_inbox,
-        settings.data_dir / "library" / "originals",
-        deps.jobs_dir,
-    )
+    await intake_library(settings, deps)
     await collect_library_results(deps)
     scanned = scan_vault(deps.vault_root, skip=deps.skip)
     plan_clipping_jobs(deps.vault_root, scanned, deps.raw_dir, deps.jobs_dir)

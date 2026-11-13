@@ -14,7 +14,6 @@ from techradar.rag.indexer import (
     collect_clipping_results,
     doc_meta,
     plan_clipping_jobs,
-    plan_library_jobs,
     scan_vault,
     sync_index,
 )
@@ -70,19 +69,6 @@ def test_doc_meta_defaults_to_user_note():
     assert doc_meta({}).doc_kind == "user"
 
 
-def test_plan_library_jobs_creates_library_purpose(tmp_path: Path):
-    inbox = tmp_path / "in"
-    inbox.mkdir(parents=True)
-    (inbox / "ncert_economics.pdf").write_bytes(b"%PDF-1.4 fake content")
-    originals = tmp_path / "library" / "originals"
-
-    jobs = plan_library_jobs(inbox, originals)
-    assert len(jobs) == 1
-    assert jobs[0].purpose == "library"
-    assert jobs[0].origin == "library"
-    assert (inbox / "done" / "ncert_economics.pdf").exists()
-
-
 def test_scan_vault_never_opens_skipped_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (tmp_path / "passwords.md").write_text("secret")
     (tmp_path / "public.md").write_text("public note")
@@ -100,17 +86,6 @@ def test_scan_vault_never_opens_skipped_paths(tmp_path: Path, monkeypatch: pytes
     assert "passwords.md" not in res
     assert "public.md" in res
     assert "passwords.md" not in opened
-
-
-def test_library_original_outside_raw_dir(tmp_path: Path):
-    inbox = tmp_path / "in"
-    inbox.mkdir(parents=True)
-    (inbox / "book.pdf").write_bytes(b"%PDF-1.4 fake")
-    originals = tmp_path / "library" / "originals"
-
-    plan_library_jobs(inbox, originals)
-    assert list(originals.iterdir())
-    assert not (tmp_path / "raw").exists()
 
 
 @pytest.fixture
