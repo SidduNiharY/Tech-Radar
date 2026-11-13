@@ -29,6 +29,7 @@ _DEMUXER_FOR_MIME = {
     "video/x-matroska": "matroska",
     "audio/mpeg": "mp3",
     "audio/wav": "wav",
+    "audio/x-wav": "wav",
     "audio/ogg": "ogg",
 }
 # Text that must never appear at the start of a media file.

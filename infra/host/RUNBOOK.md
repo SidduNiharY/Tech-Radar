@@ -477,6 +477,14 @@ Obsidian vault syncing between the TUF server and the macOS client occurs strict
 8. Set the Obsidian Web Clipper destination to `Clippings/`.
 
 ### Library folder (books, videos, packs)
+
+Create the host folders first and give them to the container user (uid 1000); if Docker creates a missing bind-mount folder it is owned by root, and the worker cannot move or remove files in it:
+
+```bash
+cd ~/TechRadarBrain
+mkdir -p data/library-inbox data/library-packs data/library
+sudo chown -R 1000:1000 data/library-inbox data/library-packs data/library
+```
 The Library inbox is a second Syncthing folder, one-way from the Mac to the server.
 
 1. On the Mac, create `~/TechRadar Library` and share it as a folder of type "Send Only".

@@ -5,6 +5,7 @@ import urllib.parse
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path
+from typing import BinaryIO
 
 from techradar.schemas.pipeline import IntakeStep, JobKind, ParseJob
 from techradar.security.urls import host_allowed, registrable_domain
@@ -27,7 +28,9 @@ ALLOWED_MIME: dict[JobKind, frozenset[str]] = {
     "docx": frozenset({DOCX_MIME}),
     "epub": frozenset({EPUB_MIME}),
     "video": frozenset({"video/mp4", "video/x-matroska", "video/webm", "video/quicktime"}),
-    "audio": frozenset({"audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/ogg"}),
+    "audio": frozenset(
+        {"audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/x-wav", "audio/ogg"}
+    ),
     "image": frozenset({"image/png", "image/jpeg"}),
 }
 
@@ -111,18 +114,21 @@ def _media_mime(head: bytes) -> str | None:
     return None
 
 
-def detect_file_mime(path: Path) -> str:
-    """detect_mime, plus a look inside ZIP archives to tell DOCX and EPUB apart.
+def detect_mime_in(fh: BinaryIO) -> str:
+    """detect_mime on an open, seekable file, plus a look inside ZIP archives
+    to tell DOCX and EPUB apart.
 
     Only the central directory and the tiny EPUB "mimetype" entry are read;
-    check_zip later inspects every entry.
+    check_zip later inspects every entry. Callers must refuse oversized ZIP
+    files before calling this: reading a huge central directory costs memory.
     """
-    with path.open("rb") as fh:
-        head = fh.read(8192)
+    fh.seek(0)
+    head = fh.read(8192)
     if not head.startswith(b"PK\x03\x04"):
         return detect_mime(head)
     try:
-        with zipfile.ZipFile(path) as z:
+        fh.seek(0)
+        with zipfile.ZipFile(fh) as z:
             infos = z.infolist()
             if len(infos) > _MAX_ZIP_ENTRIES:
                 return "application/zip"
@@ -140,6 +146,12 @@ def detect_file_mime(path: Path) -> str:
     except zipfile.BadZipFile, OSError, RuntimeError, ValueError:
         pass
     return "application/zip"
+
+
+def detect_file_mime(path: Path) -> str:
+    """detect_mime_in for a path (the gateway, inside the parser sandbox)."""
+    with path.open("rb") as fh:
+        return detect_mime_in(fh)
 
 
 def check_source(job: ParseJob, allowed_hosts: frozenset[str]) -> IntakeStep:

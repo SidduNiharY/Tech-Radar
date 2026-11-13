@@ -161,7 +161,10 @@ async def index_sync() -> None:
     """Run periodic vault and library indexing."""
     settings = _get_settings()
     deps = get_index_deps()
-    await intake_library(settings, deps)
+    try:
+        await intake_library(settings, deps)
+    except Exception:  # intake must never stop vault indexing
+        logger.exception("library intake failed; vault indexing continues")
     scanned = scan_vault(deps.vault_root, skip=deps.skip)
     plan_clipping_jobs(deps.vault_root, scanned, deps.raw_dir, deps.jobs_dir)
     await collect_clipping_results(deps)

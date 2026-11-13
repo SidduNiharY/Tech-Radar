@@ -7,7 +7,6 @@ from techradar.library.inbox import (
     LibraryKind,
     classify,
     plan_library_intake,
-    sha256_file,
     stable_files,
 )
 from techradar.library.media import (
@@ -36,7 +35,6 @@ __all__ = [
     "LibraryKind",
     "classify",
     "plan_library_intake",
-    "sha256_file",
     "stable_files",
     "MAX_AUDIO_SIZE_BYTES",
     "MAX_VIDEO_DURATION_S",

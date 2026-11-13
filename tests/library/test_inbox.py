@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from techradar.db.engine import make_engine
@@ -20,9 +20,7 @@ from techradar.library.inbox import (
     classify,
     load_limits,
     plan_library_intake,
-    safe_move,
     stable_files,
-    store_original,
 )
 from techradar.settings import Settings
 
@@ -166,27 +164,173 @@ def test_real_limits_file_has_library_and_pack_sections():
 # --- moving files ---------------------------------------------------------------
 
 
-def test_safe_move_never_overwrites(tmp_path: Path):
-    src = _old(tmp_path / "in" / "book.pdf", b"new")
-    dest_dir = tmp_path / "in" / "rejected"
-    dest_dir.mkdir()
-    (dest_dir / "book.pdf").write_bytes(b"old")
-    (dest_dir / "book-1.pdf").write_bytes(b"old1")
-    moved = safe_move(src, dest_dir)
-    assert not src.exists()
-    assert (dest_dir / "book.pdf").read_bytes() == b"old"
-    assert (dest_dir / "book-1.pdf").read_bytes() == b"old1"
-    assert moved.name == "book-2.pdf" and moved.read_bytes() == b"new"
+class FakeSession:
+    """Refusals and file-safety checks never query the database."""
+
+    async def commit(self) -> None:
+        pass
+
+    async def rollback(self) -> None:
+        pass
+
+    async def execute(self, *a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("database used")
 
 
-def test_store_original_uses_detected_extension_and_mode(tmp_path: Path):
-    src = _old(tmp_path / "in" / "book.exe", b"%PDF-1.4\nzzz")
-    sha = hashlib.sha256(src.read_bytes()).hexdigest()
-    lib = tmp_path / "library"
-    dest = store_original(src, lib, sha, "application/pdf")
-    assert dest == lib / "originals" / f"{sha}.pdf"
-    assert dest.stat().st_mode & 0o777 == 0o440
-    assert not src.exists()
+async def _run(inbox: Path, lib: Path, rec: Recorder, **kw) -> list[int]:
+    return await plan_library_intake(
+        FakeSession(),  # type: ignore[arg-type]
+        [(inbox, "library")],
+        lib,
+        NOW,
+        LIMITS,
+        queue_doc=rec.queue_doc,
+        send=rec.send,
+        **kw,
+    )
+
+
+async def test_file_swapped_for_a_symlink_after_the_scan_is_not_followed(tmp_path, monkeypatch):
+    # Seen by the Opus review: a swap between scan and copy could copy any file the
+    # worker can read (e.g. /run/secrets) into the library.
+    inbox = tmp_path / "in"
+    book = _old(inbox / "book.html", b"<html><body>x</body></html>")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOKEN")
+    import techradar.library.inbox as mod
+
+    real_scan = mod.stable_files
+
+    def scan_then_swap(*a, **k):
+        found = real_scan(*a, **k)
+        book.unlink()
+        book.symlink_to(secret)
+        return found
+
+    monkeypatch.setattr(mod, "stable_files", scan_then_swap)
+    rec = Recorder()
+    assert await _run(inbox, tmp_path / "library", rec) == []
+    assert secret.read_text() == "TOKEN" and book.is_symlink()
+    assert not (tmp_path / "library" / "originals").exists() or not any(
+        (tmp_path / "library" / "originals").iterdir()
+    )
+
+
+async def test_folder_swapped_for_a_symlink_is_not_followed(tmp_path, monkeypatch):
+    # A sub-folder replaced by a link to the vault must never let the worker
+    # move (and so delete) a vault file.
+    inbox = tmp_path / "in"
+    _old(inbox / "sub" / "note.bin", b"MZ\x90\x00")
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.bin").write_bytes(b"precious")
+    import shutil
+
+    import techradar.library.inbox as mod
+
+    real_scan = mod.stable_files
+
+    def scan_then_swap(*a, **k):
+        found = real_scan(*a, **k)
+        shutil.rmtree(inbox / "sub")
+        (inbox / "sub").symlink_to(vault, target_is_directory=True)
+        return found
+
+    monkeypatch.setattr(mod, "stable_files", scan_then_swap)
+    await _run(inbox, tmp_path / "library", Recorder())
+    assert (vault / "note.bin").read_bytes() == b"precious"
+
+
+async def test_file_replaced_by_another_file_is_skipped(tmp_path, monkeypatch):
+    inbox = tmp_path / "in"
+    book = _old(inbox / "book.bin", b"MZ\x90\x00")
+    import techradar.library.inbox as mod
+
+    real_scan = mod.stable_files
+
+    def scan_then_replace(*a, **k):
+        found = real_scan(*a, **k)
+        book.unlink()
+        _old(book, b"MZ\x90\x00 different file")
+        return found
+
+    monkeypatch.setattr(mod, "stable_files", scan_then_replace)
+    rec = Recorder()
+    await _run(inbox, tmp_path / "library", rec)
+    assert book.exists() and rec.texts == []  # left for the next run
+
+
+async def test_a_rejected_file_in_place_of_the_folder_does_not_stop_the_run(tmp_path):
+    # The Opus review reproduced this: a plain file named "rejected" crashed every
+    # run and stopped vault indexing with it.
+    inbox = tmp_path / "in"
+    (inbox).mkdir()
+    (inbox / "rejected").write_text("not a folder")
+    _old(inbox / "a.bin", b"MZ\x90\x00")
+    _old(inbox / "b.bin", b"MZ\x90\x00")
+    rec = Recorder()
+    assert await _run(inbox, tmp_path / "library", rec) == []  # no exception
+    assert (inbox / "a.bin").exists() and (inbox / "b.bin").exists()
+
+
+async def test_one_failing_file_does_not_stop_the_others(tmp_path, monkeypatch):
+    inbox = tmp_path / "in"
+    _old(inbox / "a.bin", b"MZ\x90\x00")
+    _old(inbox / "b.bin", b"MZ\x90\x00")
+    import techradar.library.inbox as mod
+
+    calls = {"n": 0}
+    real = mod._take_file
+
+    async def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("disk full")
+        return await real(*a, **k)
+
+    monkeypatch.setattr(mod, "_take_file", flaky)
+    rec = Recorder()
+    await _run(inbox, tmp_path / "library", rec)
+    assert len(rec.texts) == 1  # the second file was still handled
+
+
+async def test_oversized_zip_is_refused_before_its_directory_is_read(tmp_path, monkeypatch):
+    inbox = tmp_path / "in"
+    f = inbox / "huge.docx"
+    f.parent.mkdir(parents=True)
+    with f.open("wb") as fh:
+        fh.write(b"PK\x03\x04")
+        fh.truncate(60_000_000)  # over the 50 MB DOCX/EPUB limit, sparse
+    os.utime(f, (OLD, OLD))
+    import zipfile
+
+    def never(*a, **k):
+        raise AssertionError("zip directory read")
+
+    monkeypatch.setattr(zipfile, "ZipFile", never)
+    rec = Recorder()
+    await _run(inbox, tmp_path / "library", rec)
+    assert rec.texts == ["Couldn't add huge.docx: too large (60 MB, limit 50 MB)."]
+
+
+async def test_per_run_file_cap(tmp_path):
+    inbox = tmp_path / "in"
+    for i in range(5):
+        _old(inbox / f"f{i}.bin", b"MZ\x90\x00")
+    rec = Recorder()
+    await _run(inbox, tmp_path / "library", rec, max_files=3)
+    assert len(rec.texts) == 3
+    assert len(list(inbox.glob("f*.bin"))) == 2  # left for the next run
+
+
+def test_deep_folders_do_not_crash_the_scan(tmp_path):
+    from techradar.library.inbox import MAX_DEPTH
+
+    d = tmp_path / "in"
+    for i in range(MAX_DEPTH + 5):
+        d = d / f"d{i}"
+    _old(d / "deep.pdf")
+    assert stable_files(tmp_path / "in", NOW) == []  # beyond the depth limit
 
 
 # --- plan_library_intake: refusals need no database -----------------------------
@@ -199,7 +343,7 @@ async def test_refused_file_goes_to_rejected_without_overwrite(tmp_path: Path):
     (inbox / "rejected" / "tool.pdf").write_bytes(b"earlier refusal")
     rec = Recorder()
     ids = await plan_library_intake(
-        None,  # type: ignore[arg-type]  # refusals never reach the database
+        FakeSession(),  # type: ignore[arg-type]  # refusals never reach the database
         [(inbox, "library")],
         tmp_path / "library",
         NOW,
@@ -222,7 +366,7 @@ async def test_refusal_message_cleans_the_file_name(tmp_path: Path):
     _old(inbox / ("evil\x1b[31m\nname" + "x" * 150 + ".bin"), b"MZ\x90\x00")
     rec = Recorder()
     await plan_library_intake(
-        None,  # type: ignore[arg-type]
+        FakeSession(),  # type: ignore[arg-type]
         [(inbox, "library")],
         tmp_path / "library",
         NOW,
@@ -258,6 +402,9 @@ async def session(db_settings: Settings) -> AsyncGenerator[AsyncSession]:
     async with factory() as s:
         yield s
         await s.rollback()
+        # Intake commits per file, so remove what the tests created.
+        await s.execute(text("DELETE FROM techradar.library_docs WHERE title LIKE 'tst %'"))
+        await s.commit()
     await engine.dispose()
 
 
@@ -273,27 +420,27 @@ async def test_duplicate_book_detected(session: AsyncSession, tmp_path: Path):
     data = _unique_pdf("dup")
     sha = hashlib.sha256(data).hexdigest()
     inbox = tmp_path / "in"
-    _old(inbox / "My_Book.pdf", data)
+    _old(inbox / "tst_My_Book.pdf", data)
     rec = Recorder()
     kwargs = {"queue_doc": rec.queue_doc, "send": rec.send}
     lib = tmp_path / "library"
     first = await plan_library_intake(session, [(inbox, "library")], lib, NOW, LIMITS, **kwargs)
     assert len(first) == 1
 
-    _old(inbox / "copy_of_book.pdf", data)  # the same PDF again, under another name
+    _old(inbox / "tst_copy_of_book.pdf", data)  # the same PDF again, under another name
     second = await plan_library_intake(session, [(inbox, "library")], lib, NOW, LIMITS, **kwargs)
     assert second == []
     assert await _count_docs(session, sha) == 1
     assert rec.texts[-1].startswith("Already in your library: ")
     assert "My Book" in rec.texts[-1]
-    assert (inbox / "done" / "copy_of_book.pdf").exists()
+    assert (inbox / "done" / "tst_copy_of_book.pdf").exists()
     assert rec.queued == first
 
 
 @pytest.mark.db
 async def test_original_stored_read_only_outside_raw(session: AsyncSession, tmp_path: Path):
     inbox = tmp_path / "in"
-    _old(inbox / "book.pdf", _unique_pdf("ro"))
+    _old(inbox / "tst_book.pdf", _unique_pdf("ro"))
     rec = Recorder()
     [doc_id] = await plan_library_intake(
         session,
@@ -314,7 +461,7 @@ async def test_pdf_named_exe_is_stored_as_pdf_and_recorded(session: AsyncSession
     data = _unique_pdf("exe")
     sha = hashlib.sha256(data).hexdigest()
     inbox = tmp_path / "in"
-    _old(inbox / "Polity\x07_Laxmikanth_7th.exe", data)
+    _old(inbox / "tst_Polity\x07_Laxmikanth_7th.exe", data)
     rec = Recorder()
     [doc_id] = await plan_library_intake(
         session,
@@ -328,6 +475,6 @@ async def test_pdf_named_exe_is_stored_as_pdf_and_recorded(session: AsyncSession
     assert (tmp_path / "library" / "originals" / f"{sha}.pdf").exists()
     doc = (await session.execute(select(LibraryDoc).where(LibraryDoc.id == doc_id))).scalar_one()
     assert doc.kind == "pdf" and doc.origin == "library" and doc.trust == "my_own"
-    assert doc.status == "queued" and doc.title == "Polity Laxmikanth 7th"
+    assert doc.status == "queued" and doc.title == "tst Polity Laxmikanth 7th"
     assert doc.original_path == f"originals/{sha}.pdf"
     assert doc.size_bytes == len(data)
