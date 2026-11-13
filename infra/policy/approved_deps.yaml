@@ -80,6 +80,22 @@ python:
   uvicorn:
     why: ASGI server for FastAPI
     approved: "2026-11-08"
+  # Phase 2c, owner decisions 2026-11-13 (four were already locked via Docling).
+  defusedxml:
+    why: Safe XML parsing for DOCX/EPUB checks (no DTDs or entities); already locked via Docling
+    approved: "2026-11-13"
+  oletools:
+    why: Office macro detection for the Intake Gateway (Phase 2c Task 3)
+    approved: "2026-11-13"
+  pillow:
+    why: Image re-encoding without metadata in the parser sandbox; already locked via Docling
+    approved: "2026-11-13"
+  pypdfium2:
+    why: PDF probe, outlines and page rendering in the parser sandbox; already locked via Docling
+    approved: "2026-11-13"
+  rapidocr:
+    why: OCR for scanned pages and pixel rebuild; already locked via Docling
+    approved: "2026-11-13"
 
 npm:
   next:

@@ -32,6 +32,12 @@ parser = [
     "feedparser",
     "docling>=2.146",
     "tldextract",
+    # Phase 2c (approved 2026-11-13): gateway checks and big PDFs in the sandbox.
+    "pypdfium2",
+    "pillow",
+    "defusedxml",
+    "rapidocr",
+    "oletools",
 ]
 worker = [
     "litellm>=1.106",
