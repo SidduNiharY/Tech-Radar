@@ -162,3 +162,25 @@ def test_always_on_services_come_back_after_a_reboot(compose_data):
     # (no restart policy), so the integrity check had nothing to check.
     for name in ["postgres", "squid"]:
         assert compose_data["services"][name].get("restart") == "unless-stopped", name
+
+
+def test_worker_bulk_is_isolated_to_the_database(compose_data):
+    # Phase 2c: big library jobs run in their own worker with no model,
+    # internet or inbox access; it only reads and writes library job files.
+    svc = compose_data["services"]["worker-bulk"]
+    assert svc["networks"] == ["db"]
+    assert "--queues=bulk" in svc["command"]
+    mounts = {v.split(":")[1] for v in svc["volumes"]}
+    assert mounts == {"/data/library", "/data/parse-jobs", "/data/clean"}
+    assert svc["secrets"] == ["tr_app_password"]
+    assert svc["user"] == "1000:1000" and svc["read_only"] is True
+
+
+def test_falco_knows_the_new_programs():
+    import yaml as _yaml
+
+    data = _yaml.safe_load(Path("infra/falco/expected_programs.yaml").read_text())
+    assert {"ffprobe", "ffmpeg"} <= set(data["services"]["parser"])
+    assert "procrastinate" in data["services"]["worker"]
+    assert "procrastinate" in data["services"]["worker-bulk"]
+    assert "worker-bulk" in data["internal_only"]

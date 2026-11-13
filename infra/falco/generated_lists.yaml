@@ -17,7 +17,7 @@
   items: [ollama]
 
 - list: tr_parser_programs
-  items: [python]
+  items: [python, ffprobe, ffmpeg]
 
 - list: tr_postgres_programs
   items: [postgres, pg_isready, pg_dump, pg_restore, psql]
@@ -26,7 +26,10 @@
   items: [squid, log_file_daemon]
 
 - list: tr_worker_programs
-  items: [python]
+  items: [python, procrastinate]
+
+- list: tr_worker-bulk_programs
+  items: [python, procrastinate]
 
 - macro: tr_app_container
   condition: (container.name startswith "techradar-" and not (container.name startswith "techradar-ollama-pull" or container.name startswith "techradar-egress-probe" or container.name startswith "techradar-evals" or container.name startswith "techradar-redteam" or container.name startswith "techradar-zap"))

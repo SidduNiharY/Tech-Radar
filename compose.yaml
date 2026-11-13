@@ -230,6 +230,39 @@ services:
       ollama:
         condition: service_healthy
 
+  # Phase 2c: big library documents (probe, parts, chapters) on the `bulk`
+  # queue, apart from the interactive worker. Database only: no models, no
+  # internet, no inbox; it reads and writes library job files.
+  worker-bulk:
+    <<: *hardened-baseline
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+      target: worker
+    command: ["procrastinate", "--app=techradar.worker.app.app", "worker", "--queues=bulk", "--concurrency=1"]
+    mem_limit: 2g
+    cpus: "1.0"
+    user: "1000:1000"
+    networks:
+      - db
+    volumes:
+      - ./data/library:/data/library
+      - ./data/parse-jobs:/data/parse-jobs
+      - ./data/clean:/data/clean
+    secrets:
+      - tr_app_password
+    environment:
+      TR_SECRETS_DIR: /run/secrets
+      TZ: Asia/Kolkata
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
   clamav:
     <<: *hardened-baseline
     image: clamav/clamav:1.4.6@sha256:cbc30de94b6e9b33ac14136ff45306cee02a1f9ae522394a3cc5b9215d1affe9

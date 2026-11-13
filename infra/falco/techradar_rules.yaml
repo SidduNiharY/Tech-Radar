@@ -45,7 +45,8 @@
       (container.name startswith "techradar-clamav" and not container.name startswith "techradar-clamav-update" and not proc.name in (tr_clamav_programs)) or
       (container.name startswith "techradar-fetcher" and not proc.name in (tr_fetcher_programs)) or
       (container.name startswith "techradar-parser" and not proc.name in (tr_parser_programs)) or
-      (container.name startswith "techradar-worker" and not proc.name in (tr_worker_programs)) or
+      (container.name startswith "techradar-worker" and not container.name startswith "techradar-worker-bulk" and not proc.name in (tr_worker_programs)) or
+      (container.name startswith "techradar-worker-bulk" and not proc.name in (tr_worker-bulk_programs)) or
       (container.name startswith "techradar-ollama" and not proc.name in (tr_ollama_programs))
     )
   output: "Unexpected program started in container (container=%container.name proc=%proc.name cmdline=%proc.cmdline) exe=%proc.exepath pexe=%proc.pexepath"
@@ -113,7 +114,8 @@
       (container.name startswith "techradar-clamav" and not container.name startswith "techradar-clamav-update" and not proc.name in (tr_clamav_programs)) or
       (container.name startswith "techradar-fetcher" and not proc.name in (tr_fetcher_programs)) or
       (container.name startswith "techradar-parser" and not proc.name in (tr_parser_programs)) or
-      (container.name startswith "techradar-worker" and not proc.name in (tr_worker_programs)) or
+      (container.name startswith "techradar-worker" and not container.name startswith "techradar-worker-bulk" and not proc.name in (tr_worker_programs)) or
+      (container.name startswith "techradar-worker-bulk" and not proc.name in (tr_worker-bulk_programs)) or
       (container.name startswith "techradar-ollama" and not proc.name in (tr_ollama_programs))
     )
   output: "Secret opened by unexpected program (container=%container.name file=%fd.name proc=%proc.name cmdline=%proc.cmdline) exe=%proc.exepath pexe=%proc.pexepath"

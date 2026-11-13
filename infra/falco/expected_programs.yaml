@@ -1,8 +1,9 @@
 services:
   bot: [python]
   fetcher: [python]
-  parser: [python]
-  worker: [python]
+  parser: [python, ffprobe, ffmpeg]
+  worker: [python, procrastinate]
+  worker-bulk: [python, procrastinate]
   clamav: [clamd]
   clamav-update: [freshclam]
   migrate: [alembic, python]
@@ -11,6 +12,7 @@ services:
   ollama: [ollama]
 internal_only:
   - worker
+  - worker-bulk
   - migrate
   - jarvis
   - api
