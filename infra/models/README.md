@@ -21,6 +21,7 @@ The worker and checker **must** originate from different model families (e.g. Qw
 ---
 
 ## 2. Security & Provenance (SEC-23)
+- **Exception, owner approval 2026-11-13:** the parser image bakes in Docling's offline models for big PDFs: the layout model (`docling-project/docling-layout-heron`, safetensors, plus its ONNX export), TableFormer (`docling-project/docling-models`, safetensors) and RapidOCR (ONNX). The owner approved ONNX alongside safetensors for these. They are fetched at image build by `scripts/fetch_docling_models.py`, pinned by content in `infra/models/docling_models.sha256`, and every pickle-type file (`.pth`, `.pt`, `.pkl`, `.bin`, `.ckpt`) is removed; the build fails on any change. The parser runs with `HF_HUB_OFFLINE=1` and never downloads.
 - Models are sourced **exclusively** from the official Ollama library.
 - Direct downloads of arbitrary pickle files or `torch.load` from unvetted sources are forbidden.
 - Models are pulled via the isolated `ollama-pull` profile container which routes through the Squid egress proxy allowlist (`registry.ollama.ai`).

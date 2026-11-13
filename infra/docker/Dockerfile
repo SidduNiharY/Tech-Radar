@@ -42,6 +42,15 @@ RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen -
 FROM build AS parser-build
 RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen --no-dev --extra parser
 
+# Docling's offline models (owner approval 2026-11-13, SEC-23): fetched once at
+# build, then pinned by content against infra/models/docling_models.sha256;
+# pickle-type files are removed and the build fails on any difference.
+FROM parser-build AS docling-models
+COPY --chown=1000:1000 scripts/fetch_docling_models.py infra/models/docling_models.sha256 /tmp/models-src/
+RUN HF_HOME=/tmp/hf python /tmp/models-src/fetch_docling_models.py \
+        /tmp/docling /tmp/models-src/docling_models.sha256 \
+    && rm -rf /tmp/hf
+
 FROM build AS worker-build
 RUN --mount=type=cache,target=/tmp/uv-cache,uid=1000,gid=1000 uv sync --frozen --no-dev --extra worker --extra rag
 
@@ -59,7 +68,17 @@ COPY --from=fetcher-build /app /app
 CMD ["python", "-m", "techradar.fetcher.main"]
 
 FROM runtime AS parser
+# ffmpeg/ffprobe for the media checks (owner approval 2026-11-13), pinned.
+USER 0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg=7:7.1.5-0+deb13u1 \
+    && rm -rf /var/lib/apt/lists/*
+USER 1000:1000
 COPY --from=parser-build /app /app
+# Read-only models (owned by root); the parser never downloads anything.
+COPY --from=docling-models --chown=0:0 /tmp/docling /opt/models/docling
+ENV TR_DOCLING_ARTIFACTS=/opt/models/docling \
+    HF_HUB_OFFLINE=1
 # The Intake Gateway's data (the parser has no network, so it is baked in, read-only).
 COPY --chown=1000:1000 infra/squid/allowlist.txt ./infra/squid/allowlist.txt
 COPY --chown=1000:1000 infra/intake/ ./infra/intake/
