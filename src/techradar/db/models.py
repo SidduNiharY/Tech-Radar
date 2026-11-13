@@ -9,6 +9,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Computed,
     Date,
     DateTime,
@@ -279,6 +280,7 @@ class Chunk(Base):
         ),
         Index("ix_chunks_tsv_gin", "tsv", postgresql_using="gin"),
         Index("ix_chunks_doc_path", "doc_path"),
+        Index("ix_chunks_doc_chapter_ordinal", "doc_id", "chapter_id", "ordinal"),
         {"schema": "techradar"},
     )
 
@@ -314,6 +316,11 @@ class Chunk(Base):
     indexed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    doc_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    chapter_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ts_start: Mapped[float | None] = mapped_column(Float, nullable=True)
+    context_label: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DocsIndex(Base):
@@ -375,3 +382,147 @@ class Outbox(Base):
     sent_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, server_default="0", default=0, nullable=False)
     ref_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class LibraryDoc(Base):
+    """A book, video or other document in the library."""
+
+    __tablename__ = "library_docs"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('pdf','docx','epub','video','audio','html')", name="ck_library_docs_kind"
+        ),
+        CheckConstraint("origin IN ('library','pack')", name="ck_library_docs_origin"),
+        CheckConstraint(
+            "status IN ('queued','processing','awaiting_transcription','ready',"
+            "'quarantined','rejected','failed')",
+            name="ck_library_docs_status",
+        ),
+        CheckConstraint("trust IN ('official','open','my_own')", name="ck_library_docs_trust"),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    origin: Mapped[str] = mapped_column(Text, nullable=False)
+    original_path: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    trust: Mapped[str] = mapped_column(Text, nullable=False)
+    exam_tags: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", default=list, nullable=False
+    )
+    pack_item_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    keep_media: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LibraryPart(Base):
+    """A page range or time range of a library doc processed as one job."""
+
+    __tablename__ = "library_parts"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','done','failed')", name="ck_library_parts_status"),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    doc_id: Mapped[int] = mapped_column(ForeignKey("techradar.library_docs.id"), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ts_start: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ts_end: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Text, server_default="pending", default="pending", nullable=False
+    )
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0", default=0, nullable=False)
+    job_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    result_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class LibraryChapter(Base):
+    """A chapter (or video segment) of a library doc."""
+
+    __tablename__ = "library_chapters"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    doc_id: Mapped[int] = mapped_column(ForeignKey("techradar.library_docs.id"), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ts_start: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ts_end: Mapped[float | None] = mapped_column(Float, nullable=True)
+    text_path: Mapped[str] = mapped_column(Text, nullable=False)
+    summary_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    missing_pages: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), server_default="{}", default=list, nullable=False
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BookEval(Base):
+    """A retrieval check question for a library doc."""
+
+    __tablename__ = "book_evals"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    doc_id: Mapped[int] = mapped_column(ForeignKey("techradar.library_docs.id"), nullable=False)
+    question: Mapped[str] = mapped_column(String(300), nullable=False)
+    expected_chunk_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class StarterPack(Base):
+    """A curated list of free study documents for one exam."""
+
+    __tablename__ = "starter_packs"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    exam: Mapped[str] = mapped_column(Text, nullable=False)
+    approved: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class StarterPackItem(Base):
+    """One downloadable document in a starter pack."""
+
+    __tablename__ = "starter_pack_items"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','downloaded','failed','rejected')",
+            name="ck_starter_pack_items_status",
+        ),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    pack_id: Mapped[int] = mapped_column(ForeignKey("techradar.starter_packs.id"), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    licence: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, server_default="pending", default="pending", nullable=False
+    )
+    doc_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

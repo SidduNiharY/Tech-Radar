@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     library_part_pages: int = 25
     max_video_s: int = 14_400
     pack_max_bytes: int = 200_000_000
+    night_start: str = "01:00"
+    night_end: str = "05:00"
 
     @field_validator("index_skip", mode="before")
     @classmethod

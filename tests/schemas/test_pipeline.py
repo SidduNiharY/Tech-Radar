@@ -151,3 +151,73 @@ def test_parse_result_purpose_defaults_to_news():
         status="ok",
     )
     assert res.purpose == "news"
+
+
+def test_parse_job_part_fields():
+    j = ParseJob(
+        job_id="a" * 32,
+        kind="pdf",
+        raw_name="b" * 64 + ".pdf",
+        url="library:x",
+        source_id=0,
+        raw_item_id=None,
+        origin="library",
+        purpose="library",
+        mode="part",
+        page_start=26,
+        page_end=50,
+        doc_id=1,
+        part_id=2,
+    )
+    assert (j.page_start, j.page_end) == (26, 50)
+    assert (j.doc_id, j.part_id, j.mode) == (1, 2, "part")
+
+
+def test_parse_job_mode_defaults_to_full():
+    j = ParseJob(job_id="a" * 32, kind="pdf", raw_name="b" * 64 + ".pdf", url="u", source_id=0)
+    assert j.mode == "full"
+    assert j.page_start is None and j.doc_id is None and j.part_id is None
+
+
+def test_raw_name_accepts_video_extension():
+    ParseJob(
+        job_id="a" * 32,
+        kind="video",
+        raw_name="c" * 64 + ".mp4",
+        url="library:v",
+        source_id=0,
+        raw_item_id=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "kind,ext",
+    [
+        ("docx", "docx"),
+        ("epub", "epub"),
+        ("audio", "mp3"),
+        ("audio", "m4a"),
+        ("video", "mkv"),
+        ("image", "png"),
+        ("image", "jpeg"),
+    ],
+)
+def test_new_kinds_and_extensions(kind, ext):
+    ParseJob(job_id="a" * 32, kind=kind, raw_name="d" * 64 + "." + ext, url="u", source_id=0)
+
+
+def test_raw_name_rejects_unknown_extension():
+    with pytest.raises(ValidationError):
+        ParseJob(job_id="a" * 32, kind="pdf", raw_name="d" * 64 + ".exe", url="u", source_id=0)
+
+
+def test_parse_job_rejects_bad_mode():
+    with pytest.raises(ValidationError):
+        ParseJob(
+            job_id="a" * 32,
+            kind="pdf",
+            raw_name="b" * 64 + ".pdf",
+            url="u",
+            source_id=0,
+            mode="bogus",
+        )

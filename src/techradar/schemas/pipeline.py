@@ -31,7 +31,7 @@ class TrustTier(StrEnum):
     COMMUNITY = "community"
 
 
-JobKind = Literal["feed", "page", "pdf", "md"]
+JobKind = Literal["feed", "page", "pdf", "md", "docx", "epub", "video", "audio", "image"]
 ParseStatus = Literal[
     "ok", "empty", "too_large", "timeout", "error", "unsupported", "quarantined", "rejected"
 ]
@@ -66,12 +66,23 @@ class SourceSpec(BasePipelineModel):
 class ParseJob(BasePipelineModel):
     job_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
     kind: JobKind
-    raw_name: Annotated[str, Field(pattern=r"^[0-9a-f]{64}\.(xml|html|pdf|md)$")]
+    raw_name: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9a-f]{64}\.(xml|html|pdf|md|docx|epub|mp4|mkv|webm|mov|mp3|m4a|wav|ogg|png|jpg|jpeg)$"
+        ),
+    ]
     url: str
     source_id: int
     raw_item_id: int | None = None
     origin: Origin = "fetch"
     purpose: Literal["news", "library", "clipping"] = "news"
+    # For purpose="library", raw_name is relative to /data/library/originals.
+    mode: Literal["full", "probe", "part", "media"] = "full"
+    page_start: int | None = None
+    page_end: int | None = None
+    doc_id: int | None = None
+    part_id: int | None = None
 
 
 class FeedEntry(BasePipelineModel):

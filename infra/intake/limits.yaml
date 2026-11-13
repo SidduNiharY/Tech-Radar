@@ -7,3 +7,14 @@ telegram:
   pdf: 20000000
 clipping:
   md: 2000000
+library:
+  pdf: 300000000
+  docx: 50000000
+  epub: 50000000
+  video: 4000000000
+  audio: 1000000000
+  html: 5000000
+pack:
+  pdf: 200000000
+  docx: 50000000
+  html: 5000000

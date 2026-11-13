@@ -19,6 +19,12 @@ ALLOWED_MIME: dict[JobKind, frozenset[str]] = {
     "page": frozenset({"text/html"}),
     "pdf": frozenset({"application/pdf"}),
     "md": frozenset({"text/plain", "text/markdown"}),
+    # Task 3 fills the library kinds below; empty means every file is refused until then.
+    "docx": frozenset(),
+    "epub": frozenset(),
+    "video": frozenset(),
+    "audio": frozenset(),
+    "image": frozenset(),
 }
 
 
