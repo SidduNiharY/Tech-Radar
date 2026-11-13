@@ -4,7 +4,13 @@
   # 2026-11-13). Keyed on what a container cannot fake: the host's runc
   # binary (our images do not contain one), not loaded from the container's
   # writable layer. A process renaming itself does not match.
-  condition: (proc.exepath = /usr/bin/runc and proc.is_exe_upper_layer = false)
+  # runc's init stage runs as /runc with the host runc as its parent; our
+  # read-only containers cannot create /runc, and the parent check pins it.
+  condition: >
+    proc.is_exe_upper_layer = false and (
+      proc.exepath = /usr/bin/runc or
+      (proc.exepath = /runc and proc.pexepath = /usr/bin/runc)
+    )
 
 - rule: TR shell or package manager in container
   desc: A shell or package manager was spawned inside an application container
@@ -178,6 +184,9 @@
     condition: append
 
 - rule: Fileless execution via memfd_create
-  condition: and not (container.id = host and proc.pexepath = /usr/bin/nvidia-cdi-hook)
+  # Runs inside the new GPU container while NVIDIA's hook sets it up.
+  condition: >
+    and not (proc.pexepath = /usr/bin/nvidia-cdi-hook
+             and proc.exepath = "memfd:runc_cloned:ldconfig")
   override:
     condition: append

@@ -11,7 +11,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip uninstall --yes --no-input pip \
     && mkdir -p /app && chown 1000:1000 /app
+# No .pyc writes at run time: the image is read-only (Falco flagged every try).
 ENV HOME=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:${PATH}"
 WORKDIR /app
 USER 1000:1000

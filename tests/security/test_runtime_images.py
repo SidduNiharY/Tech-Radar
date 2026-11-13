@@ -80,3 +80,9 @@ def test_postgres_image_replaces_gosu_and_pins_apt_fixes():
     assert "exec setpriv" in shim and "--init-groups" in shim
     for pin in ("apt=2.6.2", "libapt-pkg6.0=2.6.2"):
         assert pin in text, pin
+
+
+def test_python_never_writes_bytecode_in_read_only_containers():
+    # Python tried to write stdlib .pyc files into the read-only image; the
+    # writes fail but Falco flags every attempt (seen on the TUF 2026-11-13).
+    assert "PYTHONDONTWRITEBYTECODE=1" in stages()["runtime"]

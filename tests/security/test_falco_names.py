@@ -126,6 +126,9 @@ def test_runtime_setup_exception_cannot_be_faked_from_a_container():
     # outside the container's writable layer.
     cond = _macro("tr_runtime_setup")
     assert "proc.exepath = /usr/bin/runc" in cond
+    # runc's init stage runs as /runc with the host runc as its parent (seen
+    # on the TUF 2026-11-13); /runc alone is not trusted.
+    assert "proc.exepath = /runc and proc.pexepath = /usr/bin/runc" in cond
     assert "proc.is_exe_upper_layer = false" in cond
     assert "proc.name" not in cond and "proc.cmdline" not in cond
 
@@ -144,6 +147,9 @@ def test_default_rule_exceptions_are_pinned_to_real_executables():
     assert "fd.name in (/etc/shadow, /etc/gshadow)" in sensitive
     memfd = overrides["Fileless execution via memfd_create"]["condition"]
     assert "proc.pexepath = /usr/bin/nvidia-cdi-hook" in memfd
+    # It runs inside the new container, so it must not be limited to the host.
+    assert 'proc.exepath = "memfd:runc_cloned:ldconfig"' in memfd
+    assert "container.id = host" not in memfd
     for cond in (sensitive, memfd):
         assert "proc.pname" not in cond
 
