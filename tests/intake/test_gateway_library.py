@@ -116,8 +116,9 @@ def test_epub_doctype_allowed_but_entities_refused(tmp_path):
     assert epub_xml_safe(bad).outcome == "reject"
 
 
-def test_media_without_probe_fails_closed_until_step_c(tmp_path):
-    # Placeholder until the media probe is wired: media is refused, not passed.
+def test_fake_media_fails_the_probe_and_is_rejected(tmp_path):
+    # An MP4 signature with no real container behind it: ffprobe refuses it,
+    # and the long error text must not crash the verdict (reasons <= 120).
     def build(p):
         p.write_bytes(MP4_HEAD + b"\0" * 100)
 

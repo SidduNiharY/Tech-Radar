@@ -10,6 +10,7 @@ from typing import Any
 from techradar.intake.av import AvScanner, check_av
 from techradar.intake.filetype import check_size, check_source, check_type, detect_file_mime
 from techradar.intake.links import check_links, extract_links
+from techradar.intake.media import media_steps
 from techradar.intake.office import check_office, epub_xml_safe, office_xml_safe
 from techradar.intake.pdfscan import check_pdf
 from techradar.intake.rules import check_rules
@@ -51,8 +52,17 @@ TEXT_KINDS = frozenset({"feed", "page", "md"})
 MEDIA_SCAN_BYTES = 8 * 1024 * 1024
 
 
-def structure_steps(job: ParseJob, raw_path: Path, data: bytes) -> list[IntakeStep]:
+def _reasons(steps: Sequence[IntakeStep], outcomes: tuple[str, ...]) -> list[str]:
+    """Up to 10 reasons, each cut to the verdict's 120-character limit."""
+    return [s.detail[:120] for s in steps if s.outcome in outcomes and s.detail][:10]
+
+
+def structure_steps(
+    job: ParseJob, raw_path: Path, data: bytes, mime: str = "", max_media_s: int = 14_400
+) -> list[IntakeStep]:
     """Step 4 for each kind. Later checks run only if the earlier ones passed."""
+    if job.kind in MEDIA_KINDS:
+        return media_steps(job.kind, raw_path, mime, data, max_media_s)
     if job.kind == "pdf":
         return [check_pdf(data)]
     if job.kind in ("docx", "epub"):
@@ -83,6 +93,7 @@ def gate_job(
     parse: Callable[[ParseJob], ParseResult],
     guard_score: Callable[[str], float] | None = None,
     today: date | None = None,
+    max_media_s: int = 14_400,
 ) -> ParseResult:
     """Run full Intake Gateway pipeline across raw verification, sandboxed parse,
 
@@ -109,7 +120,7 @@ def gate_job(
     size = raw_path.stat().st_size
     steps.append(check_size(job, size, limits))
     if steps[-1].outcome == "reject":
-        reasons = [s.detail for s in steps if s.outcome == "reject" and s.detail][:10]
+        reasons = _reasons(steps, ("reject",))
         print(f"INTAKE reject {job.job_id} {reasons}")
         return ParseResult(
             job_id=job.job_id,
@@ -132,7 +143,7 @@ def gate_job(
 
     # 4. Structure check, per kind. A kind with no check here is refused
     # (fail closed), so a new kind can never skip this step by accident.
-    steps.extend(structure_steps(job, raw_path, data))
+    steps.extend(structure_steps(job, raw_path, data, mime, max_media_s))
 
     # 5. Antivirus check
     av_res = av.scan(raw_path)
@@ -144,9 +155,7 @@ def gate_job(
     # Early stop on reject or quarantine
     early_verdict = combine(steps)
     if early_verdict in ("reject", "quarantine"):
-        reasons = [s.detail for s in steps if s.outcome in ("reject", "quarantine") and s.detail][
-            :10
-        ]
+        reasons = _reasons(steps, ("reject", "quarantine"))
         if early_verdict == "quarantine":
             quarantine_file(raw_path, quarantine_dir, job.job_id)
             print(f"INTAKE quarantine {job.job_id} {reasons}")
@@ -192,7 +201,7 @@ def gate_job(
     steps.append(check_links(links, allowed_hosts))
 
     final_verdict = combine(steps)
-    reasons = [s.detail for s in steps if s.outcome in ("quarantine", "flag") and s.detail][:10]
+    reasons = _reasons(steps, ("quarantine", "flag"))
 
     if final_verdict == "quarantine":
         quarantine_file(raw_path, quarantine_dir, job.job_id)
