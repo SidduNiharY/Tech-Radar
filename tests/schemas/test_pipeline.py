@@ -221,3 +221,33 @@ def test_parse_job_rejects_bad_mode():
             source_id=0,
             mode="bogus",
         )
+
+
+def test_media_segment_fields():
+    # Phase 2c: video/audio are extracted in segments so each parser job stays
+    # under the 120 s timeout (SEC-06).
+    j = ParseJob(
+        job_id="a" * 32,
+        kind="video",
+        raw_name="c" * 64 + ".mp4",
+        url="library:v",
+        source_id=0,
+        raw_item_id=None,
+        mode="media",
+        ts_start=600.0,
+        ts_end=1200.0,
+        doc_id=1,
+        part_id=2,
+    )
+    assert (j.ts_start, j.ts_end) == (600.0, 1200.0)
+    with pytest.raises(ValueError):
+        ParseJob(
+            job_id="a" * 32,
+            kind="video",
+            raw_name="c" * 64 + ".mp4",
+            url="library:v",
+            source_id=0,
+            mode="media",
+            ts_start=-1.0,
+            ts_end=10.0,
+        )

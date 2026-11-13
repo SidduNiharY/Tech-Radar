@@ -83,6 +83,10 @@ class ParseJob(BasePipelineModel):
     page_end: int | None = None
     doc_id: int | None = None
     part_id: int | None = None
+    # Media segments (seconds); each media job covers one segment so it stays
+    # within the parser's 120 s timeout (SEC-06).
+    ts_start: Annotated[float, Field(ge=0, le=14_460)] | None = None
+    ts_end: Annotated[float, Field(gt=0, le=14_460)] | None = None
 
 
 class FeedEntry(BasePipelineModel):
