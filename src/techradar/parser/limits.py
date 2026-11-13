@@ -1,18 +1,28 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import multiprocessing
 import os
+import tempfile
 import time
 from collections.abc import Callable
 from multiprocessing.connection import Connection
 from pathlib import Path
 
+from techradar.intake.filetype import detect_file_mime
+from techradar.intake.media import MediaProbeError, demuxer_for, probe_media
 from techradar.intake.rebuild import pixel_rebuild as pixel_rebuild_text
 from techradar.parser.docx import docx_to_doc
 from techradar.parser.epub import epub_to_chapters
 from techradar.parser.feed import feed_to_entries
 from techradar.parser.html import html_to_doc
+from techradar.parser.media_extract import (
+    MediaExtractError,
+    extract_audio_segment,
+    extract_frames,
+    slide_text,
+)
 from techradar.parser.pdf import MAX_PART_PAGES, pdf_part_to_doc, pdf_probe, pdf_to_doc
 from techradar.schemas.pipeline import CleanDoc, ParseJob, ParseResult
 from techradar.security.text import detect_lang, sanitize_text
@@ -28,7 +38,12 @@ MODEL_AS_BYTES = 24_000_000_000
 
 def address_space_for(job: ParseJob, *, pixel_rebuild: bool = False) -> int:
     """The RLIMIT_AS for a job: model-backed modes need room to load."""
-    if pixel_rebuild or job.kind == "docx" or (job.kind == "pdf" and job.mode == "part"):
+    if (
+        pixel_rebuild
+        or job.kind == "docx"
+        or (job.kind == "pdf" and job.mode == "part")
+        or job.mode == "media"  # OCR of slide frames
+    ):
         return MODEL_AS_BYTES
     return LIGHT_AS_BYTES
 
@@ -41,6 +56,8 @@ def parse_job(
     max_bytes: int = 5_000_000,
     artifacts_path: Path | None = None,
     pixel_rebuild: bool = False,
+    media_dir: Path | None = None,
+    frame_every_s: int = 30,
 ) -> ParseResult:
     """Parse raw content according to the ParseJob specification.
 
@@ -76,6 +93,8 @@ def parse_job(
         doc = html_to_doc(raw_path.read_bytes(), job.url, max_chars)
         status = "ok" if doc else "empty"
         return ParseResult(job_id=job.job_id, kind="page", status=status, doc=doc)
+    if job.kind in ("video", "audio"):
+        return _media(job, raw_path, media_dir, artifacts_path, frame_every_s)
     if job.kind == "epub":
         try:
             chapters = epub_to_chapters(raw_path, max_chars)
@@ -151,6 +170,78 @@ def offline_ocr(artifacts_path: Path) -> Callable[[Path], str]:
     return read
 
 
+MAX_SEGMENT_S = 601.0  # 10-minute segments (plus rounding)
+MAX_SLIDES_PER_SEGMENT = 40
+
+
+def _media(
+    job: ParseJob,
+    raw_path: Path,
+    media_dir: Path | None,
+    artifacts_path: Path | None,
+    frame_every_s: int,
+) -> ParseResult:
+    """Video/audio: `probe` reads the duration; `media` extracts one segment."""
+
+    def error() -> ParseResult:
+        return ParseResult(job_id=job.job_id, kind=job.kind, status="error")
+
+    demuxer = demuxer_for(detect_file_mime(raw_path))
+    if demuxer is None:
+        return error()
+    if job.mode == "probe":
+        try:
+            info = probe_media(raw_path, demuxer)
+        except MediaProbeError:
+            return error()
+        text = json.dumps(
+            {
+                "duration_s": info.duration_s,
+                "has_audio": info.has_audio,
+                "has_video": info.has_video,
+            }
+        )
+        doc = CleanDoc(url=job.url, title="probe", text=text, lang="other")
+        return ParseResult(job_id=job.job_id, kind=job.kind, status="ok", doc=doc)
+    start, end = job.ts_start, job.ts_end
+    if (
+        job.mode != "media"
+        or media_dir is None
+        or not job.doc_id
+        or start is None
+        or end is None
+        or not 0 < end - start <= MAX_SEGMENT_S
+    ):
+        return error()
+    out = media_dir / str(int(job.doc_id))
+    audio_file = f"audio/seg-{int(start):05d}.flac"
+    try:
+        extract_audio_segment(
+            raw_path, out / audio_file, demuxer=demuxer, start_s=start, dur_s=end - start
+        )
+        slides: list[dict[str, object]] = []
+        if job.kind == "video":
+            have_models = artifacts_path is not None and Path(artifacts_path).is_dir()
+            ocr = offline_ocr(Path(artifacts_path)) if have_models else (lambda _p: "")
+            with tempfile.TemporaryDirectory(prefix="frames-") as tmp:
+                frames = extract_frames(
+                    raw_path,
+                    Path(tmp),
+                    demuxer=demuxer,
+                    every_s=frame_every_s,
+                    start_s=start,
+                    dur_s=end - start,
+                    timeout_s=100,
+                )
+                for s in slide_text(frames, ocr)[:MAX_SLIDES_PER_SEGMENT]:
+                    slides.append({"ts_s": min(max(s.ts_s, start), end), "text": s.text})
+    except MediaExtractError:
+        return error()
+    text = json.dumps({"audio_file": audio_file, "slides": slides})
+    doc = CleanDoc(url=job.url, title="media", text=text, lang="other")
+    return ParseResult(job_id=job.job_id, kind=job.kind, status="ok", doc=doc)
+
+
 def _rebuild_pdf(
     job: ParseJob, raw_path: Path, max_chars: int, artifacts_path: Path | None
 ) -> ParseResult:
@@ -182,6 +273,7 @@ def _worker_entrypoint(
     max_bytes: int = 5_000_000,
     artifacts: str | None = None,
     pixel_rebuild: bool = False,
+    media_dir: str | None = None,
 ) -> None:
     """Worker entrypoint in spawned child process."""
     with contextlib.suppress(ValueError, OSError, AttributeError):
@@ -201,6 +293,7 @@ def _worker_entrypoint(
             max_bytes=max_bytes,
             artifacts_path=Path(artifacts) if artifacts else None,
             pixel_rebuild=pixel_rebuild,
+            media_dir=Path(media_dir) if media_dir else None,
         )
         conn.send((True, result.model_dump_json()))
     except Exception as exc:
@@ -220,6 +313,7 @@ def run_with_limits(
     max_bytes: int = 5_000_000,
     artifacts_path: Path | None = None,
     pixel_rebuild: bool = False,
+    media_dir: Path | None = None,
 ) -> ParseResult:
     """Execute parse_job in a spawned child process with memory and timeout enforcement."""
     ctx = multiprocessing.get_context("spawn")
@@ -235,6 +329,7 @@ def run_with_limits(
             max_bytes,
             str(artifacts_path) if artifacts_path else None,
             pixel_rebuild,
+            str(media_dir) if media_dir else None,
         ),
     )
     proc.start()

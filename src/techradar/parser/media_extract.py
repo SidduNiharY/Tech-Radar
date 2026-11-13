@@ -31,9 +31,14 @@ class SlideText(BaseModel):
     text: str
 
 
-def _input_args(src: Path, demuxer: str) -> list[str]:
+def _input_args(
+    src: Path, demuxer: str, start_s: float = 0.0, dur_s: float | None = None
+) -> list[str]:
     if demuxer not in _ALLOWED_DEMUXERS:
         raise MediaExtractError(f"demuxer not allowed: {demuxer!r}")
+    window = ["-ss", f"{start_s:.3f}"] if start_s > 0 else []
+    if dur_s is not None:
+        window += ["-t", f"{dur_s:.3f}"]
     return [
         "ffmpeg",
         "-nostdin",
@@ -43,6 +48,7 @@ def _input_args(src: Path, demuxer: str) -> list[str]:
         "file",
         "-format_whitelist",
         DEMUXER_WHITELIST,
+        *window,
         "-f",
         demuxer,
         "-i",
@@ -85,18 +91,38 @@ def extract_audio_parts(
     return sorted(out_dir.glob("part-*.flac"))
 
 
+def extract_audio_segment(
+    src: Path, out_file: Path, *, demuxer: str, start_s: float, dur_s: float, timeout_s: int = 100
+) -> Path:
+    """Mono 16 kHz FLAC of one segment (a media job stays under the parser's 120 s)."""
+    args = _input_args(src, demuxer, start_s, dur_s)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    args += ["-vn", "-ac", "1", "-ar", "16000", "-c:a", "flac", "-y", str(out_file)]
+    _run(args, timeout_s)
+    if not out_file.is_file() or out_file.stat().st_size == 0:
+        raise MediaExtractError("no audio in segment")
+    return out_file
+
+
 def extract_frames(
-    src: Path, out_dir: Path, *, demuxer: str, every_s: int = 30, timeout_s: int = 900
+    src: Path,
+    out_dir: Path,
+    *,
+    demuxer: str,
+    every_s: int = 30,
+    timeout_s: int = 900,
+    start_s: float = 0.0,
+    dur_s: float | None = None,
 ) -> list[tuple[float, Path]]:
     """One PNG every every_s seconds, each with its timestamp in seconds."""
-    args = _input_args(src, demuxer)
+    args = _input_args(src, demuxer, start_s, dur_s)
     out_dir.mkdir(parents=True, exist_ok=True)
     args += ["-an", "-vf", f"fps=1/{every_s}", str(out_dir / "frame-%05d.png")]
     _run(args, timeout_s)
     frames = []
     for path in sorted(out_dir.glob("frame-*.png")):
         index = int(re.sub(r"\D", "", path.stem))  # 1-based
-        frames.append((float((index - 1) * every_s), path))
+        frames.append((start_s + float((index - 1) * every_s), path))
     return frames
 
 

@@ -58,13 +58,21 @@ def build_gate(
     limits: Mapping[str, Mapping[str, int]],
     rules: object = None,
     guard_score: Callable[[str], float] | None = None,
+    library_dir: Path | None = None,
 ) -> Gate:
-    """Every job goes through the Intake Gateway; parsing happens inside it."""
+    """Every job goes through the Intake Gateway; parsing happens inside it.
+
+    Library jobs read their file from `library_dir/originals` (raw_name is relative
+    to it) and write media segments to `library_dir/media`; others read raw_dir.
+    """
 
     def gate(job: ParseJob) -> ParseResult:
+        library = job.purpose == "library" and library_dir is not None
+        src_dir = library_dir / "originals" if library and library_dir else raw_dir
+        media_dir = library_dir / "media" if library and library_dir else None
         return gate_job(
             job,
-            raw_dir,
+            src_dir,
             quarantine_dir,
             av=av,
             rules=rules,
@@ -72,14 +80,15 @@ def build_gate(
             limits=limits,
             parse=lambda j: run_with_limits(
                 j,
-                raw_dir,
+                src_dir,
                 max_bytes=limits.get(j.origin, {}).get(j.kind, 5_000_000),
                 artifacts_path=docling_artifacts(),
                 mem_bytes=address_space_for(j),
+                media_dir=media_dir,
             ),
             parse_pixels=lambda j: run_with_limits(
                 j,
-                raw_dir,
+                src_dir,
                 max_bytes=limits.get(j.origin, {}).get(j.kind, 5_000_000),
                 artifacts_path=docling_artifacts(),
                 pixel_rebuild=True,
@@ -114,6 +123,7 @@ def serve_once(jobs_dir: Path, raw_dir: Path, clean_dir: Path, *, gate: Gate) ->
         if not job_file.is_file():
             continue
 
+        job: ParseJob | None = None
         try:
             job = ParseJob.model_validate_json(job_file.read_text(encoding="utf-8"))
             result = gate(job)
@@ -123,6 +133,9 @@ def serve_once(jobs_dir: Path, raw_dir: Path, clean_dir: Path, *, gate: Gate) ->
             result = ParseResult(
                 job_id=_extract_fallback_job_id(job_file), kind="page", status="error"
             )
+        if job is not None:
+            # Every result says whose it is, so each collector takes only its own.
+            result = result.model_copy(update={"purpose": job.purpose})
 
         target_path = clean_dir / f"{result.job_id}.result.json"
         tmp_path = clean_dir / f".{result.job_id}.{os.getpid()}_{time.time_ns()}.tmp"
@@ -163,6 +176,7 @@ def main() -> None:
         limits=load_limits(INFRA_DIR / "intake" / "limits.yaml"),
         rules=load_rules(INFRA_DIR / "intake" / "yara"),
         guard_score=default_guard_score(),
+        library_dir=settings.library_dir,
     )
     serve_forever(settings.data_dir / "parse-jobs", raw_dir, settings.data_dir / "clean", gate)
 

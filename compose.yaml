@@ -177,6 +177,8 @@ services:
     volumes:
       - ./data/raw:/data/raw:ro
       - ./data/library/originals:/data/library/originals:ro
+      # Media segments (audio FLAC) only; originals stay read-only (Task 5).
+      - ./data/library/media:/data/library/media
       - ./data/parse-jobs:/data/parse-jobs
       - ./data/clean:/data/clean
       - ./data/quarantine:/data/quarantine
