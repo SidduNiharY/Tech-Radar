@@ -251,7 +251,8 @@ async def test_plan_doc_writes_probe_job_for_pdf(session: AsyncSession, dirs: Di
         ("epub", "epub", "full"),
         ("docx", "docx", "full"),
         ("html", "page", "full"),
-        ("video", "video", "media"),
+        # Video starts with a probe; segments follow (tests/library/test_media_results.py).
+        ("video", "video", "probe"),
     ],
 )
 async def test_plan_doc_full_and_media_jobs(
@@ -430,12 +431,3 @@ async def test_epub_full_result_builds_chapters(session: AsyncSession, dirs: Dir
     assert [c.title for c in rows] == ["Start", "End"]
     assert rows[0].page_start is None and rows[0].text_path == f"text/{doc.id}/01.md"
     assert doc.status == "processing"
-
-
-@pytest.mark.db
-async def test_media_result_is_left_for_task_5(session: AsyncSession, dirs: Dirs):
-    doc = await _doc(session, kind="video")
-    [job_id] = await plan_doc(session, doc.id, jobs_dir=dirs.jobs, library_dir=dirs.lib)
-    res = _write_result(dirs.clean, job_id, kind="video", text="x")
-    await _collect(session, dirs)
-    assert res.exists() and (dirs.lib / "jobs" / f"{job_id}.json").exists()
