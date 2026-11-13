@@ -1,10 +1,10 @@
 - macro: tr_runtime_setup
   # Docker's own setup steps inside a container (runc preparing a health
-  # check or a new container: "runc:[1:CHILD]", and its "6 init" stage).
-  # Seen on every health check on the TUF (2026-11-13); they are not the
-  # service's programs. Known limit: a process that renames itself to match
-  # would be skipped by the rules that use this macro.
-  condition: (proc.name startswith "runc:" or (proc.name = "6" and proc.cmdline = "6 init"))
+  # check or a new container; seen on every health check on the TUF,
+  # 2026-11-13). Keyed on what a container cannot fake: the host's runc
+  # binary (our images do not contain one), not loaded from the container's
+  # writable layer. A process renaming itself does not match.
+  condition: (proc.exepath = /usr/bin/runc and proc.is_exe_upper_layer = false)
 
 - rule: TR shell or package manager in container
   desc: A shell or package manager was spawned inside an application container
@@ -42,7 +42,7 @@
       (container.name startswith "techradar-worker" and not proc.name in (tr_worker_programs)) or
       (container.name startswith "techradar-ollama" and not proc.name in (tr_ollama_programs))
     )
-  output: "Unexpected program started in container (container=%container.name proc=%proc.name cmdline=%proc.cmdline)"
+  output: "Unexpected program started in container (container=%container.name proc=%proc.name cmdline=%proc.cmdline) exe=%proc.exepath pexe=%proc.pexepath"
   priority: WARNING
   tags: [security, container]
 
@@ -110,7 +110,7 @@
       (container.name startswith "techradar-worker" and not proc.name in (tr_worker_programs)) or
       (container.name startswith "techradar-ollama" and not proc.name in (tr_ollama_programs))
     )
-  output: "Secret opened by unexpected program (container=%container.name file=%fd.name proc=%proc.name cmdline=%proc.cmdline)"
+  output: "Secret opened by unexpected program (container=%container.name file=%fd.name proc=%proc.name cmdline=%proc.cmdline) exe=%proc.exepath pexe=%proc.pexepath"
   priority: CRITICAL
   tags: [security, secrets, container]
 
@@ -134,7 +134,7 @@
       (container.name startswith "techradar-clamav" and not container.name startswith "techradar-clamav-update" and fd.name startswith "/run/clamav/") or
       (container.name startswith "techradar-clamav-update" and fd.name startswith "/var/lib/clamav/")
     )
-  output: "Write outside allowed tmpfs or volume paths (container=%container.name file=%fd.name proc=%proc.name)"
+  output: "Write outside allowed tmpfs or volume paths (container=%container.name file=%fd.name proc=%proc.name) exe=%proc.exepath pexe=%proc.pexepath"
   priority: WARNING
   tags: [security, container]
 
@@ -161,18 +161,23 @@
   priority: CRITICAL
   tags: [security, container]
 
-# Narrow exceptions to Falco's default rules (appended to their conditions).
-# Seen on the TUF 2026-11-13: Debian's pg_isready wrapper (Postgres health
-# check, every 5 s) and Lynis (monthly audit) read /etc/shadow; NVIDIA's
-# container hook runs ldconfig from a memfd while starting GPU containers.
+# Narrow exceptions to Falco's default rules (appended to their conditions),
+# pinned to real executables rather than process names. Seen on the TUF
+# 2026-11-13: Debian's pg_isready wrapper (Perl; the Postgres health check
+# docker runs every 5 s) and the monthly Lynis audit read /etc/shadow;
+# NVIDIA's container hook runs ldconfig from a memfd for GPU containers.
 - rule: Read sensitive file untrusted
   condition: >
-    and not (container.name startswith "techradar-postgres" and proc.name = pg_isready)
-    and not (container.id = host and proc.pname = lynis)
+    and not (container.name startswith "techradar-postgres"
+             and proc.pexepath = /usr/bin/containerd-shim-runc-v2
+             and proc.exepath = /usr/bin/perl and proc.is_exe_upper_layer = false
+             and proc.cmdline = "pg_isready /usr/bin/pg_isready -U postgres")
+    and not (container.id = host and fd.name in (/etc/shadow, /etc/gshadow)
+             and proc.pcmdline startswith "lynis /usr/sbin/lynis audit system")
   override:
     condition: append
 
 - rule: Fileless execution via memfd_create
-  condition: and not (container.id = host and proc.pname = nvidia-cdi-hook)
+  condition: and not (container.id = host and proc.pexepath = /usr/bin/nvidia-cdi-hook)
   override:
     condition: append

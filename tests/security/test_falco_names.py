@@ -115,13 +115,44 @@ def test_container_rules_skip_docker_runtime_setup():
         assert "not tr_runtime_setup" in _rule(name)["condition"], name
 
 
-def test_default_rule_exceptions_are_narrow_appends():
+def _macro(name: str) -> str:
+    rules = yaml.safe_load((ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8"))
+    return next(r for r in rules if r.get("macro") == name)["condition"]
+
+
+def test_runtime_setup_exception_cannot_be_faked_from_a_container():
+    # A process can rename itself (automated review): the exception is keyed
+    # on the host runc binary, which our images do not contain, run from
+    # outside the container's writable layer.
+    cond = _macro("tr_runtime_setup")
+    assert "proc.exepath = /usr/bin/runc" in cond
+    assert "proc.is_exe_upper_layer = false" in cond
+    assert "proc.name" not in cond and "proc.cmdline" not in cond
+
+
+def test_default_rule_exceptions_are_pinned_to_real_executables():
     rules = yaml.safe_load((ROOT / "infra/falco/techradar_rules.yaml").read_text(encoding="utf-8"))
     overrides = {r["rule"]: r for r in rules if "override" in r}
-    sensitive = overrides["Read sensitive file untrusted"]
-    assert sensitive["override"] == {"condition": "append"}
-    assert (
-        'container.name startswith "techradar-postgres" and proc.name = pg_isready'
-        in (sensitive["condition"])
-    )
-    assert overrides["Fileless execution via memfd_create"]["override"] == {"condition": "append"}
+    for r in overrides.values():
+        assert r["override"] == {"condition": "append"}
+    sensitive = overrides["Read sensitive file untrusted"]["condition"]
+    # pg_isready (Debian's Perl wrapper) only as the health check docker runs
+    assert "proc.pexepath = /usr/bin/containerd-shim-runc-v2" in sensitive
+    assert "proc.exepath = /usr/bin/perl" in sensitive
+    assert 'proc.cmdline = "pg_isready /usr/bin/pg_isready -U postgres"' in sensitive
+    # Lynis only for the shadow files, only as the audit the timer runs
+    assert "fd.name in (/etc/shadow, /etc/gshadow)" in sensitive
+    memfd = overrides["Fileless execution via memfd_create"]["condition"]
+    assert "proc.pexepath = /usr/bin/nvidia-cdi-hook" in memfd
+    for cond in (sensitive, memfd):
+        assert "proc.pname" not in cond
+
+
+def test_tr_rule_outputs_show_the_executables_for_tuning():
+    for name in [
+        "TR unexpected program",
+        "TR write outside tmpfs or volumes",
+        "TR secret read by unexpected program",
+    ]:
+        out = _rule(name)["output"]
+        assert "%proc.exepath" in out and "%proc.pexepath" in out, name
