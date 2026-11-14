@@ -37,7 +37,7 @@ from typing import Literal
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import LibraryDoc, QuarantineItem
+from techradar.db.models import Chunk, LibraryDoc, QuarantineItem
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.schemas.pipeline import ParseResult
 
@@ -303,10 +303,27 @@ async def release(
         return "failed"
 
     if doc is not None:
-        doc.flagged = True
+        await flag_doc(session, doc)
         doc.status = "queued"
     await session.flush()
     return "released"
+
+
+async def flag_doc(session: AsyncSession, doc: LibraryDoc) -> None:
+    """Mark a doc flagged and carry it to chunks indexed already (same transaction).
+
+    Never clears a flag. Flushes only; the caller commits.
+    """
+    if doc.flagged:
+        return
+    doc.flagged = True
+    await session.execute(
+        update(Chunk)
+        .where(Chunk.doc_kind == "library", Chunk.doc_id == doc.id)
+        .values(flagged=True)
+        .execution_options(synchronize_session=False)
+    )
+    await session.flush()
 
 
 async def doc_flagged(session: AsyncSession, doc_id: int) -> bool:

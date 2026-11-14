@@ -569,6 +569,7 @@ def _fake_doc(kind: str = "pdf") -> SimpleNamespace:
         pages=None,
         title="T",
         original_path=f"originals/{'a' * 64}.pdf",
+        flagged=False,
     )
 
 

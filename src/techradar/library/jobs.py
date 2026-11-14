@@ -78,6 +78,7 @@ from techradar.library.media_results import (
     segment_bounds,
 )
 from techradar.library.parts import split_pdf_parts
+from techradar.library.quarantine import flag_doc
 from techradar.messaging.outbox import enqueue_message
 from techradar.schemas.pipeline import ParseJob, ParseResult
 from techradar.security.text import sanitize_text
@@ -859,6 +860,8 @@ async def _apply_result(
     """Change the database for one result; files are written by the caller after the commit."""
     if doc is None or doc.status in _FINAL_STATUSES:
         return _Applied(stale=True)
+    if _verdict_needs_flag(result):
+        await flag_doc(session, doc)
     if result.status in ("rejected", "quarantined"):
         doc.status = result.status
         await session.flush()
@@ -886,6 +889,21 @@ async def _apply_result(
     if await _tell_if_failed(session, doc, before, owner_chat_id):
         applied.withdraw = True
     return applied
+
+
+_CONTENT_STATUSES = ("ok", "empty")
+
+
+def _verdict_needs_flag(result: ParseResult) -> bool:
+    """A result whose content is used must carry a clean gateway verdict (fail closed).
+
+    No intake at all, a `flag`, or a verdict that contradicts an ok status (quarantine or
+    reject on an ok result) all mean flagged. Only `pass` leaves the doc as it is. Results
+    that carry no content (error, timeout, too_large, ...) add nothing to the library.
+    """
+    if result.status not in _CONTENT_STATUSES:
+        return False
+    return result.intake is None or result.intake.verdict != "pass"
 
 
 async def _has_chapters(session: AsyncSession, doc_id: int) -> bool:
