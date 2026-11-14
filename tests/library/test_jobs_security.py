@@ -224,7 +224,13 @@ def test_parse_job_owner_released_defaults_off_and_is_strict():
 
     base = dict(job_id="a" * 32, kind="pdf", raw_name=f"{'b' * 64}.pdf", url="u", source_id=0)
     assert ParseJob(**base).owner_released is False  # type: ignore[arg-type]
-    assert ParseJob(**base, owner_released=True).owner_released is True  # type: ignore[arg-type]
+    lib = dict(base, purpose="library", doc_id=1)
+    assert ParseJob(**lib, owner_released=True).owner_released is True  # type: ignore[arg-type]
+    # A news job (the fetcher can write those) can never carry a release.
+    with pytest.raises(ValidationError):
+        ParseJob(**base, owner_released=True)  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        ParseJob(**dict(base, purpose="library"), owner_released=True)  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
         ParseJob(**base, released=True)  # type: ignore[arg-type]  # extra=forbid stays
 

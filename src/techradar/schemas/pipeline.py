@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Section(StrEnum):
@@ -91,6 +91,14 @@ class ParseJob(BasePipelineModel):
     # QuarantineItem exists for it): the gateway then turns quarantine steps into flags;
     # rejects stay rejects (SEC-14). Never derived from file content.
     owner_released: Annotated[bool, Field(strict=True)] = False
+
+    @model_validator(mode="after")
+    def _release_only_for_library_docs(self) -> ParseJob:
+        # The fetcher can write news jobs into the shared spool; a release is meaningful only for
+        # a library document the worker planned (never a news, clipping or fetched item).
+        if self.owner_released and (self.purpose != "library" or self.doc_id is None):
+            raise ValueError("owner_released is only valid for library jobs with a doc_id")
+        return self
 
 
 class FeedEntry(BasePipelineModel):
