@@ -203,7 +203,9 @@ async def test_ready_message_sent_once_and_doc_ready(
     assert msg.buttons == [[{"text": "Chapters", "data": f"chap:{doc.id}"}]]
 
     for ch in indexed_doc.chapters:
-        assert ch.summary_path == f"library/a-book/{ch.ordinal:02d}-chapter-{ch.ordinal}.md"
+        assert ch.summary_path == (
+            f"library/a-book-{doc.id}/{ch.ordinal:02d}-chapter-{ch.ordinal}.md"
+        )
         note = (tmp_path / "vault" / ch.summary_path).read_text(encoding="utf-8")
         assert "kind: chapter_summary" in note and "generated: true" in note
         assert "[C1]" not in note and "(p. " in note

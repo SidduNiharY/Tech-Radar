@@ -301,6 +301,55 @@ def test_unknown_pages_are_left_out_of_front_matter():
 def test_chapter_note_path():
     doc = DocRow(id=5, title="My Great Book!")
     ch = ChapterRow(id=7, ordinal=3, title="Why  Heat? Flows", text="", page_start=1, page_end=2)
-    assert chapter_note_path(doc, ch) == PurePosixPath("library/my-great-book/03-why-heat-flows.md")
+    assert chapter_note_path(doc, ch) == PurePosixPath(
+        "library/my-great-book-5/03-why-heat-flows.md"
+    )
     big = ChapterRow(id=8, ordinal=12, title="☃", text="", page_start=1, page_end=2)
     assert chapter_note_path(doc, big).name == "12-note.md"
+
+
+def test_two_books_with_the_same_title_never_share_a_folder():
+    # The doc id is part of the folder, so one book's notes can't overwrite another's.
+    a = chapter_note_path(
+        DocRow(id=1, title="Polity"),
+        ChapterRow(id=1, ordinal=1, title="T", text="", page_start=1, page_end=2),
+    )
+    b = chapter_note_path(
+        DocRow(id=2, title="Polity"),
+        ChapterRow(id=9, ordinal=1, title="T", text="", page_start=1, page_end=2),
+    )
+    assert a != b and a.parent != b.parent
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "x = 1 <script>alert(1)</script>",
+        "a > b",
+        "[[Secret note]]",
+        "see //evil.example/x",
+        "x = 2 `code`",
+        "E = mc^2 \\",  # ends with a backslash: would escape the closing $
+        "\\href{http://evil}{x}",
+    ],
+)
+def test_hostile_formulas_are_dropped(formula):
+    from techradar.library.summaries import _math
+
+    assert _math(formula) == ""
+
+
+def test_normal_formulas_survive():
+    from techradar.library.summaries import _math
+
+    assert _math(r"r = \frac{i}{n}") == r"r = \frac{i}{n}"
+    assert _math(r"$E = mc^{2}$") == "E = mc^{2}"
+
+
+def test_even_trailing_backslashes_are_fine_odd_are_dropped():
+    from techradar.library.summaries import _math
+
+    two = "a = b " + "\\" * 2  # two backslashes: a line break in LaTeX
+    one = "a = b " + "\\"
+    assert _math(two) == two
+    assert _math(one) == ""

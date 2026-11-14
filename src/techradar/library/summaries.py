@@ -186,9 +186,13 @@ async def summarize_chapter(
 
 
 def chapter_note_path(doc: DocRow, chapter: ChapterRow) -> PurePosixPath:
-    """library/<book-slug>/<NN>-<chapter-slug>.md, relative to the vault."""
+    """library/<book-slug>-<doc id>/<NN>-<chapter-slug>.md, relative to the vault."""
+    # The doc id keeps two books with the same title (or the same slug) apart: without it
+    # the second book's notes overwrite the first's.
     return PurePosixPath(
-        "library", slugify(doc.title), f"{chapter.ordinal:02d}-{slugify(chapter.title)}.md"
+        "library",
+        f"{slugify(doc.title)}-{doc.id}",
+        f"{chapter.ordinal:02d}-{slugify(chapter.title)}.md",
     )
 
 
@@ -212,8 +216,20 @@ def _idea_text(idea: str, pages: Mapping[int, int | None]) -> str:
     return _SPACE.sub(" ", "".join(out)).strip()
 
 
+# A formula is rendered inside $...$ in an Obsidian note. These could break out of it
+# or inject HTML, wiki links, links or code into the note, so such a formula is dropped.
+_BAD_FORMULA = re.compile(r"[<>`]|\[\[|\]\]|//|\\(?:href|url|input|include|write|def|newcommand)\b")
+
+
 def _math(formula: str) -> str:
-    return _SPACE.sub(" ", formula.replace("$", "")).strip()
+    """The formula with `$` removed, or "" if it could break out of its `$...$`."""
+    cleaned = _SPACE.sub(" ", formula.replace("$", "")).strip()
+    if not cleaned or _BAD_FORMULA.search(cleaned):
+        return ""
+    trailing = len(cleaned) - len(cleaned.rstrip("\\"))
+    if trailing % 2 == 1:
+        return ""  # an odd run of backslashes at the end would escape the closing `$`
+    return cleaned
 
 
 def _template_env() -> jinja2.Environment:
