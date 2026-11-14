@@ -66,7 +66,7 @@ def rrf(rankings: Sequence[Sequence[int]], k: int = 60) -> list[tuple[int, float
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 
-def _check_doc_id(doc_id: int | None) -> None:
+def check_doc_id(doc_id: int | None) -> None:
     """Reject anything but a real integer, so a scope can never be built from text."""
     if doc_id is not None and (isinstance(doc_id, bool) or not isinstance(doc_id, int)):
         raise TypeError("doc_id must be an int or None")
@@ -98,7 +98,7 @@ async def vector_search(
     doc_id: int | None = None,
 ) -> list[int]:
     """Retrieve top chunks by cosine distance against qvec (optionally within one book)."""
-    _check_doc_id(doc_id)
+    check_doc_id(doc_id)
     stmt = _apply_filters(select(Chunk.id).where(Chunk.embedding.is_not(None)), f, doc_id)
     stmt = stmt.order_by(Chunk.embedding.cosine_distance(qvec)).limit(limit)
     res = await session.execute(stmt)
@@ -114,7 +114,7 @@ async def keyword_search(
     doc_id: int | None = None,
 ) -> list[int]:
     """Retrieve top chunks by ts_rank_cd full-text search (optionally within one book)."""
-    _check_doc_id(doc_id)
+    check_doc_id(doc_id)
     ts_q = func.websearch_to_tsquery("simple", query)
     stmt = _apply_filters(select(Chunk.id).where(Chunk.tsv.op("@@")(ts_q)), f, doc_id)
     stmt = stmt.order_by(func.ts_rank_cd(Chunk.tsv, ts_q).desc()).limit(limit)
@@ -167,7 +167,7 @@ async def retrieve_multi(
     The first query is the user's own question: it is the one the reranker scores against.
     Later queries are model rewrites and only widen the candidate pool.
     """
-    _check_doc_id(doc_id)
+    check_doc_id(doc_id)
     if f is None:
         f = RetrieveFilters()
 
@@ -197,8 +197,12 @@ async def retrieve_multi(
 
         # Load chunks for candidate ids
         stmt = select(Chunk).where(Chunk.id.in_(candidate_ids))
+        if doc_id is not None:
+            stmt = stmt.where(Chunk.doc_id == doc_id)
         res = await session.execute(stmt)
-        chunks_map = {c.id: c for c in res.scalars().all()}
+        # Defence in depth: re-check the book scope in memory, so a chunk of another book can
+        # never reach the model even if a search above were ever wrong.
+        chunks_map = {c.id: c for c in res.scalars().all() if doc_id is None or c.doc_id == doc_id}
 
     # Preserve order of candidate_ids
     ordered_chunks = [chunks_map[cid] for cid in candidate_ids if cid in chunks_map]

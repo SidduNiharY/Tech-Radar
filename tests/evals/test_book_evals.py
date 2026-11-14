@@ -18,7 +18,7 @@ from evals.rag.book_evals import (
 )
 from techradar.db.engine import make_engine
 from techradar.db.models import BookEval, LibraryDoc
-from techradar.rag.retrieve import Hit, RetrieveFilters
+from techradar.rag.retrieve import Hit
 from techradar.settings import Settings
 
 
@@ -61,38 +61,23 @@ def _hit(i: int) -> Hit:
     )
 
 
-async def test_retriever_passes_doc_id_only_when_retrieve_accepts_it():
+async def test_retriever_always_scopes_retrieve_to_the_book():
     calls: list[dict] = []
 
+    async def fake_retrieve(question, deps, f=None, *, doc_id=None):
+        calls.append({"question": question, "doc_id": doc_id})
+        return [_hit(5), _hit(6)]
+
+    assert await make_retriever(SimpleNamespace(), fake_retrieve)("q", 7) == [5, 6]
+    assert calls == [{"question": "q", "doc_id": 7}]
+
+
+async def test_retriever_never_runs_unscoped_when_retrieve_lacks_doc_id():
     async def old_retrieve(question, deps, f=None):
-        calls.append({"f": f})
-        return [_hit(3), _hit(4)]
+        raise AssertionError("an unscoped search must never run")
 
-    async def new_retrieve(question, deps, f=None, *, doc_id=None):
-        calls.append({"doc_id": doc_id})
-        return [_hit(5)]
-
-    deps = SimpleNamespace()
-    assert await make_retriever(deps, old_retrieve)("q", 7) == [3, 4]
-    assert calls[-1] == {"f": None}  # nothing breaks while retrieve has no doc_id
-    assert await make_retriever(deps, new_retrieve)("q", 7) == [5]
-    assert calls[-1] == {"doc_id": 7}
-
-
-async def test_retriever_scopes_through_filters_when_they_have_doc_id(monkeypatch):
-    seen: list[object] = []
-
-    class ScopedFilters(RetrieveFilters):
-        doc_id: int | None = None
-
-    monkeypatch.setattr("evals.rag.book_evals.RetrieveFilters", ScopedFilters)
-
-    async def fake_retrieve(question, deps, f=None):
-        seen.append(f)
-        return [_hit(1)]
-
-    assert await make_retriever(SimpleNamespace(), fake_retrieve)("q", 7) == [1]
-    assert getattr(seen[0], "doc_id", None) == 7
+    with pytest.raises(TypeError):
+        await make_retriever(SimpleNamespace(), old_retrieve)("q", 7)
 
 
 # --- reading the cases (db) ---------------------------------------------------------

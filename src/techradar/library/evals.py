@@ -4,7 +4,10 @@ After a book is summarised, the WORKER role writes one question for each of up t
 spread evenly over the book. The question and the id of the chunk that answers it are stored
 in `book_evals`; `make rag-eval` later checks that retrieval finds that chunk.
 
-SEC: SEC-37, SEC-41.
+A question is model output that is later run as a retrieval query, so it is sanitised and any
+question that reads like an injection ("Ignore previous instructions...") is skipped.
+
+SEC: SEC-37, SEC-38, SEC-41.
 """
 
 from __future__ import annotations
@@ -21,7 +24,8 @@ from techradar.db.models import BookEval, Chunk, LibraryChapter, LibraryDoc
 from techradar.llm.client import Completer, LLMOutputError, complete_json
 from techradar.llm.roles import Role
 from techradar.schemas.pipeline import NoLinks
-from techradar.security.untrusted import wrap_untrusted
+from techradar.security.text import sanitize_text
+from techradar.security.untrusted import injection_flags, wrap_untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,14 @@ class QuestionDraft(BaseModel):
     """One model-written question."""
 
     question: Annotated[NoLinks, Field(min_length=1, max_length=200)]
+
+
+def clean_question(raw: str) -> str | None:
+    """The question sanitised onto one line, or None when it is empty or reads like an injection."""
+    question = " ".join(sanitize_text(raw).split())
+    if not question or injection_flags(question):
+        return None
+    return question
 
 
 def pick_spread[T](items: Sequence[T], k: int) -> list[T]:
@@ -127,7 +139,11 @@ async def make_book_evals(
         except LLMOutputError:
             logger.info("no valid question for chunk %d of doc %d", chunk.id, doc_id)
             continue
-        session.add(BookEval(doc_id=doc_id, question=draft.question, expected_chunk_ids=[chunk.id]))
+        question = clean_question(draft.question)
+        if question is None:
+            logger.warning("question for chunk %d of doc %d rejected", chunk.id, doc_id)
+            continue
+        session.add(BookEval(doc_id=doc_id, question=question, expected_chunk_ids=[chunk.id]))
         stored += 1
     await session.flush()
     return stored

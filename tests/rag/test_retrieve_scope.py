@@ -201,6 +201,23 @@ async def test_retrieve_multi_dedupes_queries_and_survives_empty(
     assert await retrieve_multi([], deps) == []
 
 
+async def test_candidates_from_another_book_are_dropped_in_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Defence in depth: even if a search ever returned another book's chunk ids, the loaded
+    # chunks are checked against the scope before they can reach the model.
+    chunks = [_chunk(1, "mine", doc_id=1), _chunk(2, "other", doc_id=2), _chunk(3, "none", None)]
+
+    async def leaky(*args: Any, **kw: Any) -> list[int]:
+        return [1, 2, 3]
+
+    monkeypatch.setattr(retrieve_mod, "vector_search", leaky)
+    monkeypatch.setattr(retrieve_mod, "keyword_search", leaky)
+    deps = _mock_deps(chunks, {})
+    assert [h.chunk_id for h in await retrieve("q", deps, doc_id=1)] == [1]
+    assert {h.chunk_id for h in await retrieve("q", deps)} == {1, 2, 3}
+
+
 async def test_retrieve_passes_doc_id_through(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[Any] = []
 

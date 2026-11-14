@@ -31,15 +31,22 @@ from techradar.llm.roles import Role
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.pipeline.writer import TEMPLATES_DIR, md_escape, slugify, write_note
 from techradar.rag.answer import check_citations
+from techradar.rag.budget import conservative_tokens, context_budget, fit_texts, prompt_fits
 from techradar.schemas.pipeline import NoLinks, reject_links
 from techradar.security.text import sanitize_text
-from techradar.security.untrusted import wrap_untrusted
+from techradar.security.untrusted import injection_flags, wrap_untrusted
 
 logger = logging.getLogger(__name__)
 
 MAX_EXCERPTS = 12
 MAX_EXCERPT_CHARS = 3000
 READY_TITLE_CHARS = 120
+TITLE_CHARS = 200  # a chapter title in the prompt and the note heading
+SUMMARY_MAX_TOKENS = 2500
+# The excerpts' share of the 8,192-token context (SEC-41): the rest is the system prompt, the
+# answer (SUMMARY_MAX_TOKENS) and a margin. Too long a prompt is cut by Ollama from the start,
+# which would drop the system prompt and the opening UNTRUSTED marker.
+SUMMARY_EXCERPT_TOKENS = 4500
 
 SUMMARY_SYSTEM = (
     "You write a short study summary of one book chapter for a personal study app, using only "
@@ -128,11 +135,35 @@ def usable_excerpts(excerpts: Sequence[Excerpt]) -> list[Excerpt]:
     return unflagged[:MAX_EXCERPTS]
 
 
-def _build_prompt(chapter: ChapterRow, used: Sequence[Excerpt]) -> str:
-    body = "\n\n".join(f"[C{i}] {e.text[:MAX_EXCERPT_CHARS]}" for i, e in enumerate(used, start=1))
+def chapter_title(title: str) -> str:
+    """The chapter title on one line, cut to TITLE_CHARS."""
+    return one_line(title)[:TITLE_CHARS]
+
+
+def _render_prompt(title: str, texts: Sequence[str]) -> str:
+    body = "\n\n".join(f"[C{i}] {t}" for i, t in enumerate(texts, start=1))
     # The chapter title comes from the book, so it is untrusted too.
-    wrapped = wrap_untrusted(f"Chapter: {one_line(chapter.title)}\n\n{body}")
+    wrapped = wrap_untrusted(f"Chapter: {title}\n\n{body}")
     return f"{wrapped}\n\nSummarize this chapter."
+
+
+def _build_prompt(chapter: ChapterRow, used: Sequence[Excerpt]) -> str:
+    """The user prompt, with the excerpts cut so the whole request fits the model context.
+
+    Every excerpt is kept (so the [C#] numbers do not change); only the longest are shortened.
+    """
+    title = chapter_title(chapter.title)
+    texts = [e.text[:MAX_EXCERPT_CHARS] for e in used]
+    overhead = conservative_tokens(_render_prompt(title, [""] * len(texts)))
+    room = context_budget(
+        max_tokens=SUMMARY_MAX_TOKENS, system_tokens=conservative_tokens(SUMMARY_SYSTEM)
+    )
+    budget = min(SUMMARY_EXCERPT_TOKENS, room - overhead)
+    while True:
+        prompt = _render_prompt(title, fit_texts(texts, budget))
+        if budget <= 0 or prompt_fits(SUMMARY_SYSTEM, prompt, max_tokens=SUMMARY_MAX_TOKENS):
+            return prompt
+        budget = budget * 9 // 10
 
 
 def _norm(value: str) -> str:
@@ -171,15 +202,37 @@ async def summarize_chapter(
             SUMMARY_SYSTEM,
             _build_prompt(chapter, used),
             ChapterSummary,
-            max_tokens=2500,
+            max_tokens=SUMMARY_MAX_TOKENS,
             timeout_s=300.0,
         )
     except LLMOutputError:
         return None
-    if not all(check_citations(idea, [], len(used)) for idea in draft.key_ideas):
+    return _checked(draft, chapter, len(used))
+
+
+def _checked(draft: ChapterSummary, chapter: ChapterRow, n_used: int) -> ChapterSummary | None:
+    """Sanitise the model's prose and reject the summary if any of it reads like an injection.
+
+    A hostile chapter can make the model echo "Ignore previous instructions..."; that text must
+    never reach the vault note, so one hit fails the whole summary (SEC-37, SEC-38).
+    """
+    try:
+        ideas = [_ends_with_citation(sanitize_text(i)) for i in draft.key_ideas]
+        terms = [
+            TermDef(term=sanitize_text(t.term), meaning=sanitize_text(t.meaning))
+            for t in draft.terms
+        ]
+    except ValueError:  # pydantic's ValidationError is a ValueError
         return None
-    formulas = [f for f in draft.formulas if _formula_in_text(f, chapter.text)]
-    return draft.model_copy(update={"formulas": formulas})
+    prose = [*ideas, *(t.term for t in terms), *(t.meaning for t in terms)]
+    if any(injection_flags(p) for p in prose):
+        return None
+    if not all(check_citations(idea, [], n_used) for idea in ideas):
+        return None
+    formulas = [
+        f for f in draft.formulas if _formula_in_text(f, chapter.text) and not injection_flags(f)
+    ]
+    return draft.model_copy(update={"key_ideas": ideas, "terms": terms, "formulas": formulas})
 
 
 # --- the vault note ----------------------------------------------------------------
@@ -204,12 +257,23 @@ def _pages(chapter: ChapterRow) -> str | None:
     return None if known is None else str(known)
 
 
+# Characters that start Obsidian syntax md_escape leaves alone: `$` inline math (which can run
+# \style, \class, \require, \unicode), `%%` comments that hide text, `==` highlights and `^`
+# footnotes / block ids. Each one is backslash-escaped, so no two of them stay adjacent.
+_OBSIDIAN = str.maketrans({"$": r"\$", "%": r"\%", "=": r"\=", "^": r"\^"})
+
+
+def md_prose(value: str) -> str:
+    """Escape model or book prose for the note: Markdown, then Obsidian math/comment syntax."""
+    return md_escape(value).translate(_OBSIDIAN)
+
+
 def _idea_text(idea: str, pages: Mapping[int, int | None]) -> str:
     """Escape the idea and turn each [C#] into (p. n), or drop it when the page is unknown."""
     out: list[str] = []
     for i, piece in enumerate(_CITATION.split(idea)):
         if i % 2 == 0:
-            out.append(md_escape(piece))
+            out.append(md_prose(piece))
             continue
         page = pages.get(int(piece))
         out.append(f"(p. {page})" if page is not None else "")
@@ -291,10 +355,10 @@ def render_chapter_note(
         .get_template("chapter.md.j2")
         .render(
             front_matter=yaml.safe_dump(front, sort_keys=False, allow_unicode=True),
-            title=md_escape(one_line(chapter.title)),
+            title=md_prose(chapter_title(chapter.title)),
             key_ideas=[_idea_text(i, page_of_citation) for i in s.key_ideas],
             terms=[
-                {"term": md_escape(one_line(t.term)), "meaning": md_escape(one_line(t.meaning))}
+                {"term": md_prose(one_line(t.term)), "meaning": md_prose(one_line(t.meaning))}
                 for t in s.terms
             ],
             formulas=[m for m in (_math(f) for f in s.formulas) if m],

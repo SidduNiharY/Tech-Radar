@@ -3,6 +3,9 @@
 A good hit is often cut off mid-argument, so the chunk before and after it (same book, same
 heading, same chapter) is added to the excerpts the model sees, within hard caps.
 
+Tokens are counted with `conservative_tokens`, which does not undercount OCR blobs, code or
+Indic text the way a word count does.
+
 SEC: SEC-41 (at most 6 excerpts and 8,000 tokens of context).
 """
 
@@ -13,13 +16,23 @@ from collections.abc import Callable, Sequence
 from sqlalchemy import and_, or_, select
 
 from techradar.db.models import Chunk
-from techradar.rag.chunker import estimate_tokens
+from techradar.rag.budget import conservative_tokens
 from techradar.rag.retrieve import Hit, RagDeps, RetrieveFilters, chunk_to_hit
 
 NeighborFn = Callable[[Hit], tuple[Hit | None, Hit | None]]
+CostFn = Callable[[Hit], int]
 
 MAX_EXCERPTS = 6
-MAX_CONTEXT_TOKENS = 8000
+# SEC-41 allows 8,000; every role has an 8,192-token context that also holds the system
+# prompt, the question and the answer, so the default leaves room for them. Callers pass the
+# budget of their role (never more than 8,000).
+MAX_CONTEXT_TOKENS = 6000
+SEC41_MAX_TOKENS = 8000  # the hard ceiling, whatever a caller passes
+
+
+def text_tokens(hit: Hit) -> int:
+    """The default cost of a hit: its text in conservative tokens."""
+    return conservative_tokens(hit.text)
 
 
 def _same_section(anchor: Hit, other: Hit) -> bool:
@@ -38,22 +51,25 @@ def expand_with_neighbors(
     *,
     max_excerpts: int = MAX_EXCERPTS,
     max_tokens: int = MAX_CONTEXT_TOKENS,
+    cost: CostFn = text_tokens,
 ) -> list[Hit]:
     """Add the chunk before and after each hit, in document order, within the caps.
 
     Hits (best first) are kept before any neighbour; neighbours are added best-hit first. A chunk
-    that would break the excerpt or token cap is skipped. Pure: `neighbors` does the lookup.
+    that would break the excerpt or token cap is skipped, so the result can be empty when every
+    hit is too big. `cost` counts a hit's tokens. Pure: `neighbors` does the lookup.
     """
+    max_tokens = min(max_tokens, SEC41_MAX_TOKENS)
     chosen: list[Hit] = []
     used = 0
     for h in hits:
         if len(chosen) >= max_excerpts:
             break
-        cost = estimate_tokens(h.text)
-        if used + cost > max_tokens:
+        c = cost(h)
+        if used + c > max_tokens:
             continue
         chosen.append(h)
-        used += cost
+        used += c
 
     seen = {h.chunk_id for h in chosen}
     before: dict[int, Hit] = {}
@@ -68,12 +84,12 @@ def expand_with_neighbors(
                 break
             if cand is None or cand.chunk_id in seen or not _same_section(anchor, cand):
                 continue
-            cost = estimate_tokens(cand.text)
-            if used + cost > max_tokens:
+            c = cost(cand)
+            if used + c > max_tokens:
                 continue
             slot[anchor.chunk_id] = cand
             seen.add(cand.chunk_id)
-            used += cost
+            used += c
             count += 1
 
     # Document order: documents by their best hit, then reading order inside each document.

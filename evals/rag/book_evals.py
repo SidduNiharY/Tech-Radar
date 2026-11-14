@@ -8,7 +8,6 @@ SEC: SEC-41.
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -18,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from evals.rag.metrics import recall_at_k
 from techradar.db.models import BookEval
-from techradar.rag.retrieve import RagDeps, RetrieveFilters, retrieve
+from techradar.rag.retrieve import RagDeps, retrieve
 
 # (question, doc_id) -> chunk ids, best first
 Retriever = Callable[[str, int], Awaitable[list[int]]]
@@ -51,19 +50,10 @@ async def book_eval_cases(session: AsyncSession) -> list[BookEvalCase]:
 
 
 def make_retriever(deps: RagDeps, retrieve_fn: Callable[..., Any] = retrieve) -> Retriever:
-    """A Retriever over `retrieve`, scoped to the book when retrieve can be.
-
-    `retrieve` gets a `doc_id` scope in a later task. Until then (or if the scope lives on
-    `RetrieveFilters`) this adapts to what exists, so the eval keeps running unscoped.
-    """
+    """A Retriever over `retrieve`, always scoped to the book (`doc_id`); never unscoped."""
 
     async def run(question: str, doc_id: int) -> list[int]:
-        kwargs: dict[str, Any] = {}
-        if "doc_id" in inspect.signature(retrieve_fn).parameters:
-            kwargs["doc_id"] = doc_id
-        elif "doc_id" in RetrieveFilters.model_fields:
-            kwargs["f"] = RetrieveFilters(doc_id=doc_id)
-        hits = await retrieve_fn(question, deps, **kwargs)
+        hits = await retrieve_fn(question, deps, doc_id=doc_id)
         return [h.chunk_id for h in hits]
 
     return run
