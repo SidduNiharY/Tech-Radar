@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from techradar.llm.client import LLMOutputError, complete_json
 from techradar.llm.roles import Role
-from techradar.rag.retrieve import Hit, RagDeps, RetrieveFilters, retrieve
+from techradar.rag.expand import expand_with_neighbors, load_neighbors
+from techradar.rag.retrieve import Hit, RagDeps, RetrieveFilters, retrieve, retrieve_multi
+from techradar.rag.rewrite import rewrite_query
 from techradar.schemas.pipeline import NoLinks
 from techradar.security.text import sanitize_text
 from techradar.security.untrusted import injection_flags, wrap_untrusted
@@ -94,8 +96,18 @@ async def answer_question(
     question: str,
     deps: RagDeps,
     f: RetrieveFilters | None = None,
+    *,
+    doc_id: int | None = None,
+    role: Role = Role.WORKER,
+    rewrite: bool = False,
+    expand: bool = False,
 ) -> Answer:
-    """Answer question grounded in retrieved notes with strict citation enforcement."""
+    """Answer question grounded in retrieved notes with strict citation enforcement.
+
+    doc_id limits retrieval to one library document; role picks the answering model (the night
+    model is a fallback with the same checks); rewrite adds model-written search queries; expand
+    adds the neighbouring chunks of each hit (at most 6 excerpts and 8,000 tokens).
+    """
     if f is None:
         f = RetrieveFilters()
     # 1. Sanitize question
@@ -110,7 +122,11 @@ async def answer_question(
         )
 
     # 2. Retrieve candidate hits
-    hits = await retrieve(sanitized, deps, f)
+    queries = await rewrite_query(deps.completer, sanitized) if rewrite else [sanitized]
+    if len(queries) > 1:
+        hits = await retrieve_multi(queries, deps, f, doc_id=doc_id)
+    else:
+        hits = await retrieve(sanitized, deps, f, doc_id=doc_id)
     if not hits or hits[0].score < deps.settings.rag_min_score:
         return Answer(
             text=NOT_FOUND,
@@ -119,13 +135,17 @@ async def answer_question(
             used_unverified=False,
             flags=[],
         )
+    if expand:
+        # The relevance decision above is made on the real hits; neighbours only add context.
+        neighbors = await load_neighbors(deps, hits, f)
+        hits = expand_with_neighbors(hits, neighbors) or hits
 
     # 3. Request LLM completion
     prompt = f"{build_context(hits)}\n\nQuestion: {sanitized}"
     try:
         draft = await complete_json(
             deps.completer,
-            Role.WORKER,
+            role,
             ANSWER_SYSTEM,
             prompt,
             AnswerDraft,
