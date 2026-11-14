@@ -13,6 +13,7 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from techradar.bot.book_ask import chapters_listing, valid_id
 from techradar.library.quarantine import (
     ReleaseRequests,
     confirm_release,
@@ -53,11 +54,37 @@ async def handle_callback_query(
             await query.answer("Invalid request.")
         return
 
+    if action == "chap":
+        if len(args) == 1 and valid_id(args[0]):
+            await _chapters_callback(query, context.application.bot_data, args[0])
+        else:
+            await query.answer("Invalid request.")
+        return
+
     if action == "save_answer" and len(args) == 1:
         procrastinate_app = context.application.bot_data.get("procrastinate_app")
         if procrastinate_app:
             await procrastinate_app.configure_task(name=SAVE_ANSWER).defer_async(answer_id=args[0])
         await query.answer("Saving to vault...")
+
+
+async def _chapters_callback(query: Any, bot_data: Any, doc_id: int) -> None:
+    """List a ready book's chapters. Only after the owner check, and only in the owner's chat."""
+    message = query.message
+    if message is None or message.chat.id != bot_data.get("owner_id"):
+        await query.answer("Not available.")
+        return
+    session_factory = bot_data.get("session_factory")
+    if session_factory is None:
+        await query.answer("Not available yet.")
+        return
+    async with session_factory() as session:
+        text = await chapters_listing(session, doc_id)
+    if text is None:
+        await query.answer("Nothing to show.")
+        return
+    await message.reply_text(text)
+    await query.answer()
 
 
 QUARANTINE_ACTIONS = frozenset({"qrel", "qrel_ok", "qdel"})

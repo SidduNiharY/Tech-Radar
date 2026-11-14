@@ -14,6 +14,7 @@ Action = Literal[
     "start",
     "status",
     "ask",
+    "ask_book",
     "quiz",
     "cards",
     "grammar",
@@ -42,6 +43,7 @@ def route_update(
     *,
     is_briefing_reply: bool = False,
     briefing_message_ids: Set[int] | None = None,
+    ready_message_ids: Set[int] = frozenset(),
 ) -> Routed:
     """Route an incoming Telegram message.
 
@@ -55,6 +57,8 @@ def route_update(
         Routed("inbox") for /inbox commands from authorized chats
         Routed("plan") for /plan commands from authorized chats
         Routed("quarantine") for /quarantine from the owner's own chat only
+        Routed("ask_book", text) for a plain-text reply (no command) from the owner's own chat
+            to one of `ready_message_ids` (the caller looked the Ready messages up)
         Routed("take", reply_text) for replies to active briefing messages
         Routed("ignore") for unauthorized chats or unknown/empty messages
     """
@@ -98,5 +102,15 @@ def route_update(
     if cmd == "/quarantine":
         # Releasing held files is the owner's alone, never a study group's (SEC-14).
         return Routed("quarantine") if chat_id == owner_id else Routed("ignore")
+
+    if (
+        not cmd.startswith("/")
+        and chat_id == owner_id
+        and reply_to_message_id is not None
+        and reply_to_message_id in ready_message_ids
+    ):
+        # Replying to a Ready message asks that book. Owner's own chat only: the Ready message
+        # is sent nowhere else.
+        return Routed("ask_book", cleaned)
 
     return Routed("ignore")

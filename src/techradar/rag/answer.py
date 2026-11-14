@@ -38,6 +38,10 @@ from techradar.security.text import sanitize_text
 from techradar.security.untrusted import injection_flags, wrap_untrusted
 
 NOT_FOUND = "Not in my notes yet."
+# A not_found whose best hit scored from this floor up to rag_min_score was close to an answer:
+# the question may just be hard. The flag lets the caller try again with the bigger model.
+LOW_CONFIDENCE = "low_confidence"
+LOW_CONFIDENCE_FLOOR = 0.20
 ANSWER_MAX_TOKENS = 1024
 # The excerpts' share of the 8,192-token context; smaller when the question is long.
 ANSWER_CONTEXT_TOKENS = 6000
@@ -201,12 +205,13 @@ async def answer_question(
     else:
         hits = await retrieve(sanitized, deps, f, doc_id=doc_id)
     if not hits or hits[0].score < deps.settings.rag_min_score:
+        near = bool(hits) and hits[0].score >= LOW_CONFIDENCE_FLOOR
         return Answer(
             text=NOT_FOUND,
             citations=[],
             status="not_found",
             used_unverified=False,
-            flags=[],
+            flags=[LOW_CONFIDENCE] if near else [],
         )
     budget = _context_tokens(sanitized)
     top = hits[0]

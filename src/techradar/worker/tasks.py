@@ -13,7 +13,6 @@ from procrastinate import RetryStrategy
 from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
-from techradar.bot.render import render_answer
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
@@ -23,12 +22,11 @@ from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
 from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
-from techradar.messaging.outbox import Button, enqueue_message
+from techradar.messaging.outbox import enqueue_message
 from techradar.night.window import in_night_window, next_window_start, night_only
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
-from techradar.rag.answer import answer_question
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -40,6 +38,7 @@ from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
+from techradar.worker.ask_flow import run_ask, run_night_ask
 
 logger = logging.getLogger(__name__)
 
@@ -200,40 +199,52 @@ def get_rag_deps() -> RagDeps:
 
 
 @app.task(queue="llm", lock="ask", name="ask")
-async def ask_job(chat_id: int, question: str) -> None:
-    """Answer question using grounded RAG and enqueue response to outbox."""
+async def ask_job(chat_id: int, question: str, doc_id: int | None = None) -> None:
+    """Answer a question (of one book when doc_id is set) and enqueue the reply to the outbox.
+
+    A hard question is deferred to `ask_night` (owner chat only); see worker/ask_flow.py.
+    """
     settings = _get_settings()
-    deps = get_rag_deps()
-    answer = await answer_question(question, deps)
+    await run_ask(
+        question,
+        chat_id=chat_id,
+        doc_id=doc_id,
+        deps=get_rag_deps(),
+        session_factory=make_session_factory("app", settings),
+        owner_chat_id=settings.telegram_owner_chat_id,
+        defer_night=_defer_ask_night,
+    )
 
-    session_factory = make_session_factory("app", settings)
-    async with session_factory() as session:
-        ans_row = AnswerModel(
-            chat_id=chat_id,
-            question=question,
-            text=answer.text,
-            citations=[c.model_dump() for c in answer.citations],
-            status=answer.status,
-            used_unverified=answer.used_unverified,
-            flags=answer.flags,
-        )
-        session.add(ans_row)
-        await session.flush()
 
-        buttons = None
-        if answer.status == "answered":
-            buttons = [[Button(text="Save to vault", data=f"save_answer:{ans_row.id}")]]
+async def _defer_ask_night(question: str, doc_id: int | None) -> None:
+    """Queue `ask_night` for the next night window (at once when the window is open).
 
-        rendered = render_answer(answer)
-        await enqueue_message(
-            session,
-            chat_id=chat_id,
-            text=rendered,
-            purpose="answer",
-            buttons=buttons,
-            ref_id=ans_row.id,
-        )
-        await session.commit()
+    The job carries only the question and the book: the owner chat comes from settings there.
+    """
+    settings = _get_settings()
+    start, end = (
+        day_time.fromisoformat(settings.night_start),
+        day_time.fromisoformat(settings.night_end),
+    )
+    now = datetime.now(UTC).astimezone(ZoneInfo(settings.tz))
+    options: dict[str, object] = {}
+    if not in_night_window(now, start, end):
+        options["schedule_at"] = next_window_start(now, start)
+    await ask_night.configure(**options).defer_async(question=question, doc_id=doc_id)
+
+
+@app.task(queue="llm", lock="ask", name="ask_night")
+@night_only(task_name="ask_night")
+async def ask_night(question: str, doc_id: int | None = None) -> None:
+    """Answer a deferred hard question with the night model and send it to the owner chat."""
+    settings = _get_settings()
+    await run_night_ask(
+        question,
+        doc_id=doc_id,
+        deps=get_rag_deps(),
+        session_factory=make_session_factory("app", settings),
+        owner_chat_id=settings.telegram_owner_chat_id,
+    )
 
 
 @app.task(queue="llm", lock="ask", name="save_answer")

@@ -18,6 +18,7 @@ from telegram.ext import (
     filters,
 )
 
+from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.routing import route_update
@@ -32,7 +33,6 @@ from techradar.ops.status import (
     collect_status,
 )
 from techradar.settings import get_settings, read_secret
-from techradar.worker.names import ASK
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +46,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text
     settings = get_settings()
 
+    # A reply to a Ready message asks that book. Only the owner's own chat is looked up, and
+    # a database failure never silently widens the question to every note.
+    reply_id = reply_message_id(update.message)
+    ready_doc: int | None = None
+    if reply_id is not None and chat_id == settings.telegram_owner_chat_id:
+        try:
+            ready_doc = await find_ready_doc(context.application.bot_data, chat_id, reply_id)
+        except Exception:
+            logger.exception("could not look up the Ready message")
+            await update.message.reply_text("Not available yet.")
+            return
+
     routed = route_update(
         chat_id=chat_id,
         text=text,
         owner_id=settings.telegram_owner_chat_id,
+        reply_to_message_id=reply_id,
+        ready_message_ids=frozenset({reply_id}) if ready_doc and reply_id else frozenset(),
     )
 
     if routed.action == "ignore":
@@ -91,20 +105,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(text, reply_markup=markup)
         return
 
-    if routed.action == "ask":
-        if not routed.arg:
-            await update.message.reply_text(
-                "Please provide a question, e.g. /ask what is repo rate?"
-            )
-            return
-
-        procrastinate_app = context.application.bot_data.get("procrastinate_app")
-        if procrastinate_app:
-            await procrastinate_app.configure_task(name=ASK).defer_async(
-                chat_id=chat_id,
-                question=routed.arg,
-            )
-        await update.message.reply_text("Thinking...")
+    if routed.action in ("ask", "ask_book"):
+        await handle_ask(
+            update,
+            context.application.bot_data,
+            routed.arg,
+            doc_id=ready_doc,
+            max_chars=settings.max_question_chars,
+        )
 
 
 async def outbox_worker(app_bot: Any, session_factory: Any) -> None:
