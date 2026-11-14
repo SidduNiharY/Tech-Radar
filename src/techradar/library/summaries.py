@@ -34,7 +34,7 @@ from techradar.rag.answer import check_citations
 from techradar.rag.budget import conservative_tokens, context_budget, fit_texts, prompt_fits
 from techradar.schemas.pipeline import NoLinks, reject_links
 from techradar.security.text import sanitize_text
-from techradar.security.untrusted import injection_flags, wrap_untrusted
+from techradar.security.untrusted import override_flags, wrap_untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -225,12 +225,12 @@ def _checked(draft: ChapterSummary, chapter: ChapterRow, n_used: int) -> Chapter
     except ValueError:  # pydantic's ValidationError is a ValueError
         return None
     prose = [*ideas, *(t.term for t in terms), *(t.meaning for t in terms)]
-    if any(injection_flags(p) for p in prose):
+    if any(override_flags(p) for p in prose):
         return None
     if not all(check_citations(idea, [], n_used) for idea in ideas):
         return None
     formulas = [
-        f for f in draft.formulas if _formula_in_text(f, chapter.text) and not injection_flags(f)
+        f for f in draft.formulas if _formula_in_text(f, chapter.text) and not override_flags(f)
     ]
     return draft.model_copy(update={"key_ideas": ideas, "terms": terms, "formulas": formulas})
 

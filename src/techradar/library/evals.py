@@ -25,7 +25,7 @@ from techradar.llm.client import Completer, LLMOutputError, complete_json
 from techradar.llm.roles import Role
 from techradar.schemas.pipeline import NoLinks
 from techradar.security.text import sanitize_text
-from techradar.security.untrusted import injection_flags, wrap_untrusted
+from techradar.security.untrusted import override_flags, wrap_untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class QuestionDraft(BaseModel):
 def clean_question(raw: str) -> str | None:
     """The question sanitised onto one line, or None when it is empty or reads like an injection."""
     question = " ".join(sanitize_text(raw).split())
-    if not question or injection_flags(question):
+    if not question or override_flags(question):
         return None
     return question
 
