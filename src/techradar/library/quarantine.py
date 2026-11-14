@@ -343,7 +343,7 @@ async def hold_library_doc(
     job_id: str,
     quarantine_dir: Path,
     reasons: Sequence[str],
-    chat_id: int,
+    chat_id: int | None,
 ) -> QuarantineItem:
     """Record a quarantined library job's held copy and notify the owner, once per job.
 
@@ -363,7 +363,7 @@ async def hold_library_doc(
     )
     session.add(item)
     await session.flush()
-    if should_notify(doc.origin):
+    if chat_id is not None and should_notify(doc.origin):
         await notify_quarantined(session, chat_id, doc.title, cut)
     return item
 

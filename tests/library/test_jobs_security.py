@@ -154,6 +154,66 @@ async def test_media_segment_without_intake_flags_the_doc(tmp_path: Path):
     assert part.status == "done" and doc.flagged is True
 
 
+# --- B. quarantined library docs are held for the owner ------------------------------
+
+
+async def test_quarantined_result_holds_the_doc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from unittest.mock import AsyncMock
+
+    hold = AsyncMock()
+    monkeypatch.setattr(jobs_mod, "hold_library_doc", hold)
+    lib, clean, jobs = tmp_path / "lib", tmp_path / "clean", tmp_path / "jobs"
+    doc = _fake_doc("docx")
+    jobs_mod._write_record(lib, FULL_ID, jobs_mod.JobRecord(doc_id=1, kind="full"))
+    (lib / "text" / "1").mkdir(parents=True)
+    (lib / "media" / "1").mkdir(parents=True)
+    _full_result(clean, "quarantine", status="quarantined")
+    session = _Recording({(LibraryDoc, 1): doc}, rows=[])
+    await collect_bulk_results(
+        session,  # type: ignore[arg-type]
+        clean_dir=clean, jobs_dir=jobs, library_dir=lib, part_pages=5, owner_chat_id=42,
+        quarantine_dir=tmp_path / "q",
+    )  # fmt: skip
+    assert doc.status == "quarantined"
+    hold.assert_awaited_once()
+    kw = hold.await_args.kwargs
+    assert hold.await_args.args[1] is doc
+    assert kw["job_id"] == FULL_ID and kw["quarantine_dir"] == tmp_path / "q"
+    assert kw["reasons"] == ["d"] and kw["chat_id"] == 42
+    assert not (lib / "text" / "1").exists() and not (lib / "media" / "1").exists()
+    assert not (clean / f"{FULL_ID}.result.json").exists()
+    # A second copy of the same result finds the doc final: nothing is held again.
+    _full_result(clean, "quarantine", status="quarantined")
+    jobs_mod._write_record(lib, FULL_ID, jobs_mod.JobRecord(doc_id=1, kind="full"))
+    await collect_bulk_results(
+        session,  # type: ignore[arg-type]
+        clean_dir=clean, jobs_dir=jobs, library_dir=lib, part_pages=5, owner_chat_id=42,
+        quarantine_dir=tmp_path / "q",
+    )  # fmt: skip
+    hold.assert_awaited_once()
+
+
+async def test_quarantined_result_without_intake_gets_a_fallback_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from unittest.mock import AsyncMock
+
+    hold = AsyncMock()
+    monkeypatch.setattr(jobs_mod, "hold_library_doc", hold)
+    lib, clean, jobs = tmp_path / "lib", tmp_path / "clean", tmp_path / "jobs"
+    doc = _fake_doc("docx")
+    jobs_mod._write_record(lib, FULL_ID, jobs_mod.JobRecord(doc_id=1, kind="full"))
+    _full_result(clean, None, status="quarantined")
+    session = _Recording({(LibraryDoc, 1): doc}, rows=[])
+    await collect_bulk_results(
+        session,  # type: ignore[arg-type]
+        clean_dir=clean, jobs_dir=jobs, library_dir=lib, part_pages=5,
+    )  # fmt: skip
+    kw = hold.await_args.kwargs
+    assert kw["reasons"] == ["quarantined"] and kw["chat_id"] is None
+    assert kw["quarantine_dir"] == tmp_path / "quarantine"  # next to the library folder
+
+
 # --- database tests ------------------------------------------------------------------
 
 
@@ -205,3 +265,50 @@ async def test_db_flag_after_chunks_exist_flags_the_chunks(db: AsyncSession, dir
         )
     ).all()
     assert dict(rows) == {doc.id: True, other.id: False}
+
+
+async def _quarantine_rows(db: AsyncSession, job_id: str):
+    from sqlalchemy import select
+
+    from techradar.db.models import Outbox, QuarantineItem
+
+    items = (
+        (await db.execute(select(QuarantineItem).where(QuarantineItem.job_id == job_id)))
+        .scalars()
+        .all()
+    )
+    notices = (
+        (
+            await db.execute(
+                select(Outbox).where(Outbox.purpose == "quarantine", Outbox.chat_id == 77)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return items, notices
+
+
+@pytest.mark.db
+async def test_db_quarantined_result_holds_once_even_if_processed_twice(
+    db: AsyncSession, dirs: Dirs, tmp_path: Path
+):
+    from techradar.library.jobs import plan_doc
+
+    doc = await _doc(db, kind="docx")
+    [job_id] = await plan_doc(db, doc.id, jobs_dir=dirs.jobs, library_dir=dirs.lib, commit=False)
+    for _ in range(2):  # a crash before the result file was removed: it runs again
+        jobs_mod._write_record(dirs.lib, job_id, jobs_mod.JobRecord(doc_id=doc.id, kind="full"))
+        _full_result(dirs.clean, "quarantine", status="quarantined", job_id=job_id)
+        await collect_bulk_results(
+            db, clean_dir=dirs.clean, jobs_dir=dirs.jobs, library_dir=dirs.lib, part_pages=5,
+            commit=False, owner_chat_id=77, quarantine_dir=tmp_path / "q",
+        )  # fmt: skip
+    await db.refresh(doc)
+    assert doc.status == "quarantined"
+    items, notices = await _quarantine_rows(db, job_id)
+    assert len(items) == 1 and len(notices) == 1
+    name = doc.original_path.rsplit("/", 1)[1]
+    assert items[0].path == str(tmp_path / "q" / job_id / name)
+    assert items[0].reasons == ["d"] and items[0].origin == "library"
+    assert not list(dirs.jobs.glob("*.job.json"))

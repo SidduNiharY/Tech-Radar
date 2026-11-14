@@ -78,7 +78,7 @@ from techradar.library.media_results import (
     segment_bounds,
 )
 from techradar.library.parts import split_pdf_parts
-from techradar.library.quarantine import flag_doc
+from techradar.library.quarantine import flag_doc, hold_library_doc
 from techradar.messaging.outbox import enqueue_message
 from techradar.schemas.pipeline import ParseJob, ParseResult
 from techradar.security.text import sanitize_text
@@ -856,6 +856,7 @@ async def _apply_result(
     library_dir: Path,
     part_pages: int,
     owner_chat_id: int | None,
+    quarantine_dir: Path,
 ) -> _Applied:
     """Change the database for one result; files are written by the caller after the commit."""
     if doc is None or doc.status in _FINAL_STATUSES:
@@ -864,6 +865,13 @@ async def _apply_result(
         await flag_doc(session, doc)
     if result.status in ("rejected", "quarantined"):
         doc.status = result.status
+        if result.status == "quarantined":
+            # The gateway kept a copy at quarantine/<job_id>/<name>: record it, tell the owner.
+            reasons = list(result.intake.reasons) if result.intake else []
+            await hold_library_doc(
+                session, doc, job_id=result.job_id, quarantine_dir=quarantine_dir,
+                reasons=reasons or ["quarantined"], chat_id=owner_chat_id,
+            )  # fmt: skip
         await session.flush()
         return _Applied(withdraw=True, drop_files=True)
     before = doc.status
@@ -951,6 +959,7 @@ async def collect_bulk_results(
     commit: bool = True,
     owner_chat_id: int | None = None,
     on_chapters_ready: ChaptersReady | None = None,
+    quarantine_dir: Path | None = None,
 ) -> dict[str, int]:
     """Apply every result that belongs to a library job; leave all other files alone.
 
@@ -964,7 +973,11 @@ async def collect_bulk_results(
     A result file that cannot be parsed counts as a parser `error`. A result that raises
     while being applied is rolled back, logged and retried next run; the third failure moves
     the file to `clean/failed/` and fails its doc.
+
+    A quarantined result holds its doc (`quarantine_dir`, default `<data>/quarantine` next
+    to the library folder): one QuarantineItem per job and one notice to the owner.
     """
+    qdir = quarantine_dir if quarantine_dir is not None else library_dir.parent / "quarantine"
     counts = {"handled": 0, "skipped": 0, "stale": 0, "errors": 0, "truncated": 0}
     for rpath in _result_files(clean_dir):
         job_id = rpath.name.removesuffix(".result.json")
@@ -992,7 +1005,7 @@ async def collect_bulk_results(
                 doc = await session.get(LibraryDoc, rec.doc_id)
                 applied = await _apply_result(
                     session, doc, rec, result, staged=staged, library_dir=library_dir,
-                    part_pages=part_pages, owner_chat_id=owner_chat_id,
+                    part_pages=part_pages, owner_chat_id=owner_chat_id, quarantine_dir=qdir,
                 )  # fmt: skip
                 if (
                     applied.stale
