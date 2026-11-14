@@ -1,6 +1,9 @@
 """db tests for the two-step release and the delete of held files (Phase 2c Task 10).
 
-The gate here is the real Intake Gateway with real fixtures; only parsing is faked.
+A library doc is never gated in the bot or worker: release marks it, and its jobs are re-run
+by the parser with `owner_released=True`. The gate here is the real Intake Gateway with real
+fixtures (only parsing is faked); for library docs it runs on the re-planned job, as the
+parser would, and for other held files it is the injected release gate.
 """
 
 from __future__ import annotations
@@ -163,7 +166,7 @@ async def test_release_processes_as_flagged(session: AsyncSession, tmp_path: Pat
         session, item.id, requests=requests, gate=gate, now=NOW + timedelta(seconds=30)
     )
     assert outcome == "released"
-    assert gate.calls == 1
+    assert gate.calls == 0  # a library doc is gated by the parser when its jobs re-run
     assert await doc_flagged(session, doc.id) is True
     await session.refresh(item)
     await session.refresh(doc)
@@ -194,11 +197,10 @@ async def test_double_confirm_is_a_no_op(session: AsyncSession, tmp_path: Path) 
     first = await confirm_release(session, item.id, requests=requests, gate=gate, now=NOW)
     second = await confirm_release(session, item.id, requests=requests, gate=gate, now=NOW)
     assert (first, second) == ("released", "no_request")
-    assert gate.calls == 1
     # A new request for a released item is refused, so it cannot be released twice.
     assert await request_release(session, item.id, requests=requests, now=NOW) is None
     assert await release(session, item.id, gate=gate, now=NOW) == "not_found"
-    assert gate.calls == 1
+    assert gate.calls == 0
 
 
 async def test_confirm_without_request_is_a_no_op(session: AsyncSession, tmp_path: Path) -> None:
@@ -224,26 +226,124 @@ async def test_request_for_unknown_or_deleted_item_is_refused(
 
 
 async def test_released_reject_stays_reject(session: AsyncSession, tmp_path: Path) -> None:
-    doc, item = await _held_doc(session, tmp_path / "q", kind="pdf", fixture="polyglot.pdf")
-    gate = Gate(tmp_path / "q")
-    assert await release(session, item.id, gate=gate, now=NOW) == "rejected"
+    """Release, then the parser re-runs the doc's job as owner-released: a reject stays one."""
+    from techradar.library.jobs import collect_bulk_results, plan_doc
+
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir, kind="pdf", fixture="polyglot.pdf")
+    original = lib / doc.original_path
+    original.parent.mkdir(parents=True)
+    shutil.copyfile(FIX_DIR / "polyglot.pdf", original)
+    assert await release(session, item.id, gate=None, now=NOW) == "released"
     await session.refresh(doc)
+    assert doc.status == "queued"
+
+    jobs, clean = tmp_path / "jobs", tmp_path / "clean"
+    [job_id] = await plan_doc(session, doc.id, jobs_dir=jobs, library_dir=lib, commit=False)
+    job = ParseJob.model_validate_json((jobs / f"{job_id}.job.json").read_text())
+    assert job.owner_released is True
+
+    def parse(j: ParseJob) -> ParseResult:
+        return ParseResult(job_id=j.job_id, kind=j.kind, status="ok")
+
+    result = gate_job(
+        job, lib / "originals", qdir, av=CleanAv(), allowed_hosts=frozenset(), limits=LIMITS,
+        parse=parse, parse_pixels=parse, today=TODAY, owner_released=job.owner_released,
+    )  # fmt: skip
+    assert result.status == "rejected"
+    clean.mkdir()
+    result = result.model_copy(update={"purpose": "library"})
+    (clean / f"{job_id}.result.json").write_text(result.model_dump_json(), encoding="utf-8")
+    await collect_bulk_results(
+        session, clean_dir=clean, jobs_dir=jobs, library_dir=lib, part_pages=25, commit=False,
+        quarantine_dir=qdir,
+    )  # fmt: skip
+    await session.refresh(doc)
+    assert doc.status == "rejected"
+
+
+async def test_a_doc_held_again_after_its_release_is_never_released_twice(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    qdir = tmp_path / "q"
+    doc, item = await _held_doc(session, qdir)
+    assert await release(session, item.id, gate=None, now=NOW) == "released"
+    # its owner-released job came back quarantined anyway (should not happen): held again
+    doc.status = "quarantined"
+    again = await hold_library_doc(
+        session, doc, job_id=os.urandom(16).hex(), quarantine_dir=qdir, reasons=["x"],
+        chat_id=OWNER,
+    )  # fmt: skip
+    assert await release(session, again.id, gate=None, now=NOW) == "rejected"
+    await session.refresh(again)
+    await session.refresh(doc)
+    assert again.released_at is None and doc.status == "quarantined"
+
+
+async def test_release_drops_old_parts_and_chapters(session: AsyncSession, tmp_path: Path) -> None:
+    from sqlalchemy import select
+
+    from techradar.db.models import LibraryChapter, LibraryPart
+
+    doc, item = await _held_doc(session, tmp_path / "q")
+    session.add(LibraryPart(doc_id=doc.id, ordinal=1, status="done", attempts=0))
+    session.add(LibraryChapter(doc_id=doc.id, ordinal=1, title="c", text_path="text/x/01.md"))
+    await session.flush()
+    assert await release(session, item.id, gate=None, now=NOW) == "released"
+    for model in (LibraryPart, LibraryChapter):
+        rows = (await session.execute(select(model.id).where(model.doc_id == doc.id))).all()
+        assert rows == []
+
+
+async def test_release_of_a_quarantined_doc_only(session: AsyncSession, tmp_path: Path) -> None:
+    doc, item = await _held_doc(session, tmp_path / "q")
+    doc.status = "rejected"
+    await session.flush()
+    assert await release(session, item.id, gate=None, now=NOW) == "rejected"
     await session.refresh(item)
-    assert doc.status == "rejected" and doc.flagged is False
+    assert item.released_at is None and await doc_flagged(session, doc.id) is False
+
+
+async def _held_news(session: AsyncSession, qdir: Path) -> QuarantineItem:
+    job_id = os.urandom(16).hex()
+    held = qdir / job_id / f"{os.urandom(32).hex()}.html"
+    held.parent.mkdir(parents=True)
+    held.write_text("<p>hi</p>")
+    item = QuarantineItem(job_id=job_id, path=str(held), origin="fetch", reasons=["x"])
+    session.add(item)
+    await session.flush()
+    return item
+
+
+async def test_other_held_files_need_a_gate(session: AsyncSession, tmp_path: Path) -> None:
+    item = await _held_news(session, tmp_path / "q")
+    assert await release(session, item.id, gate=None, now=NOW) == "failed"
+    await session.refresh(item)
     assert item.released_at is None
 
 
 async def test_release_refuses_a_gate_that_still_quarantines(
     session: AsyncSession, tmp_path: Path
 ) -> None:
-    doc, item = await _held_doc(session, tmp_path / "q")
+    item = await _held_news(session, tmp_path / "q")
 
     async def ignores_release(_item: QuarantineItem) -> ParseResult:
-        return ParseResult(job_id=_item.job_id, kind="docx", status="quarantined")
+        return ParseResult(job_id=_item.job_id, kind="page", status="quarantined")
 
     assert await release(session, item.id, gate=ignores_release, now=NOW) == "failed"
     await session.refresh(item)
-    assert item.released_at is None and await doc_flagged(session, doc.id) is False
+    assert item.released_at is None
+
+
+async def test_other_held_files_reject_stays_reject(session: AsyncSession, tmp_path: Path) -> None:
+    item = await _held_news(session, tmp_path / "q")
+
+    async def rejects(_item: QuarantineItem) -> ParseResult:
+        return ParseResult(job_id=_item.job_id, kind="page", status="rejected")
+
+    assert await release(session, item.id, gate=rejects, now=NOW) == "rejected"
+    await session.refresh(item)
+    assert item.released_at is None
 
 
 async def test_delete_item_removes_file_and_is_idempotent(

@@ -78,7 +78,7 @@ from techradar.library.media_results import (
     segment_bounds,
 )
 from techradar.library.parts import split_pdf_parts
-from techradar.library.quarantine import flag_doc, hold_library_doc
+from techradar.library.quarantine import doc_released, flag_doc, hold_library_doc
 from techradar.messaging.outbox import enqueue_message
 from techradar.schemas.pipeline import ParseJob, ParseResult
 from techradar.security.text import sanitize_text
@@ -278,6 +278,23 @@ def _stage(
     staged.append(_Staged(_make_job(doc, job_id=job_id, mode=mode, kind=kind, part=part), record))
 
 
+async def _mark_owner_released(
+    session: AsyncSession, doc: LibraryDoc | None, staged: list[_Staged]
+) -> None:
+    """Jobs of a doc the owner released from quarantine run with `owner_released=True`.
+
+    The only source is the database (a released QuarantineItem for this doc's file), never a
+    job, result or library file. All staged jobs here belong to `doc`.
+    """
+    if not staged or doc is None:
+        return
+    if any(item.record.doc_id != doc.id for item in staged):
+        raise ValueError("staged jobs of more than one doc")
+    if await doc_released(session, doc):
+        for item in staged:
+            item.job = item.job.model_copy(update={"owner_released": True})
+
+
 def _write_staged(staged: Sequence[_Staged], jobs_dir: Path, library_dir: Path) -> None:
     """Record first, then the job file: the order that makes restarts safe."""
     for item in staged:
@@ -363,6 +380,7 @@ async def plan_doc(
     """
     staged: list[_Staged] = []
     ids = await _plan(session, doc_id, staged, owner_chat_id)
+    await _mark_owner_released(session, await session.get(LibraryDoc, doc_id), staged)
     await _commit(session, commit)
     _write_staged(staged, jobs_dir, library_dir)
     return ids
@@ -1017,6 +1035,7 @@ async def collect_bulk_results(
                     # Re-run of a result whose chapters are committed: queue indexing again
                     # in case the first attempt never got through.
                     applied.chapters_built = await _has_chapters(session, doc.id)
+                await _mark_owner_released(session, doc, staged)
             await _commit(session, commit)
         except Exception:
             logger.exception("library result %s failed (failure %d)", rpath.name, rec.failures + 1)
@@ -1252,6 +1271,7 @@ async def resume_parts(
         session, doc_id, jobs_dir=jobs_dir, library_dir=library_dir, clean_dir=clean_dir,
         part_pages=part_pages, owner_chat_id=owner_chat_id, now_ts=now_ts, staged=staged,
     )  # fmt: skip
+    await _mark_owner_released(session, await session.get(LibraryDoc, doc_id), staged)
     await _finish_resume(session, commit, staged, jobs_dir, library_dir)
     if res.chapters_built and on_chapters_ready is not None:
         await on_chapters_ready(doc_id)
@@ -1312,6 +1332,7 @@ async def resume_all(
         try:
             async with session.begin_nested():
                 res = await work(staged)
+                await _mark_owner_released(session, await session.get(LibraryDoc, doc_id), staged)
             await _commit(session, commit)
         except Exception:
             logger.exception("resume of library doc %s failed", doc_id)

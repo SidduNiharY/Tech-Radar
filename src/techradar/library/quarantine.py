@@ -10,10 +10,16 @@ The release path decides whether a hostile file gets processed, so every step fa
 - The release itself claims the row with one conditional UPDATE (`released_at IS NULL AND
   deleted_at IS NULL`), so two confirms, two processes or a stale button can never release
   an item twice.
-- The file is re-run through the injected `gate`, which must call the Intake Gateway with
-  `owner_released=True` inside the parser sandbox (never in the bot or worker process). A
-  quarantine outcome becomes a flag; a reject stays a reject and nothing is released. A
-  gate that still answers "quarantined" (it ignored the release) releases nothing either.
+- A library doc is not gated here: the bot and worker never run the Intake Gateway. Release
+  marks the item released, the doc `flagged` and `queued` (its old parts and chapters are
+  dropped). The worker then plans its jobs with `ParseJob.owner_released=True` (only because
+  a released item exists in the database) and the parser sandbox gates them: a quarantine
+  step becomes a flag, a reject stays a reject (the collector marks the doc rejected).
+  A doc is released at most once: if it comes back quarantined, the new hold cannot be
+  released again.
+- Other held files (news, Telegram) cannot be re-run from here: they still go through the
+  injected `gate` (Task 10); without one, nothing is released. A gate that still answers
+  "quarantined" releases nothing either.
 - A released library doc is recorded as `flagged`: searchable, never used for summaries,
   evals, MCQs or cards.
 - Delete removes only a regular file inside the quarantine folder: the path is resolved and
@@ -34,10 +40,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import Chunk, LibraryDoc, QuarantineItem
+from techradar.db.models import Chunk, LibraryChapter, LibraryDoc, LibraryPart, QuarantineItem
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.schemas.pipeline import ParseResult
 
@@ -239,7 +245,7 @@ async def confirm_release(
     item_id: int,
     *,
     requests: ReleaseRequests,
-    gate: ReleaseGate,
+    gate: ReleaseGate | None,
     now: datetime,
 ) -> ReleaseOutcome:
     """Step 2 (`qrel_ok:<id>`): release only after an unexpired, unused step 1."""
@@ -251,10 +257,54 @@ async def confirm_release(
     return await release(session, item_id, gate=gate, now=now)
 
 
-async def release(
-    session: AsyncSession, item_id: int, *, gate: ReleaseGate, now: datetime
+async def doc_released(
+    session: AsyncSession, doc: LibraryDoc, *, exclude: int | None = None
+) -> bool:
+    """Whether the owner released a held copy of this doc (a released QuarantineItem).
+
+    Held copies are named after the original (`<sha256>.<ext>`), so the item's path ends
+    with `/<that name>`.
+    """
+    name = Path(doc.original_path).name
+    stmt = select(QuarantineItem.id).where(
+        QuarantineItem.released_at.is_not(None),
+        QuarantineItem.origin == doc.origin,
+        QuarantineItem.path.endswith(f"/{name}", autoescape=True),
+    )
+    if exclude is not None:
+        stmt = stmt.where(QuarantineItem.id != exclude)
+    return (await session.execute(stmt.limit(1))).first() is not None
+
+
+async def _unclaim(
+    session: AsyncSession, item: QuarantineItem, outcome: ReleaseOutcome
 ) -> ReleaseOutcome:
-    """Claim the item atomically, re-run it through the gate as owner-released, record it.
+    item.released_at = None
+    await session.flush()
+    return outcome
+
+
+async def _release_library_doc(
+    session: AsyncSession, item: QuarantineItem, doc: LibraryDoc
+) -> ReleaseOutcome:
+    """Mark a held library doc for owner-released reprocessing (see module docstring)."""
+    if doc.status != "quarantined":
+        return await _unclaim(session, item, "rejected" if doc.status == "rejected" else "failed")
+    if await doc_released(session, doc, exclude=item.id):
+        # Released once already and held again: never loop through release.
+        return await _unclaim(session, item, "rejected")
+    await session.execute(delete(LibraryChapter).where(LibraryChapter.doc_id == doc.id))
+    await session.execute(delete(LibraryPart).where(LibraryPart.doc_id == doc.id))
+    await flag_doc(session, doc)
+    doc.status = "queued"
+    await session.flush()
+    return "released"
+
+
+async def release(
+    session: AsyncSession, item_id: int, *, gate: ReleaseGate | None, now: datetime
+) -> ReleaseOutcome:
+    """Claim the item atomically, then release it (library doc) or re-gate it (others).
 
     Flushes only; the caller commits (the claim's row lock holds until then).
     """
@@ -281,30 +331,22 @@ async def release(
         )
     ).scalar_one()
     doc = await _library_doc(session, item)
+    if doc is not None:
+        return await _release_library_doc(session, item, doc)
+    if gate is None:
+        return await _unclaim(session, item, "failed")
 
     try:
         result = await gate(item)
     except Exception:
-        item.released_at = None
-        await session.flush()
-        return "failed"
+        return await _unclaim(session, item, "failed")
 
     verdict = result.intake.verdict if result.intake is not None else None
     if result.status == "rejected" or verdict == "reject":
-        item.released_at = None
-        if doc is not None:
-            doc.status = "rejected"
-        await session.flush()
-        return "rejected"
+        return await _unclaim(session, item, "rejected")
     if result.status != "ok" or verdict not in ("flag", "pass"):
         # Still quarantined (the gate ignored the release), or an error: release nothing.
-        item.released_at = None
-        await session.flush()
-        return "failed"
-
-    if doc is not None:
-        await flag_doc(session, doc)
-        doc.status = "queued"
+        return await _unclaim(session, item, "failed")
     await session.flush()
     return "released"
 

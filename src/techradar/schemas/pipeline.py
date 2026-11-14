@@ -87,6 +87,10 @@ class ParseJob(BasePipelineModel):
     # within the parser's 120 s timeout (SEC-06).
     ts_start: Annotated[float, Field(ge=0, le=14_460)] | None = None
     ts_end: Annotated[float, Field(gt=0, le=14_460)] | None = None
+    # Set only by the worker when the owner released this doc from quarantine (a released
+    # QuarantineItem exists for it): the gateway then turns quarantine steps into flags;
+    # rejects stay rejects (SEC-14). Never derived from file content.
+    owner_released: Annotated[bool, Field(strict=True)] = False
 
 
 class FeedEntry(BasePipelineModel):

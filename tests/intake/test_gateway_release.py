@@ -149,8 +149,15 @@ def test_released_injection_text_is_flagged_not_quarantined(tmp_path: Path) -> N
     assert res.status == "ok" and res.intake is not None and res.intake.verdict == "flag"
 
 
-def test_job_file_cannot_carry_owner_released() -> None:
+def test_owner_released_is_off_by_default_and_strict() -> None:
+    """Phase 2c: the worker writes `owner_released` into a job only for a doc with a released
+    QuarantineItem (library/jobs.py). It is never on by default, only a real boolean sets
+    it, and a parse result can never carry it."""
+    assert _job("pdf", "c" * 64 + ".pdf").owner_released is False
     data = _job("pdf", "c" * 64 + ".pdf").model_dump()
-    data["owner_released"] = True
+    for bad in ("true", "yes", 1, "1", None):
+        data["owner_released"] = bad
+        with pytest.raises(ValidationError):
+            ParseJob.model_validate(data)
     with pytest.raises(ValidationError):
-        ParseJob.model_validate(data)
+        ParseResult(job_id="a" * 32, kind="pdf", status="ok", owner_released=True)  # type: ignore[call-arg]

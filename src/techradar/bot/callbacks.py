@@ -104,10 +104,9 @@ async def _quarantine_callback(query: Any, bot_data: Any, action: str, item_id: 
         return
 
     if action == "qrel_ok":
+        # A library doc needs no gate here: its jobs re-run in the parser as owner-released.
+        # Other held files need an injected release gate; without one nothing is released.
         gate = bot_data.get("release_gate")
-        if gate is None:
-            await query.answer("Release is not available yet.")
-            return
         async with session_factory() as session:
             outcome = await confirm_release(session, item_id, requests=requests, gate=gate, now=now)
             await session.commit()

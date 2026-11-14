@@ -570,6 +570,7 @@ def _fake_doc(kind: str = "pdf") -> SimpleNamespace:
         title="T",
         original_path=f"originals/{'a' * 64}.pdf",
         flagged=False,
+        origin="library",
     )
 
 
@@ -842,8 +843,9 @@ async def test_commit_happens_before_any_job_file_is_written(tmp_path: Path):
 
     jobs = tmp_path / "jobs"
     doc = SimpleNamespace(
-        id=1, kind="pdf", status="queued", original_path=f"originals/{'a' * 64}.pdf", title="T"
-    )
+        id=1, kind="pdf", status="queued", original_path=f"originals/{'a' * 64}.pdf", title="T",
+        origin="library",
+    )  # fmt: skip
     session = _FakeSession({(LibraryDoc, 1): doc})
     seen: list[tuple[str, int]] = []
 

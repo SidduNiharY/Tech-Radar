@@ -156,10 +156,20 @@ async def test_owner_confirm_releases_and_commits(monkeypatch) -> None:
     assert "flagged" in query.answer.call_args.args[0]
 
 
-async def test_confirm_without_gate_does_nothing(monkeypatch) -> None:
-    conf = AsyncMock()
+async def test_confirm_without_gate_still_releases_library_docs(monkeypatch) -> None:
+    """The bot runs no gate: library docs are re-gated by the parser, others are refused."""
+    conf = AsyncMock(return_value="released")
     monkeypatch.setattr(callbacks, "confirm_release", conf)
     update, context, query, opened = _quarantine_ctx(123, "qrel_ok:5")
+    await handle_callback_query(update, context)
+    assert conf.await_args.kwargs["gate"] is None
+    opened[0].commit.assert_awaited_once()
+
+
+async def test_stranger_confirm_without_gate_is_ignored(monkeypatch) -> None:
+    conf = AsyncMock()
+    monkeypatch.setattr(callbacks, "confirm_release", conf)
+    update, context, query, opened = _quarantine_ctx(999, "qrel_ok:5")
     await handle_callback_query(update, context)
     assert conf.await_count == 0 and opened == []
 

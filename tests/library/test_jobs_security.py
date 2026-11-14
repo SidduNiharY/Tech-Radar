@@ -214,6 +214,43 @@ async def test_quarantined_result_without_intake_gets_a_fallback_reason(
     assert kw["quarantine_dir"] == tmp_path / "quarantine"  # next to the library folder
 
 
+# --- C. owner-released reprocessing --------------------------------------------------
+
+
+def test_parse_job_owner_released_defaults_off_and_is_strict():
+    from pydantic import ValidationError
+
+    from techradar.schemas.pipeline import ParseJob
+
+    base = dict(job_id="a" * 32, kind="pdf", raw_name=f"{'b' * 64}.pdf", url="u", source_id=0)
+    assert ParseJob(**base).owner_released is False  # type: ignore[arg-type]
+    assert ParseJob(**base, owner_released=True).owner_released is True  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        ParseJob(**base, released=True)  # type: ignore[arg-type]  # extra=forbid stays
+
+
+@pytest.mark.parametrize(("released_rows", "expected"), [([], False), ([7], True)])
+async def test_plan_doc_marks_jobs_owner_released_only_after_a_release(
+    tmp_path: Path, released_rows: list, expected: bool
+):
+    from techradar.library.jobs import plan_doc
+    from techradar.schemas.pipeline import ParseJob
+
+    doc = SimpleNamespace(
+        id=1, kind="pdf", status="queued", original_path=f"originals/{'a' * 64}.pdf", title="T",
+        origin="library",
+    )  # fmt: skip
+    session = _Recording({(LibraryDoc, 1): doc}, rows=released_rows)
+    [job_id] = await plan_doc(
+        session,  # type: ignore[arg-type]
+        1, jobs_dir=tmp_path / "jobs", library_dir=tmp_path / "lib",
+    )  # fmt: skip
+    job = ParseJob.model_validate_json((tmp_path / "jobs" / f"{job_id}.job.json").read_text())
+    assert job.owner_released is expected
+    # the decision comes from the database (a released quarantine item), never from a file
+    assert any("quarantine_items" in str(stmt) for stmt in session.statements)
+
+
 # --- database tests ------------------------------------------------------------------
 
 
