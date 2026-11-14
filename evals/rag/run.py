@@ -25,6 +25,12 @@ if "evals" in sys.modules and not hasattr(sys.modules["evals"], "rag"):
 
 import yaml  # noqa: E402
 
+from evals.rag.book_evals import (  # noqa: E402
+    THRESHOLD_BOOK_RECALL_AT_5,
+    book_eval_cases,
+    make_retriever,
+)
+from evals.rag.book_evals import recall_at_5 as book_recall_at_5  # noqa: E402
 from evals.rag.metrics import mrr, recall_at_k  # noqa: E402
 from techradar.rag.answer import NOT_FOUND, answer_question, check_citations  # noqa: E402
 from techradar.rag.retrieve import Hit, RagDeps, RetrieveFilters, retrieve  # noqa: E402
@@ -64,6 +70,26 @@ def load_questions_data(path: Path | None = None) -> tuple[dict[str, Any], Path]
     content = chosen.read_text(encoding="utf-8")
     data = yaml.safe_load(content) or {}
     return data, chosen
+
+
+async def book_eval_report(
+    session_factory: Any,
+    deps: Any,
+    *,
+    cases_fn: Any = book_eval_cases,
+    retrieve_fn: Any = retrieve,
+) -> dict[str, Any]:
+    """Recall@5 of every stored book question, each scoped to its own book (Phase 2c)."""
+    async with session_factory() as session:
+        cases = await cases_fn(session)
+    score = await book_recall_at_5(cases, make_retriever(deps, retrieve_fn))
+    return {
+        "status": "ran",
+        "cases": len(cases),
+        "recall@5": round(score, 4),
+        "threshold": THRESHOLD_BOOK_RECALL_AT_5,
+        "passed": score >= THRESHOLD_BOOK_RECALL_AT_5,
+    }
 
 
 def build_mock_rag_deps(questions: list[dict[str, Any]]) -> RagDeps:
@@ -132,8 +158,10 @@ async def evaluate_rag(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     deps: RagDeps | None = None
+    ro_session_factory: Any = None
     if not use_mock:
         try:
+            from sqlalchemy import text
             from sqlalchemy.ext.asyncio import async_sessionmaker
 
             from techradar.db.engine import make_engine
@@ -147,7 +175,7 @@ async def evaluate_rag(
 
             # Test connection
             async with ro_session_factory() as s:
-                await s.execute("SELECT 1")  # type: ignore[arg-type]
+                await s.execute(text("SELECT 1"))
 
             completer = make_completer(Role.WORKER, settings)
             embedder_model = embedder_override or settings.embedder_model
@@ -259,7 +287,15 @@ async def evaluate_rag(
     passed_cit = invalid_citations <= THRESHOLDS["max_invalid_citations"]
     passed_oos = oos_not_found_rate >= THRESHOLDS["min_out_of_scope_not_found_rate"]
 
-    thresholds_passed = passed_en and passed_hi and passed_te and passed_cit and passed_oos
+    if use_mock:
+        book_report: dict[str, Any] = {"status": "waiting", "passed": None}
+    else:
+        book_report = await book_eval_report(ro_session_factory, deps)
+    passed_books = use_mock or bool(book_report["passed"])
+
+    thresholds_passed = (
+        passed_en and passed_hi and passed_te and passed_cit and passed_oos and passed_books
+    )
 
     date_str = datetime.now(UTC).strftime("%Y-%m-%d")
     out_file = out_dir / f"{date_str}.json"
@@ -292,7 +328,9 @@ async def evaluate_rag(
             "recall_te": passed_te,
             "citations_valid": passed_cit,
             "out_of_scope_rejection": passed_oos,
+            "book_recall": passed_books,
         },
+        "book_evals": book_report,
         "details": per_question_results,
     }
 
@@ -302,6 +340,13 @@ async def evaluate_rag(
         f"Recall@5: en={avg_recall_en:.2f}, hi={avg_recall_hi:.2f}, te={avg_recall_te:.2f} | "
         f"Invalid citations={invalid_citations} | Out-of-scope not_found={oos_not_found_rate:.1%}"
     )
+    if use_mock:
+        print(
+            "WAITING: internet stage: rag-eval ran the mock evaluator (no real models or "
+            "database); the question and book evals have not run for real."
+        )
+    else:
+        print(f"Book evals: recall@5={book_report['recall@5']:.2f} over {book_report['cases']}")
     print(f"Status: {'PASSED' if thresholds_passed else 'FAILED'}")
 
     return report, thresholds_passed
