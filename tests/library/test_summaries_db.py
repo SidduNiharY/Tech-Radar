@@ -224,7 +224,7 @@ async def test_ready_message_sent_once_and_doc_ready(
     assert first == _counts(summarized=3)
     n_calls = len(fake.calls)
     second = await _run(session, fake, indexed_doc, tmp_path)  # a re-run: no model calls
-    assert second == {"summarized": 0, "failed": 0, "skipped": 3}
+    assert second == {"summarized": 0, "failed": 0, "skipped": 3, "given_up": 0, "more": 0}
     assert len(fake.calls) == n_calls
 
     doc = await session.get(LibraryDoc, indexed_doc.doc.id)
