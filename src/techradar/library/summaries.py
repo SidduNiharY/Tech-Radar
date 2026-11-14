@@ -621,7 +621,9 @@ async def summarize_doc(
                 .where(Chunk.doc_id == doc_id, Chunk.chapter_id.is_not(None))
                 .group_by(Chunk.chapter_id)
             )
-        ).tuples()
+        )
+        .tuples()
+        .all()
     )
     unindexed = [c for c in chapters if not chunk_counts.get(c.id)]
     if len(unindexed) == len(chapters):
