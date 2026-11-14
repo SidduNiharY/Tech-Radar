@@ -108,6 +108,15 @@ def test_check_media_rules():
     assert "mov,mp4,m4a,3gp,3g2,mj2" in ALLOWED_CONTAINERS
 
 
+@pytest.mark.parametrize("duration", [float("nan"), float("inf"), -float("inf"), -5.0])
+def test_check_media_refuses_non_finite_durations(duration):
+    # NaN compares False both ways, so `<= 0` and `> max` let it through before.
+    info = MediaInfo(
+        format_name="mov,mp4,m4a,3gp,3g2,mj2", duration_s=duration, has_audio=True, has_video=True
+    )
+    assert check_media(info, 14_400, "video").outcome == "reject"
+
+
 @needs_ffmpeg
 def test_real_video_probes(tmp_path):
     info = probe_media(make_video(tmp_path / "short.mp4"), "mov")

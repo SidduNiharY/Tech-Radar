@@ -9,6 +9,7 @@ can therefore never make it open another file.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -99,7 +100,8 @@ def check_media(info: MediaInfo, max_s: int, kind: str) -> IntakeStep:
         return IntakeStep(
             name="structure", outcome="reject", detail=f"container {info.format_name[:60]!r}"
         )
-    if info.duration_s <= 0:
+    # NaN compares False both ways: test finiteness first (fail closed).
+    if not math.isfinite(info.duration_s) or info.duration_s <= 0:
         return IntakeStep(name="structure", outcome="reject", detail="unknown duration")
     if info.duration_s > max_s:
         return IntakeStep(

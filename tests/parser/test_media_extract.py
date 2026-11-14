@@ -75,7 +75,8 @@ def test_extract_frames_uses_list_args_and_whitelists(monkeypatch, tmp_path):
     args = seen["args"]
     assert args[args.index("-protocol_whitelist") + 1] == "file"
     assert args[args.index("-f") + 1] == "mov"
-    assert "fps=1/30" in " ".join(args)
+    # One keyframe per timestamp (review of d18ebba): no full decode of the segment.
+    assert args[args.index("-skip_frame") + 1] == "nokey" and "-noaccurate_seek" in args
 
 
 def test_unknown_demuxer_refused(tmp_path):

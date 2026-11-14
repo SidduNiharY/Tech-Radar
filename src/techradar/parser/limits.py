@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import multiprocessing
 import os
+import signal
+import stat
 import tempfile
 import time
 from collections.abc import Callable
@@ -48,6 +51,24 @@ def address_space_for(job: ParseJob, *, pixel_rebuild: bool = False) -> int:
     return LIGHT_AS_BYTES
 
 
+def is_regular_file(path: Path) -> bool:
+    """True for a regular file that is not a symlink (lstat: links are never followed)."""
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def real_dir(path: Path) -> bool:
+    """Create path (one level) if needed; True only when it is a real folder, not a link."""
+    with contextlib.suppress(OSError):
+        path.mkdir(mode=0o750)
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
 def parse_job(
     job: ParseJob,
     raw_dir: Path,
@@ -68,7 +89,7 @@ def parse_job(
     gateway already enforced it); 5 MB stays the default for news.
     """
     raw_path = raw_dir / job.raw_name
-    if not raw_path.exists():
+    if not is_regular_file(raw_path):
         return ParseResult(job_id=job.job_id, kind=job.kind, status="error")
     if raw_path.stat().st_size > max_bytes:
         return ParseResult(job_id=job.job_id, kind=job.kind, status="too_large")
@@ -172,6 +193,28 @@ def offline_ocr(artifacts_path: Path) -> Callable[[Path], str]:
 
 MAX_SEGMENT_S = 601.0  # 10-minute segments (plus rounding)
 MAX_SLIDES_PER_SEGMENT = 40
+# A media job's own budget, inside the parser's 120 s process timeout (SEC-06):
+# the child's start-up and the result hand-off need the rest.
+MEDIA_BUDGET_S = 105.0
+# Probed durations end on a frame or packet boundary; allow this much slack.
+DURATION_SLACK_S = 2.0
+# The segment JSON goes into CleanDoc.text (at most 100_000 characters).
+MAX_SEGMENT_JSON = 95_000
+
+
+def _segment_json(audio_file: str, slides: list[dict[str, object]]) -> str:
+    """The segment result; slides that do not fit CleanDoc's limit are left out (whole)."""
+    kept: list[dict[str, object]] = []
+    text = json.dumps({"audio_file": audio_file, "slides": kept}, ensure_ascii=False)
+    for slide in slides:
+        candidate = json.dumps(
+            {"audio_file": audio_file, "slides": [*kept, slide]}, ensure_ascii=False
+        )
+        if len(candidate) > MAX_SEGMENT_JSON:
+            break
+        kept.append(slide)
+        text = candidate
+    return text
 
 
 def _media(
@@ -181,7 +224,13 @@ def _media(
     artifacts_path: Path | None,
     frame_every_s: int,
 ) -> ParseResult:
-    """Video/audio: `probe` reads the duration; `media` extracts one segment."""
+    """Video/audio: `probe` reads the duration; `media` extracts one segment.
+
+    Outputs go only to media_dir/<doc_id>/audio/seg-<ts_start>.flac, a path built from
+    integers; a symlinked doc or audio folder is refused. Every ffmpeg run shares one
+    deadline so the job ends (with an error, never a timeout) inside the 120 s limit.
+    """
+    deadline = time.monotonic() + MEDIA_BUDGET_S
 
     def error() -> ParseResult:
         return ParseResult(job_id=job.job_id, kind=job.kind, status="error")
@@ -189,41 +238,59 @@ def _media(
     demuxer = demuxer_for(detect_file_mime(raw_path))
     if demuxer is None:
         return error()
+    if job.mode not in ("probe", "media"):
+        return error()
+    start, end = job.ts_start, job.ts_end
+    if job.mode == "media" and (
+        media_dir is None
+        or job.doc_id is None
+        or job.doc_id < 1
+        or start is None
+        or end is None
+        or not (math.isfinite(start) and math.isfinite(end))
+        or start < 0
+        or not 0 < end - start <= MAX_SEGMENT_S
+    ):
+        return error()
+    try:
+        info = probe_media(raw_path, demuxer)
+    except MediaProbeError:
+        return error()
+    if not math.isfinite(info.duration_s) or info.duration_s <= 0:
+        return error()
     if job.mode == "probe":
-        try:
-            info = probe_media(raw_path, demuxer)
-        except MediaProbeError:
-            return error()
         text = json.dumps(
             {
                 "duration_s": info.duration_s,
                 "has_audio": info.has_audio,
                 "has_video": info.has_video,
-            }
+            },
+            allow_nan=False,
         )
         doc = CleanDoc(url=job.url, title="probe", text=text, lang="other")
         return ParseResult(job_id=job.job_id, kind=job.kind, status="ok", doc=doc)
-    start, end = job.ts_start, job.ts_end
-    if (
-        job.mode != "media"
-        or media_dir is None
-        or not job.doc_id
-        or start is None
-        or end is None
-        or not 0 < end - start <= MAX_SEGMENT_S
-    ):
+    assert media_dir is not None and job.doc_id is not None  # noqa: S101 (checked above)
+    assert start is not None and end is not None  # noqa: S101
+    if not info.has_audio or start >= info.duration_s or end > info.duration_s + DURATION_SLACK_S:
         return error()
-    out = media_dir / str(int(job.doc_id))
+    doc_dir = media_dir / str(int(job.doc_id))
+    audio_dir = doc_dir / "audio"
+    if not (real_dir(media_dir) and real_dir(doc_dir) and real_dir(audio_dir)):
+        return error()
     audio_file = f"audio/seg-{int(start):05d}.flac"
+    slides: list[dict[str, object]] = []
     try:
         extract_audio_segment(
-            raw_path, out / audio_file, demuxer=demuxer, start_s=start, dur_s=end - start
+            raw_path,
+            doc_dir / audio_file,
+            demuxer=demuxer,
+            start_s=start,
+            dur_s=end - start,
+            deadline=deadline,
         )
-        slides: list[dict[str, object]] = []
-        if job.kind == "video":
-            have_models = artifacts_path is not None and Path(artifacts_path).is_dir()
-            ocr = offline_ocr(Path(artifacts_path)) if have_models else (lambda _p: "")
+        if job.kind == "video" and info.has_video:
             with tempfile.TemporaryDirectory(prefix="frames-") as tmp:
+                # ffmpeg runs before the OCR models load (no threads during its fork).
                 frames = extract_frames(
                     raw_path,
                     Path(tmp),
@@ -231,13 +298,16 @@ def _media(
                     every_s=frame_every_s,
                     start_s=start,
                     dur_s=end - start,
-                    timeout_s=100,
+                    deadline=deadline,
                 )
-                for s in slide_text(frames, ocr)[:MAX_SLIDES_PER_SEGMENT]:
-                    slides.append({"ts_s": min(max(s.ts_s, start), end), "text": s.text})
+                have_models = artifacts_path is not None and Path(artifacts_path).is_dir()
+                if frames and have_models:
+                    ocr = offline_ocr(Path(artifacts_path))  # type: ignore[arg-type]
+                    for s in slide_text(frames, ocr, deadline=deadline)[:MAX_SLIDES_PER_SEGMENT]:
+                        slides.append({"ts_s": min(max(s.ts_s, start), end), "text": s.text})
     except MediaExtractError:
         return error()
-    text = json.dumps({"audio_file": audio_file, "slides": slides})
+    text = _segment_json(audio_file, slides)
     doc = CleanDoc(url=job.url, title="media", text=text, lang="other")
     return ParseResult(job_id=job.job_id, kind=job.kind, status="ok", doc=doc)
 
@@ -276,6 +346,10 @@ def _worker_entrypoint(
     media_dir: str | None = None,
 ) -> None:
     """Worker entrypoint in spawned child process."""
+    # Own process group: on a timeout the parent kills the whole group, so an
+    # ffmpeg (or any helper) this child started can never outlive the job.
+    with contextlib.suppress(OSError):
+        os.setsid()
     with contextlib.suppress(ValueError, OSError, AttributeError):
         import resource
 
@@ -301,6 +375,31 @@ def _worker_entrypoint(
     finally:
         with contextlib.suppress(Exception):
             conn.close()
+
+
+def _kill_group(proc: multiprocessing.process.BaseProcess) -> None:
+    """SIGKILL the child's process group (the child and every helper it started)."""
+    pid = proc.pid
+    # The group id is the child's pid (os.setsid); it is never our own group, and it
+    # stays reserved while any member is alive, even after the child itself exited.
+    if pid is not None and pid != os.getpgrp():
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(pid, signal.SIGKILL)
+    with contextlib.suppress(Exception):
+        proc.kill()
+    proc.join(timeout=5.0)
+    _reap_orphans()
+
+
+def _reap_orphans() -> None:
+    """As PID 1 of the parser container, collect helpers re-parented to us (no zombies)."""
+    if os.getpid() != 1:
+        return
+    with contextlib.suppress(ChildProcessError):
+        while True:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+            if pid == 0:
+                return
 
 
 def run_with_limits(
@@ -338,14 +437,10 @@ def run_with_limits(
     proc.join(timeout=float(timeout_s))
 
     if proc.is_alive():
-        with contextlib.suppress(Exception):
-            proc.terminate()
-            proc.join(timeout=1.0)
-            if proc.is_alive():
-                proc.kill()
-                proc.join(timeout=1.0)
+        _kill_group(proc)
         parent_conn.close()
         return ParseResult(job_id=job.job_id, kind=job.kind, status="timeout")
+    _kill_group(proc)  # helpers the finished child left behind, if any
 
     try:
         if parent_conn.poll():
