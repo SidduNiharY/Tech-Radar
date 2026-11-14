@@ -13,7 +13,7 @@ from techradar.intake.gateway import gate_job
 from techradar.intake.guard import TransformersGuard, run_guard_with_limits
 from techradar.intake.rules import load_rules
 from techradar.parser.limits import address_space_for, run_with_limits
-from techradar.schemas.pipeline import ParseJob, ParseResult
+from techradar.schemas.pipeline import IntakeStep, IntakeVerdict, ParseJob, ParseResult
 from techradar.security.urls import load_allowlist
 
 logger = logging.getLogger(__name__)
@@ -64,12 +64,24 @@ def build_gate(
 
     Library jobs read their file from `library_dir/originals` (raw_name is relative
     to it) and write media segments to `library_dir/media`; others read raw_dir.
+    A file that is a symlink is refused before any check reads it.
+
+    `owner_released` (the owner's two-step release of a held file) comes only from the
+    validated ParseJob (extra fields are forbidden), never from file content or env.
     """
 
     def gate(job: ParseJob) -> ParseResult:
         library = job.purpose == "library" and library_dir is not None
         src_dir = library_dir / "originals" if library and library_dir else raw_dir
         media_dir = library_dir / "media" if library and library_dir else None
+        if (src_dir / job.raw_name).is_symlink():
+            step = IntakeStep(name="size", outcome="reject", detail="raw file is a link")
+            return ParseResult(
+                job_id=job.job_id,
+                kind=job.kind,
+                status="rejected",
+                intake=IntakeVerdict(verdict="reject", steps=[step], reasons=[step.detail]),
+            )
         return gate_job(
             job,
             src_dir,
@@ -95,6 +107,7 @@ def build_gate(
                 mem_bytes=address_space_for(j, pixel_rebuild=True),
             ),
             guard_score=guard_score,
+            owner_released=getattr(job, "owner_released", False) is True,
         )
 
     return gate
