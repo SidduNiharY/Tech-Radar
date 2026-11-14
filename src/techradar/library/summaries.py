@@ -216,19 +216,45 @@ def _idea_text(idea: str, pages: Mapping[int, int | None]) -> str:
     return _SPACE.sub(" ", "".join(out)).strip()
 
 
-# A formula is rendered inside $...$ in an Obsidian note. These could break out of it
-# or inject HTML, wiki links, links or code into the note, so such a formula is dropped.
-_BAD_FORMULA = re.compile(r"[<>`]|\[\[|\]\]|//|\\(?:href|url|input|include|write|def|newcommand)\b")
+# A formula is rendered inside $...$ in an Obsidian note, and MathJax can run commands that
+# define macros, load packages, emit HTML or CSS classes, or fetch things. A denylist always
+# leaves gaps, so only an allowlist is used: plain math characters and a fixed set of safe
+# LaTeX commands. Anything else drops the formula.
+_SAFE_COMMANDS = frozenset(
+    """
+    frac dfrac tfrac sqrt sum prod int oint lim infty partial nabla binom
+    alpha beta gamma delta epsilon varepsilon zeta eta theta vartheta iota kappa lambda mu nu
+    xi pi varpi rho varrho sigma varsigma tau upsilon phi varphi chi psi omega
+    Gamma Delta Theta Lambda Xi Pi Sigma Upsilon Phi Psi Omega
+    cdot times div pm mp ast star circ bullet cdots ldots dots vdots ddots quad qquad
+    leq geq neq approx equiv sim simeq cong propto le ge ne lt gt ll gg
+    in notin subset subseteq supset supseteq cup cap setminus emptyset forall exists neg
+    land lor wedge vee implies iff to rightarrow leftarrow leftrightarrow Rightarrow
+    Leftarrow Leftrightarrow mapsto
+    log ln exp sin cos tan cot sec csc sinh cosh tanh arcsin arccos arctan
+    min max sup inf lim limsup liminf gcd det dim ker arg mod bmod pmod
+    left right big Big bigg Bigg langle rangle lfloor rfloor lceil rceil
+    text textbf textit mathrm mathbf mathit mathbb mathcal mathfrak mathsf operatorname
+    overline underline hat bar vec dot ddot tilde widehat widetilde overbrace underbrace
+    sin begin end matrix pmatrix bmatrix cases
+    """.split()
+)
+_COMMAND = re.compile(r"\\([A-Za-z]+)")
+_ESCAPE = re.compile(r"\\(?:[,;:! ]|\\)")  # thin spaces and the line break
+_PLAIN = re.compile(r"[A-Za-z0-9\s+\-*/=^_{}()\[\],.|!'&]*")
 
 
 def _math(formula: str) -> str:
-    """The formula with `$` removed, or "" if it could break out of its `$...$`."""
+    """The formula with `$` removed, or "" unless it is plain math and safe LaTeX only."""
     cleaned = _SPACE.sub(" ", formula.replace("$", "")).strip()
-    if not cleaned or _BAD_FORMULA.search(cleaned):
+    # `//` is a URL, `[[` / `]]` an Obsidian wiki link, `](` a Markdown link or image.
+    if not cleaned or any(bad in cleaned for bad in ("//", "[[", "]]", "](")):
         return ""
-    trailing = len(cleaned) - len(cleaned.rstrip("\\"))
-    if trailing % 2 == 1:
-        return ""  # an odd run of backslashes at the end would escape the closing `$`
+    if any(name not in _SAFE_COMMANDS for name in _COMMAND.findall(cleaned)):
+        return ""
+    rest = _ESCAPE.sub(" ", _COMMAND.sub(" ", cleaned))
+    if not _PLAIN.fullmatch(rest):  # also catches a stray backslash, `<`, `>`, backticks, `;`
+        return ""
     return cleaned
 
 

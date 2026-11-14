@@ -353,3 +353,60 @@ def test_even_trailing_backslashes_are_fine_odd_are_dropped():
     one = "a = b " + "\\"
     assert _math(two) == two
     assert _math(one) == ""
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        r"\renewcommand{\x}{y}",
+        r"\providecommand{\x}{y}",
+        r"\gdef\x{y}",
+        r"\let\x\y",
+        r"\class{evil}{x}",
+        r"\style{color:red}{x}",
+        r"\cssId{a}{x}",
+        r"\require{extpfx}",
+        r"\unicode{x1F600}",
+        r"\htmlClass{a}{x}",
+        r"\includegraphics{a.png}",
+        r"\DeclareMathOperator{\a}{b}",
+        r"\HREF{x}{y}",
+        r"\Href{x}{y}",
+        r"\text{<img src=x onerror=1>}",
+        r"x = 1; DROP TABLE",  # not LaTeX we ever need: semicolon is not allowed
+        "x‮y",  # bidi override
+        r"\[ x \]",
+    ],
+)
+def test_formula_allowlist_drops_everything_unknown(formula):
+    from techradar.library.summaries import _math
+
+    assert _math(formula) == ""
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        r"r = \frac{i}{n}",
+        r"E = mc^{2}",
+        r"\sum_{i=1}^{n} x_i",
+        r"\alpha + \beta \leq \gamma",
+        r"a \lt b",
+        r"\sqrt{x^2 + y^2}",
+        r"f(x) = \int_0^1 x \, dx",
+        r"\text{rate} = \frac{\Delta P}{P}",
+        r"p(x | y) = \frac{p(y|x)p(x)}{p(y)}",
+    ],
+)
+def test_formula_allowlist_keeps_ordinary_math(formula):
+    from techradar.library.summaries import _math
+
+    assert _math(formula) == formula
+
+
+def test_intervals_still_pass_but_links_do_not():
+    from techradar.library.summaries import _math
+
+    assert _math("x in [0, 1]") == "x in [0, 1]"
+    assert _math("![x](y)") == ""
+    assert _math("[a](b)") == ""
