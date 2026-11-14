@@ -222,3 +222,27 @@ def test_section_path_drops_only_the_chapters_own_heading():
     assert _section_path("Money", ["money"]) == []
     assert _section_path("Money", ["Banks", "Money"]) == ["Banks", "Money"]
     assert _section_path("Money", []) == []
+
+
+@pytest.mark.db
+async def test_chunks_of_a_flagged_doc_are_flagged(index_deps, chapter):
+    # A doc the gateway flagged (or an owner released from quarantine) stays searchable
+    # but its chunks carry the flag, so nothing downstream can use them as facts.
+    async with index_deps.session_factory() as session:
+        doc = await session.get(LibraryDoc, chapter.doc_id)
+        doc.flagged = True
+        await session.commit()
+    assert await index_library_chapter(index_deps, chapter.id) >= 1
+    chunks = await _chunks(index_deps, chapter.id)
+    assert chunks and all(c.flagged is True for c in chunks)
+
+
+@pytest.mark.db
+async def test_reindex_after_flagging_updates_the_flag(index_deps, chapter):
+    await index_library_chapter(index_deps, chapter.id)
+    assert all(c.flagged is False for c in await _chunks(index_deps, chapter.id))
+    async with index_deps.session_factory() as session:
+        (await session.get(LibraryDoc, chapter.doc_id)).flagged = True
+        await session.commit()
+    await index_library_chapter(index_deps, chapter.id)
+    assert all(c.flagged is True for c in await _chunks(index_deps, chapter.id))

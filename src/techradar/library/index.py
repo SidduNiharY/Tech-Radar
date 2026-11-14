@@ -85,6 +85,7 @@ async def index_library_chapter(deps: IndexDeps, chapter_id: int) -> int:
         chapter_title, first_page = chapter.title, chapter.page_start
         text_path = chapter.text_path
         book, exam_tags = doc.title, list(doc.exam_tags or [])
+        flagged = bool(doc.flagged)  # the gateway's (or an owner release's) verdict
 
     text = _read_chapter_text(deps.library_dir, text_path)
     if text is None:
@@ -132,7 +133,7 @@ async def index_library_chapter(deps: IndexDeps, chapter_id: int) -> int:
                     # result.intake.verdict). Library parts keep no verdict: jobs.py does not
                     # store result.intake, and a rejected or quarantined part never becomes
                     # a chapter. So the only source here is the default, False.
-                    flagged=False,
+                    flagged=flagged,
                     source_domains=[],
                     content_hash=content_hash,
                     embedding=embeddings[n] if n < len(embeddings) else None,
