@@ -12,9 +12,11 @@ from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
+from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import Button, enqueue_message
+from techradar.night.window import night_only
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
@@ -322,3 +324,29 @@ async def resume_bulk_job() -> None:
         await session.commit()
     if any(resumed.values()):
         logger.info("bulk resume re-queued parts: %s", resumed)
+
+
+# --- summaries (Phase 2c Task 7) ---------------------------------------------------
+# One lock for all summary jobs: the lock is fixed when the task is declared, so it also
+# holds when `night_only` re-defers a job to the next window. It keeps two runs for the same
+# doc from overlapping (and the single local GPU model busy with one book at a time).
+
+
+@app.task(queue="llm", lock="summarize", name="summarize_chapters_job")
+@night_only(task_name="summarize_chapters_job")
+async def summarize_chapters_job(doc_id: int) -> None:
+    """Summarise a doc's chapters into the vault, then make it ready (night window only)."""
+    settings = _get_settings()
+    roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
+    completer = LiteLLMCompleter(roles, "http://ollama:11434")
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        counts = await summarize_doc(
+            session,
+            completer,
+            doc_id,
+            vault_root=settings.data_dir / "vault",
+            library_dir=settings.data_dir / "library",
+            owner_chat_id=settings.telegram_owner_chat_id,
+        )
+    logger.info("summaries for doc %d: %s", doc_id, counts)

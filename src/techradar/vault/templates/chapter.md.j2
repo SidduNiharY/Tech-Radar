@@ -1,0 +1,28 @@
+---
+{{ front_matter }}---
+
+# {{ title }}
+
+## Key ideas
+
+{% for idea in key_ideas %}
+- {{ idea }}
+{% else %}
+_None._
+{% endfor %}
+
+## Terms
+
+{% for t in terms %}
+- **{{ t.term }}**: {{ t.meaning }}
+{% else %}
+_None._
+{% endfor %}
+
+## Formulas
+
+{% for f in formulas %}
+- ${{ f }}$
+{% else %}
+_None._
+{% endfor %}
