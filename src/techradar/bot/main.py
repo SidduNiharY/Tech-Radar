@@ -9,7 +9,7 @@ import asyncio
 import logging
 from typing import Any
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -22,6 +22,7 @@ from techradar.bot.callbacks import handle_callback_query
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.routing import route_update
 from techradar.db.engine import make_session_factory
+from techradar.library.quarantine import quarantine_listing
 from techradar.logs import configure_logging
 from techradar.messaging.outbox import send_pending
 from techradar.ops.status import (
@@ -70,6 +71,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(reply)
         return
 
+    if routed.action == "quarantine":  # the router allows it from the owner's own chat only
+        session_factory = context.application.bot_data.get("session_factory")
+        if session_factory is None:
+            await update.message.reply_text("Not available yet.")
+            return
+        async with session_factory() as session:
+            text, buttons = await quarantine_listing(session)
+        markup = (
+            InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(b.text, callback_data=b.data) for b in row]
+                    for row in buttons
+                ]
+            )
+            if buttons
+            else None
+        )
+        await update.message.reply_text(text, reply_markup=markup)
+        return
+
     if routed.action == "ask":
         if not routed.arg:
             await update.message.reply_text(
@@ -101,6 +122,10 @@ async def post_init(application: Application) -> None:
     settings = get_settings()
     session_factory = make_session_factory("app", settings)
     application.bot_data["owner_id"] = settings.telegram_owner_chat_id
+    # /quarantine and its buttons (bot/callbacks.py). No release gate: the bot never runs
+    # the Intake Gateway; released library docs are re-gated in the parser sandbox.
+    application.bot_data["session_factory"] = session_factory
+    application.bot_data["quarantine_dir"] = settings.data_dir / "quarantine"
 
     try:
         from procrastinate import App, PsycopgConnector
