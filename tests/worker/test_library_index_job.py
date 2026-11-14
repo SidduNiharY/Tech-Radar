@@ -53,11 +53,11 @@ async def test_index_job_indexes_each_chapter_then_defers_summaries(
     index = AsyncMock(side_effect=[4, 0, 2])
     monkeypatch.setattr(tasks, "index_library_chapter", index)
     defer = AsyncMock()
-    monkeypatch.setattr(tasks.summarize_chapters_job, "defer_async", defer)
+    monkeypatch.setattr(tasks, "_queue_summaries", defer)
     with caplog.at_level("WARNING"):
         await tasks.index_library_chapters_job(doc_id=7)
     assert [c.args[1] for c in index.await_args_list] == [11, 12, 13]
-    defer.assert_awaited_once_with(doc_id=7)
+    defer.assert_awaited_once_with(7)
     assert any("chapter 12 indexed 0 chunks" in r.getMessage() for r in caplog.records)
 
 
@@ -66,10 +66,10 @@ async def test_index_job_with_no_chapters_still_defers_summaries(monkeypatch: py
     index = AsyncMock()
     monkeypatch.setattr(tasks, "index_library_chapter", index)
     defer = AsyncMock()
-    monkeypatch.setattr(tasks.summarize_chapters_job, "defer_async", defer)
+    monkeypatch.setattr(tasks, "_queue_summaries", defer)
     await tasks.index_library_chapters_job(doc_id=7)
     index.assert_not_awaited()
-    defer.assert_awaited_once_with(doc_id=7)
+    defer.assert_awaited_once_with(7)
 
 
 async def test_queue_index_defers_one_locked_job_per_doc(monkeypatch: pytest.MonkeyPatch):
