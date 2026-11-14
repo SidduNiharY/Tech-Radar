@@ -58,6 +58,15 @@ def _read_chapter_text(library_dir: Path, text_path: str) -> str | None:
     return sanitize_text(text) if text.strip() else None
 
 
+def _section_path(chapter_title: str, heading_path: list[str]) -> list[str]:
+    """The headings below the chapter: the chapter's own `# <title>` heading (always the
+    first one in its text) is dropped, so the label reads `Book › Chapter › Section`
+    and not `Book › Chapter › Chapter › Section`."""
+    if heading_path and heading_path[0].strip().casefold() == chapter_title.strip().casefold():
+        return heading_path[1:]
+    return heading_path
+
+
 async def index_library_chapter(deps: IndexDeps, chapter_id: int) -> int:
     """Chunk, embed and store one chapter; returns the chunk count.
 
@@ -89,7 +98,7 @@ async def index_library_chapter(deps: IndexDeps, chapter_id: int) -> int:
         last_page = page
         if not clean:
             continue
-        label = context_label(book, chapter_title, c.heading_path)
+        label = context_label(book, chapter_title, _section_path(chapter_title, c.heading_path))
         rows.append((label, clean, list(c.heading_path), page))
     if not rows:
         logger.warning("library chapter %s has no indexable text; nothing indexed", chapter_id)

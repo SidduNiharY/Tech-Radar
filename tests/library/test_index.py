@@ -127,11 +127,13 @@ async def test_context_label_used_for_embedding_not_text(index_deps, chapter):
     assert n == len(chunks) >= 2
     embedder = index_deps.embedder
     inputs = [t for batch in embedder.calls for t in batch]
-    assert inputs[0].startswith("Indian Economy › Money › ")
+    # The chapter's own "# Money" heading is not repeated in the label.
+    assert inputs[0].startswith("Indian Economy › Money\n\n")
     assert inputs[0] == f"{chunks[0].context_label}\n\n{chunks[0].text}"
     assert not chunks[0].text.startswith("Indian Economy ›")
-    assert chunks[0].context_label == "Indian Economy › Money › Money"
+    assert chunks[0].context_label == "Indian Economy › Money"
     assert "Indian Economy › Money › Banks" in {c.context_label for c in chunks}
+    assert not any("Money › Money" in c.context_label for c in chunks)
 
 
 @pytest.mark.db
@@ -211,3 +213,12 @@ async def test_text_path_outside_library_dir_is_refused(index_deps, chapter, tmp
         await session.commit()
     assert await index_library_chapter(index_deps, chapter.id) == 0
     assert await _chunks(index_deps, chapter.id) == []
+
+
+def test_section_path_drops_only_the_chapters_own_heading():
+    from techradar.library.index import _section_path
+
+    assert _section_path("Money", ["Money", "Banks"]) == ["Banks"]
+    assert _section_path("Money", ["money"]) == []
+    assert _section_path("Money", ["Banks", "Money"]) == ["Banks", "Money"]
+    assert _section_path("Money", []) == []
