@@ -16,8 +16,10 @@ from techradar.db.models import Outbox
 from techradar.library.quarantine import (
     QuarantineRow,
     ReleaseRequests,
+    held_file,
     notify_quarantined,
     remove_held_file,
+    remove_original,
     render_quarantine,
     render_quarantine_notice,
     should_notify,
@@ -229,3 +231,75 @@ def test_delete_refuses_folders_and_the_root(qdir: Path) -> None:
 
 def test_delete_missing_file_outside_is_refused_not_gone(tmp_path: Path, qdir: Path) -> None:
     assert remove_held_file(tmp_path / "nope.pdf", qdir) == "refused"
+
+
+# --- the original of a deleted library doc ------------------------------------------
+
+NAME = "a" * 64 + ".pdf"
+
+
+def _original(tmp_path: Path) -> tuple[Path, Path]:
+    lib = tmp_path / "library"
+    (lib / "originals").mkdir(parents=True)
+    f = lib / "originals" / NAME
+    f.write_bytes(b"%PDF hostile")
+    return lib, f
+
+
+def test_remove_original_deletes_the_file_in_originals(tmp_path: Path) -> None:
+    lib, f = _original(tmp_path)
+    assert remove_original(lib, f"originals/{NAME}") == "deleted"
+    assert not f.exists() and (lib / "originals").is_dir()
+    assert remove_original(lib, f"originals/{NAME}") == "gone"
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        f"../originals/{NAME}",
+        f"originals/../originals/{NAME}",
+        f"/originals/{NAME}",
+        f"text/{NAME}",
+        f"originals/sub/{NAME}",
+        "originals/notes.txt",
+        "originals/..",
+        "originals",
+    ],
+)
+def test_remove_original_refuses_odd_paths(tmp_path: Path, rel: str) -> None:
+    lib, f = _original(tmp_path)
+    assert remove_original(lib, rel) == "refused"
+    assert f.exists()
+
+
+def test_remove_original_never_follows_a_link(tmp_path: Path) -> None:
+    lib, f = _original(tmp_path)
+    f.unlink()
+    precious = tmp_path / "precious.pdf"
+    precious.write_bytes(b"keep")
+    f.symlink_to(precious)
+    assert remove_original(lib, f"originals/{NAME}") == "refused"
+    assert precious.read_bytes() == b"keep" and f.is_symlink()
+
+
+def test_remove_original_refuses_a_linked_originals_folder(tmp_path: Path) -> None:
+    lib = tmp_path / "library"
+    lib.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / NAME).write_bytes(b"keep")
+    (lib / "originals").symlink_to(elsewhere, target_is_directory=True)
+    assert remove_original(lib, f"originals/{NAME}") == "refused"
+    assert (elsewhere / NAME).exists()
+
+
+def test_held_file_finds_the_gateways_copy_only(qdir: Path, tmp_path: Path) -> None:
+    f = _held(qdir)
+    assert held_file(qdir, "1" * 32) == f
+    assert held_file(qdir, "2" * 32) == qdir / ("2" * 32) / "missing"
+    assert held_file(qdir, "../x") == qdir / "missing"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / NAME).write_bytes(b"x")
+    (qdir / ("3" * 32)).symlink_to(outside, target_is_directory=True)
+    assert held_file(qdir, "3" * 32) == qdir / ("3" * 32) / "missing"

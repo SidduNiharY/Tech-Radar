@@ -126,6 +126,7 @@ async def post_init(application: Application) -> None:
     # the Intake Gateway; released library docs are re-gated in the parser sandbox.
     application.bot_data["session_factory"] = session_factory
     application.bot_data["quarantine_dir"] = settings.data_dir / "quarantine"
+    application.bot_data["library_dir"] = settings.data_dir / "library"
 
     try:
         from procrastinate import App, PsycopgConnector

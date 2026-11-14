@@ -158,3 +158,20 @@ async def test_retention_never_touches_library(deps: PipelineDeps):
     r = await cleanup_retention(deps, datetime.now(UTC))
     assert book.exists() and book.read_bytes() == b"%PDF-1.7 a book"
     assert r["raw"] == 0 and r["clean"] == 0 and r["quarantine"] == 0
+
+
+def test_safe_unlink_is_not_fooled_by_a_sibling_folder_with_the_same_prefix(tmp_path: Path):
+    from techradar.pipeline.retention import _safe_unlink
+
+    root = tmp_path / "quarantine"
+    root.mkdir()
+    sibling = tmp_path / "quarantine-evil"
+    sibling.mkdir()
+    victim = sibling / "book.pdf"
+    victim.write_bytes(b"keep")
+    assert _safe_unlink(victim, {root.resolve()}) is False
+    assert victim.exists()
+    inside = root / "x.pdf"
+    inside.write_bytes(b"held")
+    assert _safe_unlink(inside, {root.resolve()}) is True
+    assert not inside.exists()

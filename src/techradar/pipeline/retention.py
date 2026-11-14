@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 def _safe_unlink(p: Path, allowed_roots: set[Path]) -> bool:
     """Synchronously unlink file if it resides safely within allowed directories."""
     resolved = p.resolve()
-    if any(str(resolved).startswith(str(root)) for root in allowed_roots):
+    # Path containment, not a string prefix: /data/quarantine-x is not inside /data/quarantine.
+    if any(resolved.is_relative_to(root.resolve()) for root in allowed_roots):
         if p.exists() and p.is_file():
             p.unlink(missing_ok=True)
             return True

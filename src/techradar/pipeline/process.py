@@ -14,7 +14,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Fact, FactSource, IntakeLog, Item, Note, QuarantineItem, RawItem
-from techradar.library.quarantine import notify_quarantined, should_notify
+from techradar.library.quarantine import held_file, notify_quarantined, should_notify
 from techradar.llm.client import Completer, Embedder
 from techradar.pipeline.filter import assign_cluster, profile_texts, relevance
 from techradar.pipeline.reader import build_reader_graph, read_item
@@ -93,11 +93,14 @@ async def collect_results(deps: PipelineDeps) -> dict[str, int]:
 
             # Handle non-ok parse statuses
             if result.status == "quarantined":
-                origin = "fetch"  # news results come from the fetcher (no origin in results)
+                # News results come from the fetcher: a ParseResult carries no origin, so
+                # "fetch" is the only one this collector can know (no notice for it).
+                origin = "fetch"
                 q_item = QuarantineItem(
                     job_id=result.job_id,
                     origin=origin,
-                    path=str(rpath),
+                    # the gateway's held copy, not this result file (it is removed below)
+                    path=str(held_file(deps.settings.data_dir / "quarantine", result.job_id)),
                     reasons=result.intake.reasons if result.intake else ["quarantined"],
                 )
                 session.add(q_item)

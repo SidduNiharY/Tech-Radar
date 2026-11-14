@@ -271,3 +271,42 @@ async def test_quarantined_owner_upload_gets_notice(fake_deps: PipelineDeps, mon
         "Use /quarantine to release or delete it."
     ]
     assert notices[0].chat_id == fake_deps.settings.telegram_owner_chat_id
+
+
+def _held(fake_deps: PipelineDeps, name: str) -> Path:
+    folder = fake_deps.settings.data_dir / "quarantine" / ("c" * 32)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / name
+
+
+@pytest.mark.asyncio
+async def test_quarantined_news_item_points_at_the_held_file(fake_deps: PipelineDeps):
+    """The row names the gateway's held copy (so /quarantine delete works), not the result
+    JSON that is removed right after."""
+    from techradar.db.models import QuarantineItem
+
+    held = _held(fake_deps, "d" * 64 + ".pdf")
+    held.write_bytes(b"%PDF held")
+    _quarantined_result(fake_deps)
+    await collect_results(fake_deps)
+    [item] = [a for a in await _added(fake_deps) if isinstance(a, QuarantineItem)]
+    assert item.path == str(held)
+    assert not (fake_deps.clean_dir / f"{'c' * 32}.result.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_quarantined_news_item_never_points_at_a_planted_link(
+    fake_deps: PipelineDeps, tmp_path: Path
+):
+    from techradar.db.models import QuarantineItem
+
+    precious = tmp_path / "precious.pdf"
+    precious.write_bytes(b"mine")
+    _held(fake_deps, "d" * 64 + ".pdf").symlink_to(precious)
+    _held(fake_deps, "notes.txt").write_text("odd name")
+    _quarantined_result(fake_deps)
+    await collect_results(fake_deps)
+    [item] = [a for a in await _added(fake_deps) if isinstance(a, QuarantineItem)]
+    qdir = fake_deps.settings.data_dir / "quarantine"
+    assert item.path == str(qdir / ("c" * 32) / "missing")
+    assert not item.path.endswith(".result.json")

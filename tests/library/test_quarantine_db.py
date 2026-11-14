@@ -360,6 +360,36 @@ async def test_delete_item_removes_file_and_is_idempotent(
     assert await delete_item(session, -1, quarantine_dir=qdir, now=NOW) == "not_found"
 
 
+async def test_delete_of_a_held_library_doc_removes_its_original(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    original = lib / doc.original_path
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"macro docx")
+    outcome = await delete_item(session, item.id, quarantine_dir=qdir, library_dir=lib, now=NOW)
+    assert outcome == "deleted"
+    assert not _exists(original) and not _exists(Path(item.path))
+
+
+async def test_delete_keeps_the_original_of_a_doc_that_is_not_held(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    doc.status = "processing"  # e.g. another copy of it is being read
+    await session.flush()
+    original = lib / doc.original_path
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"book")
+    assert (
+        await delete_item(session, item.id, quarantine_dir=qdir, library_dir=lib, now=NOW)
+        == "deleted"
+    )
+    assert _exists(original)
+
+
 async def test_delete_item_refuses_path_outside_quarantine(
     session: AsyncSession, tmp_path: Path
 ) -> None:

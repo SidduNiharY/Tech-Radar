@@ -30,6 +30,7 @@ The release path decides whether a hostile file gets processed, so every step fa
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import re
 import stat
@@ -46,6 +47,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from techradar.db.models import Chunk, LibraryChapter, LibraryDoc, LibraryPart, QuarantineItem
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.schemas.pipeline import ParseResult
+
+logger = logging.getLogger(__name__)
 
 NOTICE_ORIGINS = frozenset({"telegram", "library", "pack"})
 RELEASE_WINDOW = timedelta(seconds=60)
@@ -378,6 +381,38 @@ async def doc_flagged(session: AsyncSession, doc_id: int) -> bool:
 # --- hold (for the library job collector) ---------------------------------------
 
 
+_RAW_NAME = re.compile(
+    r"[0-9a-f]{64}\.(xml|html|pdf|md|docx|epub|mp4|mkv|webm|mov|mp3|m4a|wav|ogg|png|jpg|jpeg)"
+)
+
+
+def held_file(quarantine_dir: Path, job_id: str) -> Path:
+    """The gateway's held copy of a job: the one regular file `<sha256>.<ext>` in
+    `quarantine/<job_id>/` (gateway.quarantine_file). The parser can write there, so links
+    (the folder or the file) are never followed. Nothing found gives
+    `quarantine/<job_id>/missing`, which a delete reports as already gone.
+    """
+    folder = quarantine_dir / job_id
+    fallback = folder / "missing"
+    if re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+        return quarantine_dir / "missing"
+    try:
+        fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return fallback
+    try:
+        names = sorted(
+            e.name
+            for e in os.scandir(fd)
+            if _RAW_NAME.fullmatch(e.name) and e.is_file(follow_symlinks=False)
+        )
+    except OSError:
+        return fallback
+    finally:
+        os.close(fd)
+    return folder / names[0] if len(names) == 1 else fallback
+
+
 async def hold_library_doc(
     session: AsyncSession,
     doc: LibraryDoc,
@@ -454,10 +489,56 @@ def remove_held_file(path: Path, quarantine_dir: Path) -> FileOutcome:
     return "deleted"
 
 
+def remove_original(library_dir: Path, original_path: str) -> FileOutcome:
+    """Delete a library doc's original: only `originals/<sha256>.<ext>`, a regular file.
+
+    The stored path must be exactly that shape (no `..`, no sub-folder); `originals` is
+    opened with O_NOFOLLOW and the file is checked with lstat, so no link is followed.
+    """
+    rel = Path(original_path)
+    if rel.is_absolute() or len(rel.parts) != 2 or rel.parts[0] != "originals":
+        return "refused"
+    name = rel.parts[1]
+    if _RAW_NAME.fullmatch(name) is None:
+        return "refused"
+    try:
+        lib_fd = os.open(library_dir, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return "refused"
+    try:
+        fd = os.open("originals", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=lib_fd)
+    except OSError:
+        return "refused"
+    finally:
+        os.close(lib_fd)
+    try:
+        try:
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return "gone"
+        if not stat.S_ISREG(st.st_mode):
+            return "refused"
+        os.unlink(name, dir_fd=fd)
+    except OSError:
+        return "refused"
+    finally:
+        os.close(fd)
+    return "deleted"
+
+
 async def delete_item(
-    session: AsyncSession, item_id: int, *, quarantine_dir: Path, now: datetime
+    session: AsyncSession,
+    item_id: int,
+    *,
+    quarantine_dir: Path,
+    now: datetime,
+    library_dir: Path | None = None,
 ) -> DeleteOutcome:
-    """`qdel:<id>`: delete the held file and mark the row deleted. Flushes only."""
+    """`qdel:<id>`: delete the held file and mark the row deleted. Flushes only.
+
+    With `library_dir`, a held library doc (still `quarantined`) also loses its original in
+    `library/originals` (nothing of it stays to be read again).
+    """
     item = (
         await session.execute(
             select(QuarantineItem)
@@ -471,6 +552,12 @@ async def delete_item(
         return "already"
     if remove_held_file(Path(item.path), quarantine_dir) == "refused":
         return "refused"
+    if library_dir is not None:
+        doc = await _library_doc(session, item)
+        if doc is not None and doc.status == "quarantined":
+            gone = remove_original(library_dir, doc.original_path)
+            if gone == "refused":
+                logger.warning("original of held doc %s was not deleted (refused)", doc.id)
     item.deleted_at = now
     await session.flush()
     return "deleted"
