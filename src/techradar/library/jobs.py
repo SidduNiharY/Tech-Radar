@@ -35,16 +35,24 @@ defers the summaries; Task 7 sets `ready`.
 
 Video/audio (Task 5) work like PDFs: a probe (duration), then one `media` job per 600 s segment
 (a `library_parts` row with ts_start/ts_end). Each segment result is validated strictly
-(media_results.py); its audio file path goes into `result_path` and its slides are merged into
-`media/<doc_id>/slides.json`. When all segments settled the doc becomes
+(media_results.py); its audio file path goes into `result_path` and its slides are written to
+`text/<doc_id>/slides/<ordinal>.json`, merged into `text/<doc_id>/slides.json` when all segments
+settled. When all segments settled the doc becomes
 `awaiting_transcription` (transcripts come with phase 6), the original video is deleted unless
 `keep_media`, and the owner gets one message. A probe without an audio track fails the doc.
+
+The media tree is hostile
+-------------------------
+The sandboxed parser runs as the same uid and can write under `media/`. So the worker keeps
+everything it writes (slides, records, texts) outside `media/`, opens every folder on the
+way with O_NOFOLLOW (a symlink is refused, never followed), writes files under random temp
+names with O_EXCL|O_NOFOLLOW, and accepts a segment's audio file only if it is a regular
+file with one link, not empty and under MAX_AUDIO_BYTES. Nothing is read from `media/`.
 """
 
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import os
 import re
@@ -57,7 +65,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,6 +108,8 @@ _PAGE_MARKER = re.compile(r"^<!-- page (\d+) -->$")
 _H1 = re.compile(r"^# +(\S.*)$")
 _EPUB_CHAPTER = re.compile(r"^<!-- chapter \d+: (.*?) -->$")
 _JOB_ID = re.compile(r"[0-9a-f]{32}")
+MAX_AUDIO_BYTES = 200 * 1024 * 1024  # a 600 s segment of FLAC is far smaller
+_SLIDES = TypeAdapter(list[Slide])
 _FULL_KIND = {"docx": "docx", "epub": "epub", "html": "page"}
 # Only transient failures are worth another try: a file that is too large or of a type the
 # parser does not support fails the same way every time.
@@ -184,17 +194,73 @@ def _records_dir(library_dir: Path) -> Path:
     return library_dir / "jobs"
 
 
-def _atomic_write(path: Path, data: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(data)
-    os.replace(tmp, path)
+def _tmp_token() -> str:
+    return uuid.uuid4().hex
+
+
+def _open_dir(root: Path, parts: Sequence[str], *, create: bool) -> int:
+    """A descriptor of root/parts[0]/parts[1]/..., each opened with O_NOFOLLOW.
+
+    `root` (the library volume) is trusted; any folder below it that is a symlink makes the
+    open fail (never followed). With `create`, missing folders are made (0o750).
+    """
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts:
+            if part in ("", ".", "..") or "/" in part:
+                raise ValueError(f"bad path component {part!r}")
+            if create:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(part, 0o750, dir_fd=fd)
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _rel_parts(path: Path, root: Path) -> tuple[str, ...]:
+    parts = path.relative_to(root).parts  # ValueError when outside root
+    if not parts or any(p in ("", ".", "..") for p in parts):
+        raise ValueError(f"{path} is not a file inside {root}")
+    return parts
+
+
+def _atomic_write(path: Path, data: str, *, root: Path) -> None:
+    """Write `path` (inside `root`) atomically, mode 0o640, never following a symlink.
+
+    Folders are opened with O_NOFOLLOW, the temp file has a random name and is created with
+    O_EXCL|O_NOFOLLOW (a planted file or link there makes the write fail), its mode is set on
+    the descriptor, and the rename replaces whatever is at the target name (a symlink there is
+    replaced, not followed).
+    """
+    parts = _rel_parts(path, root)
+    dfd = _open_dir(root, parts[:-1], create=True)
+    try:
+        name = parts[-1]
+        tmp = f".{name}.{_tmp_token()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640, dir_fd=dfd)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                os.fchmod(f.fileno(), 0o640)
+                f.write(data)
+            os.replace(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp, dir_fd=dfd)
+            raise
+    finally:
+        os.close(dfd)
 
 
 def _write_record(library_dir: Path, job_id: str, rec: JobRecord) -> None:
-    _atomic_write(_records_dir(library_dir) / f"{job_id}.json", rec.model_dump_json())
+    _atomic_write(
+        _records_dir(library_dir) / f"{job_id}.json", rec.model_dump_json(), root=library_dir
+    )
 
 
 def _read_record(library_dir: Path, job_id: str) -> JobRecord | None:
@@ -588,9 +654,8 @@ def _remove_doc_files(library_dir: Path, doc_id: int) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _save_text(path: Path, text: str) -> None:
-    _atomic_write(path, text)
-    path.chmod(0o640)
+def _save_text(library_dir: Path, path: Path, text: str) -> None:
+    _atomic_write(path, text, root=library_dir)
 
 
 # --- handlers (PDF, whole documents) ----------------------------------------------
@@ -619,7 +684,7 @@ async def _handle_probe(
         logger.warning("doc %s: unusable probe (%d problems)", doc.id, exc.error_count())
         doc.status = "failed"
         return
-    _save_text(_text_dir(library_dir, doc.id) / "probe.json", probe.model_dump_json())
+    _save_text(library_dir, _text_dir(library_dir, doc.id) / "probe.json", probe.model_dump_json())
     doc.pages = probe.n_pages
     parts = [
         LibraryPart(
@@ -657,7 +722,11 @@ async def _handle_part(
     if result.status in ("ok", "empty"):
         path = _text_dir(library_dir, doc.id) / "parts" / f"{part.ordinal}.md"
         text = result.doc.text if result.doc else ""
-        _save_text(path, _with_truncation_note(text, bool(result.doc and result.doc.truncated)))
+        _save_text(
+            library_dir,
+            path,
+            _with_truncation_note(text, bool(result.doc and result.doc.truncated)),
+        )
         part.result_path = path.relative_to(library_dir).as_posix()
         part.status = "done"
     else:
@@ -718,17 +787,58 @@ async def _handle_full(
 # --- media (video, audio) -------------------------------------------------------
 
 
-def _merge_slides(library_dir: Path, doc_id: int, slides: list[Slide]) -> None:
-    """Append slides to media/<doc_id>/slides.json, kept sorted by ts_s, written atomically."""
-    path = _media_dir(library_dir, doc_id) / "slides.json"
-    existing: list[dict] = []
-    with contextlib.suppress(OSError, ValueError):
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(loaded, list):
-            existing = [x for x in loaded if isinstance(x, dict)]
-    merged = existing + [s.model_dump() for s in slides]
-    merged.sort(key=lambda x: float(x.get("ts_s", 0)))
-    _save_text(path, json.dumps(merged))
+def _slides_dir(library_dir: Path, doc_id: int) -> Path:
+    return _text_dir(library_dir, doc_id) / "slides"
+
+
+def _save_segment_slides(library_dir: Path, doc_id: int, ordinal: int, slides: list[Slide]) -> None:
+    """One file per segment, replaced (never appended) when a segment is applied again."""
+    path = _slides_dir(library_dir, doc_id) / f"{ordinal}.json"
+    _save_text(library_dir, path, _SLIDES.dump_json(slides).decode())
+
+
+def _merge_slides(library_dir: Path, doc_id: int, ordinals: Sequence[int]) -> None:
+    """text/<doc_id>/slides.json from the segment files of `ordinals`: validated, sorted by
+    time, each (ts_s, text) once. A missing or invalid segment file adds nothing."""
+    seen: set[tuple[float, str]] = set()
+    merged: list[Slide] = []
+    for ordinal in sorted(set(ordinals)):
+        path = _slides_dir(library_dir, doc_id) / f"{int(ordinal)}.json"
+        try:
+            slides = _SLIDES.validate_json(path.read_bytes())
+        except OSError, ValidationError:
+            continue
+        for slide in slides:
+            key = (slide.ts_s, slide.text)
+            if key not in seen:
+                seen.add(key)
+                merged.append(slide)
+    merged.sort(key=lambda sl: sl.ts_s)
+    _save_text(
+        library_dir,
+        _text_dir(library_dir, doc_id) / "slides.json",
+        _SLIDES.dump_json(merged).decode(),
+    )
+
+
+def _audio_ok(library_dir: Path, doc_id: int, audio_file: str) -> bool:
+    """The parser's audio file for a segment: a regular file, one link, 0 < size <= cap.
+
+    `audio_file` is already validated (`audio/seg-NNNNN.flac`). Every folder on the way is
+    opened with O_NOFOLLOW and the file is looked at with lstat, so no link is followed.
+    """
+    folder, _, name = audio_file.partition("/")
+    try:
+        dfd = _open_dir(library_dir, ("media", str(doc_id), folder), create=False)
+    except OSError, ValueError:
+        return False
+    try:
+        st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+    except OSError:
+        return False
+    finally:
+        os.close(dfd)
+    return stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and 0 < st.st_size <= MAX_AUDIO_BYTES
 
 
 def _delete_original(library_dir: Path, doc: LibraryDoc) -> None:
@@ -770,10 +880,13 @@ async def _handle_media(
             if result.doc and part.ts_start is not None and part.ts_end is not None
             else None
         )
+        if seg is not None and not _audio_ok(library_dir, doc.id, seg.audio_file):
+            logger.warning("doc %s segment %s: audio file refused", doc.id, part.ordinal)
+            seg = None
         if seg is None:
             status = "error"  # untrusted output that breaks the contract
     if seg is not None:
-        _merge_slides(library_dir, doc.id, seg.slides)
+        _save_segment_slides(library_dir, doc.id, part.ordinal, seg.slides)
         part.result_path = f"media/{doc.id}/{seg.audio_file}"
         part.status = "done"
     else:
@@ -827,16 +940,18 @@ async def _handle_media_probe(
 async def _finish_media_if_settled(
     session: AsyncSession, doc: LibraryDoc, library_dir: Path, owner_chat_id: int | None
 ) -> None:
-    statuses = (
-        (await session.execute(select(LibraryPart.status).where(LibraryPart.doc_id == doc.id)))
-        .scalars()
-        .all()
-    )
+    rows = (
+        await session.execute(
+            select(LibraryPart.ordinal, LibraryPart.status).where(LibraryPart.doc_id == doc.id)
+        )
+    ).all()
+    statuses = [status for _ordinal, status in rows]
     if not statuses or "pending" in statuses:
         return
     if "done" not in statuses:
         doc.status = "failed"
         return
+    _merge_slides(library_dir, doc.id, [o for o, status in rows if status == "done"])
     doc.status = "awaiting_transcription"
     _delete_original(library_dir, doc)
     await _tell_owner(

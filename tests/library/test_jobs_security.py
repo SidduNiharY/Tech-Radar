@@ -146,7 +146,7 @@ async def test_media_segment_without_intake_flags_the_doc(tmp_path: Path):
         doc=CleanDoc(url="library:1", title="t", text=json.dumps(seg), lang="en"),
     )  # fmt: skip
     (clean / f"{jid}.result.json").write_text(res.model_dump_json(), encoding="utf-8")
-    session = _Recording({(LibraryDoc, 1): doc, (LibraryPart, 4): part}, rows=["done"])
+    session = _Recording({(LibraryDoc, 1): doc, (LibraryPart, 4): part}, rows=[(0, "done")])
     await collect_bulk_results(
         session,  # type: ignore[arg-type]
         clean_dir=clean, jobs_dir=jobs, library_dir=lib, part_pages=5,

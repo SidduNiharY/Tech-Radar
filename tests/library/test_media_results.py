@@ -169,8 +169,16 @@ async def _probed(session: AsyncSession, d: Dirs, kind: str, keep: bool) -> Libr
     return doc
 
 
+def _audio(d: Dirs, doc_id: int, part: LibraryPart) -> None:
+    """The parser's audio file for a segment (the collector checks it exists)."""
+    path = d.lib / "media" / str(doc_id) / f"audio/seg-{int(part.ts_start or 0):05d}.flac"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"fLaC audio")
+
+
 async def _finish_all(session: AsyncSession, d: Dirs, doc: LibraryDoc) -> None:
     for p in await _parts(session, doc.id):
+        _audio(d, doc.id, p)
         _result(d, p.job_id or "", "ok", "media", _seg_ok(p))
     await _collect(session, d)
     await session.refresh(doc)
@@ -220,7 +228,7 @@ async def test_media_result_awaits_transcription(session, media_result, dirs):
         (2, 1200.0, 1300.0, "done"),
     ]
     assert parts[1].result_path == f"media/{doc.id}/audio/seg-00600.flac"
-    slides = json.loads((dirs.lib / "media" / str(doc.id) / "slides.json").read_text())
+    slides = json.loads((dirs.lib / "text" / str(doc.id) / "slides.json").read_text())
     assert [s["ts_s"] for s in slides] == [0.0, 600.0, 1200.0]
 
 
