@@ -8,7 +8,7 @@ SHELL_SCRIPTS := $(shell git ls-files '*.sh')
 # Images built from this repo that Trivy scans (gate-1).
 IMAGES := techradar-bot techradar-migrate techradar-postgres
 
-.PHONY: all lint format test test-db test-egress security security-images simulate-1 simulate-2 guard-eval redteam-live gate-1-mac gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4 gate-5
+.PHONY: all lint format test test-db test-egress security security-images simulate-1 simulate-2 simulate-2c fixtures-2c guard-eval redteam-live gate-1-mac gate-1 gate-2 rag-eval gate-2b gate-2c gate-3 gate-4 gate-5
 
 all: lint test security
 
@@ -94,10 +94,28 @@ gate-2b: gate-2
 	$(MAKE) rag-eval
 	@echo "GATE 2b: automated checks passed. Sign docs/security/gates.md."
 
+# Library attacks in the parser image (--network none), on a temp folder only.
+simulate-2c:
+	bash security/simulate/phase2c.sh
+
+# The 300-page test book (git-ignored); the simulation builds its own copy.
+fixtures-2c:
+	$(UV_RUN) python scripts/make_big_pdf.py
+
+# gate-2b already ran rag-eval (book evals included; see evals/rag/run.py) and
+# the db tests. The internet stage is printed as WAITING, never counted as passed.
 gate-2c: gate-2b
 	$(UV_RUN) lint-imports
-	$(UV_RUN) pytest tests/library tests/rag/test_scoped_ask.py -v
-	@echo "GATE 2c: automated checks passed. Sign docs/security/gates.md."
+	$(UV_RUN) pytest tests/library tests/intake tests/night tests/ops tests/parser tests/pipeline tests/evals tests/rag/test_retrieve_scope.py -v
+	TR_DB_TESTS_MAY_WIPE=1 $(UV_RUN) pytest -m db tests/library tests/intake tests/parser tests/rag tests/evals -v
+	$(UV_RUN) pytest -m slow tests/library tests/intake tests/parser tests/security/test_gate_2c.py -v
+	$(MAKE) simulate-2c
+	$(UV_RUN) pytest tests/security/test_compose_policy.py tests/security/test_falco_rules.py tests/security/test_falco_names.py tests/security/test_gate_2c.py -v
+	@echo "WAITING: internet stage: Telegram Ready message and notices (needs the bot online)"
+	@echo "WAITING: internet stage: real chapter summaries and book-eval recall@5 >= 0.80 with real models (rag-eval above says if it ran in mock mode)"
+	@echo "WAITING: internet stage: starter-pack downloads through Squid"
+	@echo "WAITING: owner: real book and lecture video in the Library folder (plan Task 11 step 2)"
+	@echo "GATE 2c: automated checks passed; the WAITING items above are not. Sign docs/security/gates.md only when they pass."
 
 gate-3: gate-2c
 	$(UV_RUN) pytest tests/briefing tests/practice tests/exams/test_watcher.py tests/bot -v
