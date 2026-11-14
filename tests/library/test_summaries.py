@@ -410,3 +410,118 @@ def test_intervals_still_pass_but_links_do_not():
     assert _math("x in [0, 1]") == "x in [0, 1]"
     assert _math("![x](y)") == ""
     assert _math("[a](b)") == ""
+
+
+# --- partial Ready message, attempts file, note removal, nothing-to-index (review fixes) ---
+
+
+def test_render_ready_partial_exact():
+    from techradar.library.summaries import render_ready_partial
+
+    assert render_ready_partial("Operating Systems", 10, 12) == (
+        "Ready: Operating Systems · 10 of 12 chapters summarised, summaries in your vault. "
+        "Reply to this message with a question to ask this book."
+    )
+
+
+def test_render_ready_partial_cleans_title_and_handles_zero():
+    from techradar.library.summaries import render_ready_partial
+
+    out = render_ready_partial("Bad\x00\ntitle\x07‮!", 0, 4)
+    assert out.startswith("Ready: Bad title! · 0 of 4 chapters summarised")
+    assert "summaries in your vault" not in out  # nothing was summarised
+    assert "Reply to this message with a question to ask this book." in out
+    assert render_ready_partial("T" * 500, 1, 2).startswith("Ready: " + "T" * 120 + " · ")
+
+
+def test_attempts_file_counts_and_survives_garbage(tmp_path):
+    from techradar.library.summaries import clear_attempts, read_attempts, record_attempt
+
+    assert read_attempts(tmp_path, 5) == 0
+    assert record_attempt(tmp_path, 5) == 1
+    assert record_attempt(tmp_path, 5) == 2
+    assert read_attempts(tmp_path, 5) == 2
+    assert read_attempts(tmp_path, 6) == 0  # per chapter
+    assert (tmp_path / "summ_attempts" / "5.json").is_file()
+    (tmp_path / "summ_attempts" / "7.json").write_text("not json", encoding="utf-8")
+    assert read_attempts(tmp_path, 7) == 0
+    (tmp_path / "summ_attempts" / "8.json").write_text('{"attempts": -3}', encoding="utf-8")
+    assert read_attempts(tmp_path, 8) == 0
+    clear_attempts(tmp_path, 5)
+    clear_attempts(tmp_path, 5)  # twice is fine
+    assert read_attempts(tmp_path, 5) == 0
+
+
+def test_remove_notes_only_inside_the_vault_library(tmp_path):
+    from techradar.library.summaries import remove_notes
+
+    vault = tmp_path / "vault"
+    note = vault / "library" / "b-1" / "01-x.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("x", encoding="utf-8")
+    other = vault / "inbox" / "keep.md"
+    other.parent.mkdir(parents=True)
+    other.write_text("keep", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("keep", encoding="utf-8")
+    removed = remove_notes(
+        vault,
+        [
+            "library/b-1/01-x.md",
+            "library/b-1/missing.md",  # already gone: fine
+            "inbox/keep.md",  # not under library/
+            "library/../../outside.md",  # traversal
+            "/etc/passwd",
+            "",
+        ],
+    )
+    assert removed == 1
+    assert not note.exists()
+    assert other.exists() and outside.exists()
+
+
+def test_remove_notes_never_follows_a_symlink(tmp_path):
+    from techradar.library.summaries import remove_notes
+
+    vault = tmp_path / "vault"
+    (vault / "library").mkdir(parents=True)
+    target = tmp_path / "target.md"
+    target.write_text("keep", encoding="utf-8")
+    (vault / "library" / "link.md").symlink_to(target)
+    real = tmp_path / "realdir"
+    real.mkdir()
+    (real / "n.md").write_text("keep", encoding="utf-8")
+    (vault / "library" / "dirlink").symlink_to(real, target_is_directory=True)
+    assert remove_notes(vault, ["library/link.md", "library/dirlink/n.md"]) == 0
+    assert target.exists() and (real / "n.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "missing", "text", "expected"),
+    [
+        (10, 12, [10, 11, 12], "words", True),  # every page is missing
+        (10, 12, [10, 12], "words", False),  # one page is there
+        (10, 12, [], "words", False),
+        (10, 12, [], "", True),  # empty text
+        (10, 12, [], "   \n", True),
+        (None, None, [], None, True),  # unreadable text file
+        (None, None, [], "words", False),
+        (5, 1, [], "words", False),  # nonsense page range is not "all missing"
+        (1, 10**9, [1, 2, 3], "words", False),  # huge range stays cheap
+    ],
+)
+def test_nothing_to_index(start, end, missing, text, expected):
+    from techradar.library.summaries import nothing_to_index
+
+    assert nothing_to_index(start, end, missing, text) is expected
+
+
+def test_flagged_is_read_from_the_column_not_with_getattr():
+    from pathlib import Path
+
+    from techradar.db.models import LibraryDoc
+
+    assert "flagged" in LibraryDoc.__table__.columns
+    base = Path(__file__).parents[2] / "src" / "techradar" / "library"
+    for name in ("summaries.py", "evals.py"):
+        assert 'getattr(doc, "flagged"' not in (base / name).read_text(encoding="utf-8")

@@ -101,12 +101,16 @@ async def make_book_evals(
 ) -> int:
     """Store up to n question/chunk pairs for the doc; returns how many were stored.
 
-    Does nothing (returns 0) when the doc is flagged, is missing, or already has evals.
-    Chunks the model cannot write a valid question for are skipped, so fewer than n can be
-    stored.
+    Does nothing (returns 0) when the doc is flagged, is missing, or already has evals. When
+    a re-index deleted the doc's evals (their chunk ids went stale with the old chunks), the
+    next call makes them again. Chunks the model cannot write a valid question for are
+    skipped, so fewer than n can be stored.
     """
-    doc = await session.get(LibraryDoc, doc_id)
-    if doc is None or getattr(doc, "flagged", False):
+    # the flagged filter is in SQL, so a doc whose flag cannot be read is never used
+    usable = await session.scalar(
+        select(LibraryDoc.id).where(LibraryDoc.id == doc_id, LibraryDoc.flagged.is_(False))
+    )
+    if usable is None:
         return 0
     have = await session.scalar(
         select(func.count()).select_from(BookEval).where(BookEval.doc_id == doc_id)

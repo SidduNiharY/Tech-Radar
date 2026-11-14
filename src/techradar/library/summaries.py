@@ -10,9 +10,12 @@ SEC: SEC-37, SEC-38, SEC-41, SEC-42.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
-from collections.abc import Mapping, Sequence
+import secrets
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -21,8 +24,9 @@ from typing import Annotated
 import jinja2
 import yaml
 from pydantic import AfterValidator, BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from techradar.db.models import Chunk, LibraryChapter, LibraryDoc
 from techradar.library.evals import make_book_evals, pick_spread
@@ -47,6 +51,9 @@ SUMMARY_MAX_TOKENS = 2500
 # answer (SUMMARY_MAX_TOKENS) and a margin. Too long a prompt is cut by Ollama from the start,
 # which would drop the system prompt and the opening UNTRUSTED marker.
 SUMMARY_EXCERPT_TOKENS = 4500
+# A chapter the model could not summarise safely is tried once per night run; after this many
+# tries it is given up, so one bad chapter cannot keep a whole book from becoming ready.
+MAX_ATTEMPTS = 3
 
 SUMMARY_SYSTEM = (
     "You write a short study summary of one book chapter for a personal study app, using only "
@@ -378,6 +385,17 @@ def render_ready(title: str, n_chapters: int) -> str:
     )
 
 
+def render_ready_partial(title: str, done: int, total: int) -> str:
+    """The Ready message when some chapters were given up: it says the real count.
+
+    `render_ready` stays the exact message for the all-chapters case.
+    """
+    clean = one_line(title)[:READY_TITLE_CHARS]
+    head = f"Ready: {clean} · {done} of {total} chapters summarised"
+    vault = ", summaries in your vault" if done > 0 else ""  # nothing to point at otherwise
+    return f"{head}{vault}. Reply to this message with a question to ask this book."
+
+
 def chapters_button(doc_id: int) -> Button:
     """The `Chapters` button of the Ready message (callback data `chap:<doc_id>`)."""
     return Button(text="Chapters", data=f"chap:{doc_id}")
@@ -397,6 +415,144 @@ def _read_chapter_text(library_dir: Path, text_path: str) -> str | None:
         return None
 
 
+# Attempts per chapter live in `<library dir>/summ_attempts/<chapter id>.json`, as
+# {"attempts": n}. The table has no column for it and the job may not add one. A file is the
+# simplest thing that survives a restart; it is written BEFORE the model is called, so a
+# chapter that crashes the worker is counted too. A missing or unreadable file means 0.
+
+
+def _attempts_path(library_dir: Path, chapter_id: int) -> Path:
+    return library_dir / "summ_attempts" / f"{int(chapter_id)}.json"
+
+
+def read_attempts(library_dir: Path, chapter_id: int) -> int:
+    """How many times this chapter was tried; 0 when there is no (readable) record."""
+    try:
+        n = json.loads(_attempts_path(library_dir, chapter_id).read_text(encoding="utf-8"))[
+            "attempts"
+        ]
+    except OSError, ValueError, KeyError, TypeError:
+        return 0
+    return n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
+
+
+def _write_attempts(library_dir: Path, chapter_id: int, n: int) -> None:
+    path = _attempts_path(library_dir, chapter_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{secrets.token_hex(4)}.tmp")
+    tmp.write_text(json.dumps({"attempts": n}), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def record_attempt(library_dir: Path, chapter_id: int) -> int:
+    """Count one more try of the chapter and return the new count."""
+    n = read_attempts(library_dir, chapter_id) + 1
+    _write_attempts(library_dir, chapter_id, n)
+    return n
+
+
+def clear_attempts(library_dir: Path, chapter_id: int) -> None:
+    """Forget the chapter's attempts (it has a summary now)."""
+    _attempts_path(library_dir, chapter_id).unlink(missing_ok=True)
+
+
+def nothing_to_index(
+    page_start: int | None,
+    page_end: int | None,
+    missing_pages: Sequence[int],
+    text: str | None,
+) -> bool:
+    """True when the chapter legitimately has no chunks: it can never be indexed.
+
+    That is: every page of it is in `missing_pages` (the parser could not read it), or its
+    text is empty or could not be read. Such a chapter must not hold the whole book back.
+    """
+    if page_start is not None and page_end is not None and page_end >= page_start:
+        inside = {p for p in missing_pages if page_start <= p <= page_end}
+        if len(inside) == page_end - page_start + 1:
+            return True
+    return text is None or not text.strip()
+
+
+def remove_notes(vault_root: Path, rel_paths: Iterable[str]) -> int:
+    """Delete summary notes by their vault-relative paths; returns how many were deleted.
+
+    Only `library/...` Markdown files inside the vault are touched, and never through a
+    symlink (a tampered `summary_path` cannot delete anything else). A note that is already
+    gone is fine.
+    """
+    root = vault_root.resolve()
+    removed = 0
+    for rel in rel_paths:
+        pure = PurePosixPath(rel)
+        if (
+            not rel
+            or pure.is_absolute()
+            or ".." in pure.parts
+            or pure.parts[0] != "library"
+            or pure.suffix != ".md"
+        ):
+            continue
+        dest = vault_root / Path(pure)
+        curr = vault_root
+        if any((curr := curr / part).is_symlink() for part in pure.parts):
+            logger.warning("not removing a note through a symlink")
+            continue
+        try:
+            dest.resolve().relative_to(root)
+            dest.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError, ValueError:
+            logger.warning("could not remove a summary note")
+            continue
+        removed += 1
+    return removed
+
+
+@dataclass(frozen=True)
+class _RunState:
+    """What the database says now about the doc and the chapter being worked on."""
+
+    status: str
+    flagged: bool
+    chapter_exists: bool
+
+
+async def _run_state(session: AsyncSession, doc_id: int, chapter_id: int) -> _RunState | None:
+    """The doc's status and flag, and whether the chapter row is still there; None if no doc."""
+    row = (
+        await session.execute(
+            select(
+                LibraryDoc.status,
+                LibraryDoc.flagged,
+                LibraryChapter.id.label("chapter_id"),
+            )
+            .select_from(LibraryDoc)
+            .outerjoin(
+                LibraryChapter,
+                and_(LibraryChapter.id == chapter_id, LibraryChapter.doc_id == LibraryDoc.id),
+            )
+            .where(LibraryDoc.id == doc_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return _RunState(row.status, bool(row.flagged), row.chapter_id is not None)
+
+
+async def _load_chapters(session: AsyncSession, doc_id: int) -> list[LibraryChapter]:
+    return list(
+        (
+            await session.execute(
+                select(LibraryChapter)
+                .where(LibraryChapter.doc_id == doc_id)
+                .order_by(LibraryChapter.ordinal)
+            )
+        ).scalars()
+    )
+
+
 async def summarize_doc(
     session: AsyncSession,
     completer: Completer,
@@ -406,52 +562,112 @@ async def summarize_doc(
     library_dir: Path,
     owner_chat_id: int,
     commit: bool = True,
+    in_window: Callable[[], bool] | None = None,
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> dict[str, int]:
     """Summarise every chapter of a doc that has no summary, then make the doc ready.
 
-    Each chapter is committed on its own, so a restart loses at most one chapter. A chapter
-    the model cannot summarise safely stays without `summary_path` and is counted in
-    `failed`. When every chapter was attempted the doc becomes `ready`, the book evals are
-    made and the Ready message is queued, once: a doc that is already `ready` is never
-    announced again. A doc with no chapters, or whose chunks are not indexed yet, is left
-    alone, and so is a flagged doc. Returns counts: summarized, failed, skipped (already had a
-    summary).
+    Starts only when every chapter has indexed chunks (a chapter that can never have any, see
+    `nothing_to_index`, is not waited for); until then it does nothing and the indexing job's
+    deferral calls it again. Each chapter is committed on its own, so a restart loses at most
+    one chapter. `in_window` (when given) is asked before EACH chapter: once it says no, the
+    run stops with what is done and `more` is 1, so the caller re-defers to the next window.
+
+    A chapter the model cannot summarise safely stays without `summary_path` and is counted
+    in `failed`; it is tried again on the next run, up to `max_attempts` times in all (see
+    `read_attempts`), then given up. The doc becomes `ready` (book evals made, Ready message
+    queued, once) only when no chapter is left to try: a doc that is already `ready` is
+    never announced again, but gets its evals made again if a re-index deleted them. If some
+    chapters were given up the message says `n of total chapters summarised`.
+
+    Before each chapter, and again right before its note is written, the doc and chapter are
+    looked up: a deleted chapter is skipped (no orphan note), and a doc that was flagged or
+    rejected meanwhile stops the run. A flagged doc is simply skipped by this job (never
+    summarised, no evals, never announced) and any notes it already has are deleted; its
+    status is left as it is, the library flow decides what a flagged doc becomes.
+
+    Returns counts: summarized, failed, skipped (already had a summary), given_up (chapters
+    that will never get a summary) and more (1 when another run is needed).
     """
-    counts = {"summarized": 0, "failed": 0, "skipped": 0}
+    counts = {"summarized": 0, "failed": 0, "skipped": 0, "given_up": 0, "more": 0}
 
     async def save() -> None:
         await (session.commit() if commit else session.flush())
 
+    async def drop_summaries(chapters: Sequence[LibraryChapter]) -> None:
+        paths = [c.summary_path for c in chapters if c.summary_path]
+        if not paths:
+            return
+        remove_notes(vault_root, paths)
+        for c in chapters:
+            c.summary_path = None
+        await save()
+
     doc = await session.get(LibraryDoc, doc_id)
     if doc is None or doc.status not in ("processing", "ready"):
         return counts
-    if getattr(doc, "flagged", False):
-        # a flagged doc stays searchable only: no summaries, no evals, never announced
+    chapters = await _load_chapters(session, doc_id)
+    if doc.flagged:
         logger.info("library doc %d is flagged; not summarised", doc_id)
+        await drop_summaries(chapters)
         return counts
-    chapters = list(
-        (
-            await session.execute(
-                select(LibraryChapter)
-                .where(LibraryChapter.doc_id == doc_id)
-                .order_by(LibraryChapter.ordinal)
-            )
-        ).scalars()
-    )
     if not chapters:
         return counts
-    indexed = await session.scalar(
-        select(func.count()).select_from(Chunk).where(Chunk.doc_id == doc_id)
+
+    chunk_counts = dict(
+        (
+            await session.execute(
+                select(Chunk.chapter_id, func.count())
+                .where(Chunk.doc_id == doc_id, Chunk.chapter_id.is_not(None))
+                .group_by(Chunk.chapter_id)
+            )
+        ).tuples()
     )
-    if not indexed:
+    unindexed = [c for c in chapters if not chunk_counts.get(c.id)]
+    if len(unindexed) == len(chapters):
         logger.info("library doc %d has no indexed chunks yet; summaries wait", doc_id)
+        return counts
+    waiting = [
+        c
+        for c in unindexed
+        if not nothing_to_index(
+            c.page_start,
+            c.page_end,
+            c.missing_pages or [],
+            _read_chapter_text(library_dir, c.text_path),
+        )
+    ]
+    if waiting:
+        logger.info(
+            "library doc %d: %d of %d chapters are not indexed yet; summaries wait",
+            doc_id,
+            len(waiting),
+            len(chapters),
+        )
         return counts
 
     doc_row = DocRow(id=doc.id, title=doc.title)
+    title = doc.title
     for chapter in chapters:
         if chapter.summary_path:
             counts["skipped"] += 1
             continue
+        if not chunk_counts.get(chapter.id):
+            continue  # nothing to index: given up for good (counted below)
+        if read_attempts(library_dir, chapter.id) >= max_attempts:
+            continue  # given up
+        state = await _run_state(session, doc_id, chapter.id)
+        if state is None or state.status not in ("processing", "ready"):
+            return counts
+        if state.flagged:
+            await drop_summaries(chapters)
+            return counts
+        if not state.chapter_exists:
+            continue  # deleted while the job ran
+        if in_window is not None and not in_window():
+            logger.info("library doc %d: the night window closed; summaries continue later", doc_id)
+            counts["more"] = 1
+            return counts
         chunks = list(
             (
                 await session.execute(
@@ -467,6 +683,12 @@ async def summarize_doc(
         )
         excerpts = [Excerpt(id=c.id, ordinal=c.ordinal, text=c.text, page=c.page) for c in chunks]
         used = usable_excerpts(pick_spread(excerpts, MAX_EXCERPTS))
+        if not used:
+            # every chunk is flagged: no retry can change that
+            _write_attempts(library_dir, chapter.id, max_attempts)
+            counts["failed"] += 1
+            logger.warning("chapter %d of doc %d: no usable excerpts", chapter.id, doc_id)
+            continue
         text = _read_chapter_text(library_dir, chapter.text_path)
         row = ChapterRow(
             id=chapter.id,
@@ -476,29 +698,83 @@ async def summarize_doc(
             page_start=chapter.page_start,
             page_end=chapter.page_end,
         )
+        record_attempt(library_dir, chapter.id)
         summary = await summarize_chapter(completer, row, used)
         if summary is None:
             counts["failed"] += 1
             logger.warning("chapter %d of doc %d: summary failed", chapter.id, doc_id)
             continue
+        # the model call took minutes: look again before anything is written
+        state = await _run_state(session, doc_id, chapter.id)
+        if state is None or state.status not in ("processing", "ready"):
+            return counts
+        if state.flagged:
+            await drop_summaries(chapters)
+            return counts
+        if not state.chapter_exists:
+            logger.info("chapter %d of doc %d was deleted; no note written", chapter.id, doc_id)
+            continue
         pages = {i: e.page for i, e in enumerate(used, start=1)}
         rel = chapter_note_path(doc_row, row)
         write_note(vault_root, rel, render_chapter_note(doc_row, row, summary, pages))
-        chapter.summary_path = rel.as_posix()
+        try:
+            chapter.summary_path = rel.as_posix()
+            await save()
+        except StaleDataError:
+            # the doc or chapter was deleted between the check and the save
+            remove_notes(vault_root, [rel.as_posix()])
+            await session.rollback()
+            logger.info("chapter %d of doc %d was deleted; note removed", chapter.id, doc_id)
+            return counts
+        except BaseException:
+            remove_notes(vault_root, [rel.as_posix()])
+            raise
+        clear_attempts(library_dir, chapter.id)
         counts["summarized"] += 1
-        await save()
 
-    if doc.status == "processing":
+    # chapters can have been deleted meanwhile: count what is still there
+    chapters = await _load_chapters(session, doc_id)
+    todo = [
+        c
+        for c in chapters
+        if not c.summary_path
+        and chunk_counts.get(c.id)
+        and read_attempts(library_dir, c.id) < max_attempts
+    ]
+    counts["given_up"] = sum(1 for c in chapters if not c.summary_path) - len(todo)
+    if todo:
+        counts["more"] = 1  # a failed chapter waits for the next run
+        return counts
+    if not chapters:
+        return counts
+
+    state = await _run_state(session, doc_id, chapters[0].id)
+    if state is None or state.status not in ("processing", "ready"):
+        return counts
+    if state.flagged:
+        await drop_summaries(chapters)
+        return counts
+    done = sum(1 for c in chapters if c.summary_path)
+    if state.status == "processing":
         doc.status = "ready"
         doc.ready_at = datetime.now(UTC)
         await make_book_evals(completer, session, doc_id)
+        text = (
+            render_ready(title, len(chapters))
+            if done == len(chapters)
+            else render_ready_partial(title, done, len(chapters))
+        )
         await enqueue_message(
             session,
             owner_chat_id,
-            render_ready(doc.title, len(chapters)),
+            text,
             purpose="library_ready",
             buttons=[[chapters_button(doc_id)]],
             ref_id=doc_id,
         )
         await save()
+    else:
+        # already ready (announced before): only bring back evals a re-index deleted
+        if await make_book_evals(completer, session, doc_id):
+            await save()
     return counts

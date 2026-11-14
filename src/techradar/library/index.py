@@ -18,7 +18,7 @@ from typing import Literal
 
 from sqlalchemy import delete
 
-from techradar.db.models import Chunk, LibraryChapter, LibraryDoc
+from techradar.db.models import BookEval, Chunk, LibraryChapter, LibraryDoc
 from techradar.rag.chunker import context_label, page_of, split_markdown
 from techradar.rag.indexer import IndexDeps
 from techradar.security.text import detect_lang, sanitize_text
@@ -115,6 +115,9 @@ async def index_library_chapter(deps: IndexDeps, chapter_id: int) -> int:
     lang = detect_lang(text)
     async with deps.session_factory() as session:
         await session.execute(delete(Chunk).where(Chunk.chapter_id == chapter_id))
+        # `book_evals.expected_chunk_ids` has no foreign key: the old chunk ids are gone now, so
+        # the doc's evals would point at nothing. They are made again by the next ready run.
+        await session.execute(delete(BookEval).where(BookEval.doc_id == doc_id))
         for n, (label, body, headings, page) in enumerate(rows):
             session.add(
                 Chunk(

@@ -3,7 +3,10 @@
 import logging
 import time
 from datetime import UTC, datetime
+from datetime import time as day_time
 from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 from procrastinate import RetryStrategy
@@ -21,7 +24,7 @@ from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import Button, enqueue_message
-from techradar.night.window import night_only
+from techradar.night.window import in_night_window, next_window_start, night_only
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
@@ -393,20 +396,47 @@ async def index_library_chapters_job(doc_id: int) -> None:
     logger.info(
         "indexed library doc %d: %d chunks in %d chapters", doc_id, indexed, len(chapter_ids)
     )
-    await summarize_chapters_job.defer_async(doc_id=doc_id)
+    await _queue_summaries(doc_id)
 
 
 # --- summaries (Phase 2c Task 7) ---------------------------------------------------
-# One lock for all summary jobs: the lock is fixed when the task is declared, so it also
-# holds when `night_only` re-defers a job to the next window. It keeps two runs for the same
-# doc from overlapping (and the single local GPU model busy with one book at a time).
+# One run per doc, not one for all books: the lock and the queueing lock are `summ:<doc id>`,
+# set when the job is deferred (`_queue_summaries`, also used by the night deferral below), so
+# a long book no longer holds every other book back and duplicates for one doc never pile up.
+# The job works only inside the night window: it asks before each chapter, and when the window
+# closes (or a chapter failed and is due another try) it queues itself for the next window.
 
 
-@app.task(queue="llm", lock="summarize", name="summarize_chapters_job")
-@night_only(task_name="summarize_chapters_job")
+async def _queue_summaries(doc_id: int, *, when: datetime | None = None) -> None:
+    """Defer the summarize job for one doc, with its own lock; `when` is the earliest start."""
+    options: dict[str, object] = {"lock": f"summ:{doc_id}", "queueing_lock": f"summ:{doc_id}"}
+    if when is not None:
+        options["schedule_at"] = when
+    try:
+        await summarize_chapters_job.configure(**options).defer_async(doc_id=doc_id)
+    except procrastinate_exceptions.AlreadyEnqueued:
+        logger.info("summaries of library doc %d are already queued", doc_id)
+
+
+async def _defer_summaries(when: datetime, kwargs: dict[str, Any]) -> None:
+    """`night_only`'s deferral outside the window: same job, same arguments, per-doc locks."""
+    await _queue_summaries(int(kwargs["doc_id"]), when=when)
+
+
+@app.task(queue="llm", name="summarize_chapters_job")
+@night_only(task_name="summarize_chapters_job", defer=_defer_summaries)
 async def summarize_chapters_job(doc_id: int) -> None:
     """Summarise a doc's chapters into the vault, then make it ready (night window only)."""
     settings = _get_settings()
+    start, end = (
+        day_time.fromisoformat(settings.night_start),
+        day_time.fromisoformat(settings.night_end),
+    )
+    zone = ZoneInfo(settings.tz)
+
+    def in_window() -> bool:
+        return in_night_window(datetime.now(UTC).astimezone(zone), start, end)
+
     roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
     completer = LiteLLMCompleter(roles, "http://ollama:11434")
     session_factory = make_session_factory("app", settings)
@@ -418,5 +448,11 @@ async def summarize_chapters_job(doc_id: int) -> None:
             vault_root=settings.data_dir / "vault",
             library_dir=settings.data_dir / "library",
             owner_chat_id=settings.telegram_owner_chat_id,
+            in_window=in_window,
         )
     logger.info("summaries for doc %d: %s", doc_id, counts)
+    if counts.get("more"):
+        # the window closed, or a chapter failed and gets another try: next window start
+        await _queue_summaries(
+            doc_id, when=next_window_start(datetime.now(UTC).astimezone(zone), start)
+        )
