@@ -14,6 +14,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Fact, FactSource, IntakeLog, Item, Note, QuarantineItem, RawItem
+from techradar.library.quarantine import notify_quarantined, should_notify
 from techradar.llm.client import Completer, Embedder
 from techradar.pipeline.filter import assign_cluster, profile_texts, relevance
 from techradar.pipeline.reader import build_reader_graph, read_item
@@ -92,13 +93,21 @@ async def collect_results(deps: PipelineDeps) -> dict[str, int]:
 
             # Handle non-ok parse statuses
             if result.status == "quarantined":
+                origin = "fetch"  # news results come from the fetcher (no origin in results)
                 q_item = QuarantineItem(
                     job_id=result.job_id,
-                    origin="fetch",
+                    origin=origin,
                     path=str(rpath),
                     reasons=result.intake.reasons if result.intake else ["quarantined"],
                 )
                 session.add(q_item)
+                if should_notify(origin):
+                    await notify_quarantined(
+                        session,
+                        deps.settings.telegram_owner_chat_id,
+                        f"{result.kind} {result.job_id[:8]}",
+                        q_item.reasons,
+                    )
                 counts["rejected"] += 1
                 rpath.unlink(missing_ok=True)
                 continue

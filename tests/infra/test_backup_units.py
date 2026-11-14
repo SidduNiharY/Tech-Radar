@@ -46,3 +46,20 @@ def test_host_backup_scripts_default_to_the_repo_data_folder():
     for name in ["backup.sh", "restore_test.sh"]:
         text = (root / "infra/backup" / name).read_text()
         assert 'BACKUP_DIR="${BACKUP_DIR:-data/backup}"' in text, name
+
+
+def test_backup_includes_library_without_media() -> None:
+    # SEC-43: books and notes are backed up; re-creatable media (audio, video) is not.
+    script = (REPO_ROOT / "infra/backup/backup.sh").read_text()
+    restic_lines = [
+        ln for ln in script.splitlines() if ln.strip().startswith("restic") and " backup " in ln
+    ]
+    assert len(restic_lines) == 1
+    assert '"$LIBRARY_DIR"' in restic_lines[0]
+    assert 'LIBRARY_DIR="${LIBRARY_DIR:-data/library}"' in script
+    assert "--exclude-file infra/backup/restic-excludes.txt" in restic_lines[0]
+
+    excludes = (REPO_ROOT / "infra/backup/restic-excludes.txt").read_text().splitlines()
+    assert "data/library/media" in excludes or "data/library/media/" in excludes
+    # Honeytoken decoys stay excluded.
+    assert "aws_root_key.txt" in excludes and ".env.production" in excludes

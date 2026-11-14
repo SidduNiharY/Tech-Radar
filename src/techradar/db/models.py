@@ -420,6 +420,11 @@ class LibraryDoc(Base):
     keep_media: Mapped[bool] = mapped_column(
         Boolean, server_default="false", default=False, nullable=False
     )
+    # Released by the owner from quarantine (SEC-14): searchable, but never used for
+    # summaries, evals, MCQs or cards.
+    flagged: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

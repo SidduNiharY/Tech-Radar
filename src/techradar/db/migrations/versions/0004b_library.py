@@ -59,6 +59,7 @@ def upgrade() -> None:
         ),
         sa.Column("pack_item_id", sa.BigInteger(), nullable=True),
         sa.Column("keep_media", sa.Boolean(), server_default="false", nullable=False),
+        sa.Column("flagged", sa.Boolean(), server_default="false", nullable=False),
         _ts("created_at"),
         _ts("ready_at", nullable=True, now=False),
         sa.PrimaryKeyConstraint("id"),

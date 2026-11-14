@@ -222,3 +222,52 @@ async def test_flagged_item_facts_never_verified(deps, flagged_page_result_from_
     await process_new_items(deps)
     assert await fact_statuses(deps) == {"unverified"}
     assert await count_rows(deps, IntakeLog) == 2
+
+
+def _quarantined_result(fake_deps: PipelineDeps) -> None:
+    res = ParseResult(
+        job_id="c" * 32,
+        kind="pdf",
+        status="quarantined",
+        intake=IntakeVerdict(
+            verdict="quarantine",
+            steps=[IntakeStep(name="structure", outcome="quarantine", detail="pdf javascript")],
+            reasons=["pdf javascript"],
+        ),
+    )
+    (fake_deps.clean_dir / f"{res.job_id}.result.json").write_text(
+        res.model_dump_json(), encoding="utf-8"
+    )
+
+
+async def _added(fake_deps: PipelineDeps) -> list[object]:
+    async with fake_deps.session_factory() as s:
+        return [c.args[0] for c in s.add.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_quarantined_fetch_result_is_held_without_notice(fake_deps: PipelineDeps):
+    from techradar.db.models import Outbox, QuarantineItem
+
+    _quarantined_result(fake_deps)
+    await collect_results(fake_deps)
+    added = await _added(fake_deps)
+    assert any(isinstance(a, QuarantineItem) for a in added)
+    # Fetched news is not the owner's file: no notice, or every bad feed would ping.
+    assert not any(isinstance(a, Outbox) for a in added)
+
+
+@pytest.mark.asyncio
+async def test_quarantined_owner_upload_gets_notice(fake_deps: PipelineDeps, monkeypatch):
+    from techradar.db.models import Outbox
+    from techradar.pipeline import process
+
+    monkeypatch.setattr(process, "should_notify", lambda origin: True)
+    _quarantined_result(fake_deps)
+    await collect_results(fake_deps)
+    notices = [a for a in await _added(fake_deps) if isinstance(a, Outbox)]
+    assert [n.text for n in notices] == [
+        "🔒 Held for review: pdf cccccccc (pdf javascript). "
+        "Use /quarantine to release or delete it."
+    ]
+    assert notices[0].chat_id == fake_deps.settings.telegram_owner_chat_id

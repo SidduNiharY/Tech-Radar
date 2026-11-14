@@ -232,3 +232,43 @@ async def test_library_doc_rejects_bad_status_and_trust(app_conn):
                 ),
                 {"sha": "e" * 64, "st": status, "tr": trust},
             )
+
+
+def test_library_doc_flagged_column():
+    # Phase 2c Task 10: a doc the owner released from quarantine is recorded as flagged.
+    col = LibraryDoc.__table__.columns["flagged"]
+    assert not col.nullable
+    assert col.server_default is not None and "false" in str(col.server_default.arg)
+    assert LibraryDoc(sha256="f" * 64).flagged in (False, None)
+
+
+def test_migration_0004b_adds_and_drops_flagged():
+    src = Path("src/techradar/db/migrations/versions/0004b_library.py").read_text()
+    upgrade, downgrade = src.split("def downgrade", 1)
+    assert 'sa.Column("flagged", sa.Boolean(), server_default="false", nullable=False)' in upgrade
+    # library_docs is dropped whole on downgrade, so the column goes with it.
+    assert "NEW_TABLES" in downgrade and "drop_table" in downgrade
+
+
+@pytest.mark.db
+async def test_library_doc_flagged_defaults_false(app_conn):
+    await app_conn.execute(
+        text("DELETE FROM techradar.library_docs WHERE sha256 = :s"), {"s": "9" * 64}
+    )
+    doc_id = (await app_conn.execute(text(_INSERT_DOC), {"sha": "9" * 64})).scalar_one()
+    try:
+        flagged = (
+            await app_conn.execute(
+                text("SELECT flagged FROM techradar.library_docs WHERE id = :d"), {"d": doc_id}
+            )
+        ).scalar_one()
+        assert flagged is False
+        with pytest.raises(IntegrityError):
+            await app_conn.execute(
+                text("UPDATE techradar.library_docs SET flagged = NULL WHERE id = :d"),
+                {"d": doc_id},
+            )
+    finally:
+        await app_conn.execute(
+            text("DELETE FROM techradar.library_docs WHERE id = :d"), {"d": doc_id}
+        )

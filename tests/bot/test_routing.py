@@ -81,3 +81,11 @@ def test_route_briefing_take() -> None:
         active_briefing_message_ids={101, 102},
     )
     assert res_unauth == Routed("ignore")
+
+
+def test_route_quarantine_owner_only() -> None:
+    assert route_update(42, "/quarantine", 42) == Routed("quarantine")
+    assert route_update(42, "/quarantine@TechRadarBrainBot", 42) == Routed("quarantine")
+    assert route_update(7, "/quarantine", 42) == Routed("ignore")
+    # An approved study group may use other commands, never the quarantine.
+    assert route_update(-100, "/quarantine", 42, group_ids=frozenset({-100})) == Routed("ignore")

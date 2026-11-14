@@ -37,6 +37,13 @@ def combine(steps: Sequence[IntakeStep]) -> Verdict:
     return "pass"
 
 
+def release_steps(steps: Sequence[IntakeStep]) -> list[IntakeStep]:
+    """Owner release (SEC-14): every quarantine step becomes a flag; rejects stay rejects."""
+    return [
+        s.model_copy(update={"outcome": "flag"}) if s.outcome == "quarantine" else s for s in steps
+    ]
+
+
 def quarantine_file(raw_path: Path, quarantine_dir: Path, job_id: str) -> Path:
     """Safely isolate a quarantined raw file with read-only permissions (0o400)."""
     target_dir = quarantine_dir / job_id
@@ -95,10 +102,17 @@ def gate_job(
     guard_score: Callable[[str], float] | None = None,
     today: date | None = None,
     max_media_s: int = 14_400,
+    owner_released: bool = False,
 ) -> ParseResult:
     """Run full Intake Gateway pipeline across raw verification, sandboxed parse,
 
     and content scan.
+
+    `owner_released` is set only by the owner's two-step release of a held file (a
+    keyword argument: nothing in a job file or in file content can set it). A quarantine
+    outcome then becomes a flag (searchable, never used for facts, cards or questions,
+    a PDF's text from pixels); a reject stays a reject. The file is already held, so it
+    is not copied into quarantine again.
     """
     check_date = today or date.today()
     raw_path = raw_dir / job.raw_name
@@ -154,6 +168,8 @@ def gate_job(
     steps.append(check_rules(rules, data))
 
     # Early stop on reject or quarantine
+    if owner_released:
+        steps = release_steps(steps)
     early_verdict = combine(steps)
     if early_verdict in ("reject", "quarantine"):
         reasons = _reasons(steps, ("reject", "quarantine"))
@@ -219,6 +235,8 @@ def gate_job(
     links = extract_links(content_to_check)
     steps.append(check_links(links, allowed_hosts))
 
+    if owner_released:
+        steps = release_steps(steps)
     final_verdict = combine(steps)
     reasons = _reasons(steps, ("quarantine", "flag"))
 

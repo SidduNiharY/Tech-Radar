@@ -11,7 +11,7 @@ tmp/
 *.log
 data/cache/
 data/tmp/
-data/library/media/
+data/library/media
 
 # Honeytokens (decoys; never back them up)
 aws_root_key.txt

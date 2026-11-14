@@ -20,6 +20,7 @@ Action = Literal[
     "inbox",
     "plan",
     "take",
+    "quarantine",
     "ignore",
 ]
 
@@ -53,6 +54,7 @@ def route_update(
         Routed("grammar") for /grammar commands from authorized chats
         Routed("inbox") for /inbox commands from authorized chats
         Routed("plan") for /plan commands from authorized chats
+        Routed("quarantine") for /quarantine from the owner's own chat only
         Routed("take", reply_text) for replies to active briefing messages
         Routed("ignore") for unauthorized chats or unknown/empty messages
     """
@@ -93,5 +95,8 @@ def route_update(
         return Routed("inbox")
     if cmd == "/plan":
         return Routed("plan")
+    if cmd == "/quarantine":
+        # Releasing held files is the owner's alone, never a study group's (SEC-14).
+        return Routed("quarantine") if chat_id == owner_id else Routed("ignore")
 
     return Routed("ignore")

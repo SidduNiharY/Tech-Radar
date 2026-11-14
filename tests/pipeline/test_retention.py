@@ -90,3 +90,71 @@ async def test_retention_deletes_old_files(deps, finished_rows_8_days_old):
 async def test_quarantine_deleted_after_seven_days(deps, quarantined_item_8_days_old):
     r = await cleanup_retention(deps, datetime.now(UTC))
     assert r["quarantine"] == 1
+
+
+def _age(path: Path, days: int) -> None:
+    import os
+
+    t = (datetime.now(UTC) - timedelta(days=days)).timestamp()
+    os.utime(path, (t, t), follow_symlinks=False)
+
+
+def _library_with_old_book(deps: PipelineDeps) -> Path:
+    """A 400-day-old book under the library originals folder (SEC-43)."""
+    library = deps.settings.data_dir / "library"
+    deps.settings = deps.settings.model_copy(update={"library_dir": library})
+    originals = library / "originals"
+    originals.mkdir(parents=True)
+    book = originals / ("a" * 64 + ".pdf")
+    book.write_bytes(b"%PDF-1.7 a book")
+    _age(book, 400)
+    return book
+
+
+@pytest.mark.asyncio
+async def test_retention_scans_never_reach_the_library(retention_deps: PipelineDeps):
+    book = _library_with_old_book(retention_deps)
+    # Links planted in every folder retention scans, all pointing at the book.
+    for folder in (
+        retention_deps.raw_dir,
+        retention_deps.jobs_dir,
+        retention_deps.settings.data_dir / "quarantine",
+    ):
+        link = folder / "planted.json"
+        link.symlink_to(book)
+        _age(link, 400)
+    await cleanup_retention(retention_deps, datetime.now(UTC))
+    assert book.read_bytes() == b"%PDF-1.7 a book"
+
+
+@pytest.mark.db
+async def test_retention_never_touches_library(deps: PipelineDeps):
+    from techradar.db.models import Item, QuarantineItem, RawItem
+    from tests.pipeline.conftest import _source_item
+
+    book = _library_with_old_book(deps)
+    old = datetime.now(UTC) - timedelta(days=400)
+    async with deps.session_factory() as s:
+        # Database rows that point into the library, as a corrupted or hostile row might.
+        item = await _source_item(s, "rbi.org.in", 91)
+        raw = await s.get(RawItem, item.raw_item_id)
+        assert raw is not None
+        raw.status, raw.fetched_at = "done", old
+        raw.raw_name = f"../data/library/originals/{book.name}"
+        item.status, item.processed_at, item.text_path = "written", old, str(book)
+        s.add(
+            QuarantineItem(
+                job_id="b" * 32,
+                path=str(book),
+                origin="library",
+                reasons=["macros"],
+                created_at=old,
+                expires_at=old + timedelta(days=7),
+            )
+        )
+        await s.commit()
+        assert isinstance(item, Item)
+
+    r = await cleanup_retention(deps, datetime.now(UTC))
+    assert book.exists() and book.read_bytes() == b"%PDF-1.7 a book"
+    assert r["raw"] == 0 and r["clean"] == 0 and r["quarantine"] == 0
