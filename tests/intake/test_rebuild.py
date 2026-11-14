@@ -15,6 +15,7 @@ from techradar.intake.gateway import gate_job
 from techradar.intake.rebuild import (
     MAX_RENDER_PX,
     pixel_rebuild,
+    rebuild_pages,
     reencode_image,
     render_pages,
 )
@@ -52,6 +53,37 @@ def test_pixel_rebuild_marks_pages_and_uses_only_ocr_text(tmp_path):
     text = pixel_rebuild(pdf, 1, 2, ocr=lambda p: f"TEXT FROM PIXELS {p.name}")
     assert text.startswith("<!-- page 1 -->\nTEXT FROM PIXELS page-0001.png")
     assert "<!-- page 2 -->\nTEXT FROM PIXELS page-0002.png" in text
+
+
+def test_pixel_rebuild_stops_at_the_deadline_and_says_so(tmp_path):
+    # Review of d18ebba: OCR of many pages must end inside the 120 s job limit, with
+    # a visible note for the pages it did not read, never a silent gap or a timeout.
+    import time
+
+    pdf = make_pdf(tmp_path / "a.pdf", 4)
+    calls = []
+
+    def slow_ocr(p):
+        calls.append(p.name)
+        time.sleep(0.3)
+        return "x"
+
+    text, complete = rebuild_pages(pdf, 1, 4, slow_ocr, deadline=time.monotonic() + 0.45)
+    assert not complete and len(calls) == 2
+    assert "<!-- page 2 -->\nx" in text
+    assert "<!-- pages 3-4 not read (time limit) -->" in text
+
+
+def test_pixel_rebuild_renders_one_page_at_a_time(tmp_path):
+    pdf = make_pdf(tmp_path / "a.pdf", 3)
+    seen = []
+
+    def ocr(p):
+        seen.append(sorted(x.name for x in p.parent.iterdir()))
+        return "x"
+
+    text, complete = rebuild_pages(pdf, 1, 3, ocr)
+    assert complete and all(len(names) == 1 for names in seen)
 
 
 def test_reencode_strips_metadata_and_fits(tmp_path):

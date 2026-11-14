@@ -16,9 +16,12 @@ MAX_OUTLINE_TITLE = 300
 # skipped but still count, so a hostile outline cannot loop until timeout).
 MAX_OUTLINE_SCAN = 5_000
 # Pages one part job may convert, and Docling's own time budget, kept under
-# the parser's 120 s process timeout.
-MAX_PART_PAGES = 100
-DOCLING_TIMEOUT_S = 100.0
+# the parser's 120 s process timeout (SEC-06). 25 pages with OCR took 58 s on the
+# TUF (2 CPUs); Docling's clock starts only after the child has started and loaded
+# its models, so its budget leaves room for that. The worker's library_part_pages
+# must not exceed MAX_PART_PAGES.
+MAX_PART_PAGES = 25
+DOCLING_TIMEOUT_S = 80.0
 
 
 class OutlineEntry(BaseModel):
@@ -118,13 +121,16 @@ def pdf_part_to_doc(
     page_end = min(page_end, n_pages)
     conv = converter or _docling_converter(artifacts_path)
     result = conv.convert(path, page_range=(page_start, page_end))
+    # Docling stops at document_timeout and reports a partial result: say so.
+    status = str(getattr(getattr(result, "status", None), "value", getattr(result, "status", "")))
+    stopped_early = status not in ("", "success")
     # Each page gets an equal share of max_chars, so a dense page can't push
     # later pages (and their markers) out of the text.
     n = page_end - page_start + 1
     per_page = max(0, max_chars // n - len("<!-- page 0000000 -->\n\n\n"))
     blocks: list[str] = []
     any_text = False
-    truncated = False
+    truncated = stopped_early
     for page in range(page_start, page_end + 1):
         page_text = sanitize_text(result.document.export_to_markdown(page_no=page) or "")
         any_text = any_text or bool(page_text)

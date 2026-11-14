@@ -184,3 +184,23 @@ def test_falco_knows_the_new_programs():
     assert "procrastinate" in data["services"]["worker"]
     assert "procrastinate" in data["services"]["worker-bulk"]
     assert "worker-bulk" in data["internal_only"]
+
+
+def test_parser_writes_only_media_and_its_own_folders(compose_data):
+    # Phase 2c Task 5 review: originals and raw are read-only; the only new rw mount
+    # is library/media (audio segments). Never the whole library folder.
+    svc = compose_data["services"]["parser"]
+    rw, ro = set(), set()
+    for v in svc["volumes"]:
+        parts = v.split(":")
+        (ro if len(parts) > 2 and "ro" in parts[2].split(",") else rw).add(parts[1])
+    assert {"/data/raw", "/data/library/originals"} <= ro
+    assert rw == {
+        "/data/library/media",
+        "/data/parse-jobs",
+        "/data/clean",
+        "/data/quarantine",
+        "/run/clamav",
+    }
+    assert svc["network_mode"] == "none" and svc["read_only"] is True
+    assert svc["cap_drop"] == ["ALL"] and svc["tmpfs"] == ["/tmp"]  # noqa: S108

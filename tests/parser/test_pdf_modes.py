@@ -8,7 +8,13 @@ from types import SimpleNamespace
 import pytest
 
 from techradar.parser.limits import parse_job
-from techradar.parser.pdf import PdfProbe, pdf_part_to_doc, pdf_probe
+from techradar.parser.pdf import (
+    DOCLING_TIMEOUT_S,
+    MAX_PART_PAGES,
+    PdfProbe,
+    pdf_part_to_doc,
+    pdf_probe,
+)
 from techradar.schemas.pipeline import ParseJob
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -316,3 +322,30 @@ def test_model_jobs_get_room_for_their_address_space():
     assert address_space_for(job(mode="probe")) == LIGHT_AS_BYTES
     assert address_space_for(job()) == LIGHT_AS_BYTES
     assert MODEL_AS_BYTES >= 16_000_000_000 and LIGHT_AS_BYTES == 2_500_000_000
+
+
+# --- 120 s budget (review of d18ebba): a part never asks for more than fits ---
+
+
+def test_part_span_is_capped_at_the_measured_safe_size(tmp_path: Path):
+    # 25 pages with OCR took 58 s on the TUF; 100 (the old cap) cannot fit in 120 s.
+    assert MAX_PART_PAGES == 25
+    job = _job(tmp_path, make_pdf(30, []), mode="part", page_start=1, page_end=26)
+    assert parse_job(job, tmp_path).status == "error"
+
+
+def test_docling_time_budget_leaves_room_for_start_up():
+    # Child start-up and model loading come before Docling's own clock starts.
+    assert DOCLING_TIMEOUT_S <= 80
+
+
+class PartialConverter:
+    def convert(self, source, *, page_range):
+        return SimpleNamespace(document=FakeDoc(), status="partial_success")
+
+
+def test_docling_stopping_early_marks_the_part_truncated(tmp_path: Path):
+    p = tmp_path / "b.pdf"
+    p.write_bytes(make_pdf(5, []))
+    doc = pdf_part_to_doc(p, "u", 1, 5, converter=PartialConverter())
+    assert doc is not None and doc.truncated

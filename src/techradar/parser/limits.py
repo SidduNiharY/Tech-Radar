@@ -15,7 +15,7 @@ from pathlib import Path
 
 from techradar.intake.filetype import detect_file_mime
 from techradar.intake.media import MediaProbeError, demuxer_for, probe_media
-from techradar.intake.rebuild import pixel_rebuild as pixel_rebuild_text
+from techradar.intake.rebuild import rebuild_pages
 from techradar.parser.docx import docx_to_doc
 from techradar.parser.epub import epub_to_chapters
 from techradar.parser.feed import feed_to_entries
@@ -312,6 +312,10 @@ def _media(
     return ParseResult(job_id=job.job_id, kind=job.kind, status="ok", doc=doc)
 
 
+# A pixel rebuild's own budget, started after the child is up (SEC-06's 120 s).
+REBUILD_BUDGET_S = 95.0
+
+
 def _rebuild_pdf(
     job: ParseJob, raw_path: Path, max_chars: int, artifacts_path: Path | None
 ) -> ParseResult:
@@ -321,15 +325,24 @@ def _rebuild_pdf(
     end = job.page_end or start + MAX_PART_PAGES - 1
     if start < 1 or end < start or end - start + 1 > MAX_PART_PAGES:
         return ParseResult(job_id=job.job_id, kind="pdf", status="error")
+    deadline = time.monotonic() + REBUILD_BUDGET_S
     try:
-        text = sanitize_text(pixel_rebuild_text(raw_path, start, end, offline_ocr(artifacts_path)))
+        raw_text, complete = rebuild_pages(
+            raw_path, start, end, offline_ocr(artifacts_path), deadline=deadline
+        )
+        text = sanitize_text(raw_text)
     except Exception:
         return ParseResult(job_id=job.job_id, kind="pdf", status="error")
     if not text.strip():
         return ParseResult(job_id=job.job_id, kind="pdf", status="empty")
+    truncated = not complete or len(text) > max_chars
     text = text[:max_chars]
     doc = CleanDoc(
-        url=job.url, title=f"pages {start}-{end} (rebuilt)", text=text, lang=detect_lang(text)
+        url=job.url,
+        title=f"pages {start}-{end} (rebuilt)",
+        text=text,
+        lang=detect_lang(text),
+        truncated=truncated,
     )
     return ParseResult(job_id=job.job_id, kind="pdf", status="ok", doc=doc)
 
