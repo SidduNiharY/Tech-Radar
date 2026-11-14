@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from techradar.db.engine import make_engine
 from techradar.db.models import Chunk
 from techradar.rag.indexer import (
+    LIBRARY_SCAN_EXCLUDE,
     IndexDeps,
     collect_clipping_results,
     doc_meta,
@@ -198,3 +200,62 @@ async def test_clipping_goes_through_gateway_and_is_flagged(index_deps: IndexDep
         )
         flags = [r[0] for r in result.all()]
         assert flags == [True]
+
+
+def test_library_scan_skips_work_in_progress_folders(tmp_path: Path):
+    lib = tmp_path / "library"
+    for rel in (
+        "text/7/parts/1.md",  # part text of an unfinished doc
+        "text/7/01.md",  # chapter file: indexed by chapter, not by this scan
+        "media/7/notes.md",
+        "slug.md",
+        "other/keep.md",
+        "text.md",  # a file that is merely called text
+    ):
+        f = lib / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("# Heading\nbody")
+    got = scan_vault(lib, exclude_dirs=LIBRARY_SCAN_EXCLUDE)
+    assert sorted(got) == ["other/keep.md", "slug.md", "text.md"]
+    # without the exclusion the old behaviour is unchanged
+    assert "text/7/parts/1.md" in scan_vault(lib)
+
+
+async def test_sync_index_never_embeds_library_text_or_media(tmp_path: Path):
+    vault, lib = tmp_path / "vault", tmp_path / "library"
+    vault.mkdir()
+    for rel in ("text/7/parts/1.md", "text/7/01.md", "media/7/x.md", "legacy.md"):
+        f = lib / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("# Heading\nbody of " + rel)
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    session.commit = AsyncMock()
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    embedder = FakeEmbedder()
+    deps = IndexDeps(
+        session_factory=factory,
+        embedder=embedder,
+        vault_root=vault,
+        library_dir=lib,
+        library_inbox=tmp_path / "inbox",
+        raw_dir=tmp_path / "raw",
+        jobs_dir=tmp_path / "jobs",
+        clean_dir=tmp_path / "clean",
+    )
+    counts = await sync_index(deps)
+    paths = {c.args[0].doc_path for c in session.add.call_args_list}
+    assert paths == {"library/legacy.md"} and counts["added"] == 1
+    assert all(
+        "body of text/" not in t and "body of media/" not in t for b in embedder.calls for t in b
+    )
+
+
+def test_the_dead_library_collector_is_gone():
+    import techradar.rag.indexer as indexer
+
+    assert not hasattr(indexer, "collect_library_results")

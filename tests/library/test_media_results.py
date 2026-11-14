@@ -162,7 +162,7 @@ def _seg_ok(part: LibraryPart) -> str:
 
 async def _probed(session: AsyncSession, d: Dirs, kind: str, keep: bool) -> LibraryDoc:
     doc = await _media_doc(session, d, kind, keep)
-    [job_id] = await plan_doc(session, doc.id, jobs_dir=d.jobs, library_dir=d.lib)
+    [job_id] = await plan_doc(session, doc.id, jobs_dir=d.jobs, library_dir=d.lib, commit=False)
     probe = {"duration_s": 1300.0, "has_audio": True, "has_video": kind == "video"}
     _result(d, job_id, "ok", "probe", json.dumps(probe))
     await _collect(session, d)
@@ -291,10 +291,30 @@ async def test_all_segments_failed_fails_doc(session, dirs):
 @pytest.mark.db
 async def test_probe_without_streams_fails_doc(session, dirs):
     doc = await _media_doc(session, dirs, "video", False)
-    [job_id] = await plan_doc(session, doc.id, jobs_dir=dirs.jobs, library_dir=dirs.lib)
+    [job_id] = await plan_doc(
+        session, doc.id, jobs_dir=dirs.jobs, library_dir=dirs.lib, commit=False
+    )
     _result(
         dirs, job_id, "ok", "probe", '{"duration_s": 5, "has_audio": false, "has_video": false}'
     )
     await _collect(session, dirs)
     await session.refresh(doc)
     assert doc.status == "failed"
+
+
+@pytest.mark.db
+async def test_silent_video_fails_the_doc_and_tells_the_owner(session, dirs):
+    doc = await _media_doc(session, dirs, "video", False)
+    [job_id] = await plan_doc(
+        session, doc.id, jobs_dir=dirs.jobs, library_dir=dirs.lib, commit=False
+    )
+    _result(
+        dirs, job_id, "ok", "probe", '{"duration_s": 60, "has_audio": false, "has_video": true}'
+    )
+    await _collect(session, dirs)
+    await session.refresh(doc)
+    assert doc.status == "failed" and await _parts(session, doc.id) == []
+    rows = await session.execute(
+        select(Outbox).where(Outbox.purpose == "library_failed", Outbox.ref_id == doc.id)
+    )
+    assert len(list(rows.scalars())) == 1

@@ -81,14 +81,16 @@ def detect_chapters(
 
 
 def _split_pages(text: str) -> dict[int, str]:
-    """Page number -> its block of text, including the page marker line."""
+    """Page number -> its block of text, including the page marker line.
+
+    A marker that repeats inside one text keeps its first block.
+    """
     marks = list(_MARKER.finditer(text))
-    return {
-        int(m.group(1)): text[
-            m.start() : marks[i + 1].start() if i + 1 < len(marks) else None
-        ].strip()
-        for i, m in enumerate(marks)
-    }
+    pages: dict[int, str] = {}
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else None
+        pages.setdefault(int(m.group(1)), text[m.start() : end].strip())
+    return pages
 
 
 def _note(first: int, last: int) -> str:
@@ -97,28 +99,39 @@ def _note(first: int, last: int) -> str:
     return f"> Pages {first}–{last} couldn't be read."
 
 
-def _page_map(part_texts: Mapping[int, str]) -> dict[int, str]:
+def _page_map(parts: Iterable[tuple[int, int, str]]) -> dict[int, str]:
+    """Page number -> block, from (page_start, page_end, text) of each part.
+
+    Part text is untrusted: a `<!-- page N -->` marker only counts inside its own part's
+    page range, and the first block for a page wins, so forged or repeated markers cannot
+    overwrite real pages.
+    """
     pages: dict[int, str] = {}
-    for text in part_texts.values():
-        pages.update(_split_pages(text))
+    for start, end, text in parts:
+        for n, block in _split_pages(text).items():
+            if start <= n <= end:
+                pages.setdefault(n, block)
     return pages
 
 
-def missing_pages(
-    part_texts: Mapping[int, str], ch: ChapterSpec, failed_pages: Sequence[int]
+def _legacy_pages(part_texts: Mapping[int, str]) -> dict[int, str]:
+    """Page map of texts whose page ranges are not known (no range check)."""
+    return _page_map((1, 10**9, text) for text in part_texts.values())
+
+
+def missing_in_pages(
+    pages: Mapping[int, str], ch: ChapterSpec, failed_pages: Iterable[int]
 ) -> list[int]:
-    """Pages of the chapter that failed or are absent from the part texts, in order."""
-    pages = _page_map(part_texts)
-    failed = set(failed_pages)
+    """Pages of the chapter that failed or are absent from the page map, in order."""
+    failed = failed_pages if isinstance(failed_pages, (set, frozenset)) else set(failed_pages)
     return [n for n in range(ch.page_start, ch.page_end + 1) if n in failed or n not in pages]
 
 
-def assemble_chapter_text(
-    part_texts: Mapping[int, str], ch: ChapterSpec, failed_pages: Sequence[int]
+def assemble_from_pages(
+    pages: Mapping[int, str], ch: ChapterSpec, failed_pages: Iterable[int]
 ) -> str:
     """Join the chapter's pages in order, noting unreadable or missing ranges in place."""
-    pages = _page_map(part_texts)
-    missing = set(missing_pages(part_texts, ch, failed_pages))
+    missing = set(missing_in_pages(pages, ch, failed_pages))
     out: list[str] = []
     run: list[int] = []
 
@@ -135,6 +148,20 @@ def assemble_chapter_text(
         out.append(pages[n])
     flush()
     return "\n\n".join(out)
+
+
+def missing_pages(
+    part_texts: Mapping[int, str], ch: ChapterSpec, failed_pages: Sequence[int]
+) -> list[int]:
+    """`missing_in_pages` for part texts with unknown page ranges."""
+    return missing_in_pages(_legacy_pages(part_texts), ch, failed_pages)
+
+
+def assemble_chapter_text(
+    part_texts: Mapping[int, str], ch: ChapterSpec, failed_pages: Sequence[int]
+) -> str:
+    """`assemble_from_pages` for part texts with unknown page ranges."""
+    return assemble_from_pages(_legacy_pages(part_texts), ch, failed_pages)
 
 
 def write_chapter_text(base: Path, doc_id: int, ordinal: int, text: str) -> Path:

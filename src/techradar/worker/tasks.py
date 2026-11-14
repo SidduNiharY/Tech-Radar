@@ -6,11 +6,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
+from procrastinate import RetryStrategy
+from procrastinate import exceptions as procrastinate_exceptions
+from sqlalchemy import select
 
 from techradar.bot.render import render_answer
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
+from techradar.db.models import LibraryChapter
 from techradar.library.inbox import load_limits, plan_library_intake
+from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
 from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
@@ -271,7 +276,21 @@ async def save_answer_job(answer_id: int) -> None:
 # --- bulk queue (Phase 2c Task 4) -------------------------------------------------
 # Served by the `worker-bulk` container (`--queues=bulk`). That worker has no start hook:
 # `resume_bulk_job` runs every 5 minutes and re-queues work lost to a restart, so a restarted
-# worker-bulk heals itself within 5 minutes without any extra wiring.
+# worker-bulk heals itself within 5 minutes without any extra wiring. The two periodic jobs
+# share one execution `lock` (they touch the same rows) and each has its own `queueing_lock`:
+# while one is waiting in the queue, the next tick is skipped instead of piling up.
+# worker-bulk has no network to ollama, so it never embeds: once a doc's chapters are
+# committed it defers `index_library_chapters_job` on the `llm` queue (see `_queue_index`).
+
+
+async def _queue_index(doc_id: int) -> None:
+    """Hand a doc whose chapters were just built to the `llm` queue for indexing."""
+    try:
+        await index_library_chapters_job.configure(
+            lock=f"index_library_{doc_id}", queueing_lock=f"index_library_{doc_id}"
+        ).defer_async(doc_id=doc_id)
+    except procrastinate_exceptions.AlreadyEnqueued:
+        logger.info("indexing of library doc %d is already queued", doc_id)
 
 
 @app.task(queue="bulk", name="plan_doc_job")
@@ -285,12 +304,17 @@ async def plan_doc_job(doc_id: int) -> None:
             doc_id,
             jobs_dir=settings.data_dir / "parse-jobs",
             library_dir=settings.data_dir / "library",
-        )
-        await session.commit()
+            owner_chat_id=settings.telegram_owner_chat_id,
+        )  # commits the status before it writes the job file
 
 
 @app.periodic(cron="* * * * *")
-@app.task(queue="bulk", lock="bulk_collect", name="collect_bulk_results_job")
+@app.task(
+    queue="bulk",
+    lock="bulk_collect",
+    queueing_lock="collect_bulk_results_queued",
+    name="collect_bulk_results_job",
+)
 async def collect_bulk_results_job() -> None:
     """Apply finished library parse results (probe, parts, whole docs)."""
     settings = _get_settings()
@@ -303,15 +327,21 @@ async def collect_bulk_results_job() -> None:
             library_dir=settings.data_dir / "library",
             part_pages=settings.library_part_pages,
             owner_chat_id=settings.telegram_owner_chat_id,
+            on_chapters_ready=_queue_index,
         )
-    if counts["handled"]:
+    if counts["handled"] or counts["errors"]:
         logger.info("bulk results handled: %s", counts)
 
 
 @app.periodic(cron="*/5 * * * *")
-@app.task(queue="bulk", lock="bulk_collect", name="resume_bulk_job")
+@app.task(
+    queue="bulk",
+    lock="bulk_collect",
+    queueing_lock="resume_bulk_queued",
+    name="resume_bulk_job",
+)
 async def resume_bulk_job() -> None:
-    """Re-queue lost parse jobs of every `processing` library doc."""
+    """Re-queue lost parse jobs of every stuck library doc (queued or processing)."""
     settings = _get_settings()
     session_factory = make_session_factory("app", settings)
     async with session_factory() as session:
@@ -320,10 +350,50 @@ async def resume_bulk_job() -> None:
             jobs_dir=settings.data_dir / "parse-jobs",
             library_dir=settings.data_dir / "library",
             clean_dir=settings.data_dir / "clean",
-        )
-        await session.commit()
+            part_pages=settings.library_part_pages,
+            owner_chat_id=settings.telegram_owner_chat_id,
+            on_chapters_ready=_queue_index,
+        )  # commits per doc
     if any(resumed.values()):
         logger.info("bulk resume re-queued parts: %s", resumed)
+
+
+# --- indexing (Phase 2c Task 6 wiring) ---------------------------------------------
+# Queue `llm`: it needs the embedder on ollama. One run per doc (lock and queueing lock are
+# set when `_queue_index` defers it). After the chapters are indexed it defers the summaries,
+# which send the owner's "Ready" message; this job tells the owner nothing.
+
+
+@app.task(
+    queue="llm",
+    name="index_library_chapters_job",
+    retry=RetryStrategy(max_attempts=4, wait=300),  # an embedder outage is retried, not lost
+)
+async def index_library_chapters_job(doc_id: int) -> None:
+    """Index every chapter of a doc into `chunks`, then queue its summaries."""
+    deps = get_index_deps()
+    async with deps.session_factory() as session:
+        chapter_ids = (
+            (
+                await session.execute(
+                    select(LibraryChapter.id)
+                    .where(LibraryChapter.doc_id == doc_id)
+                    .order_by(LibraryChapter.ordinal)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    indexed = 0
+    for chapter_id in chapter_ids:
+        n = await index_library_chapter(deps, chapter_id)
+        if n == 0:
+            logger.warning("library doc %d chapter %d indexed 0 chunks", doc_id, chapter_id)
+        indexed += n
+    logger.info(
+        "indexed library doc %d: %d chunks in %d chapters", doc_id, indexed, len(chapter_ids)
+    )
+    await summarize_chapters_job.defer_async(doc_id=doc_id)
 
 
 # --- summaries (Phase 2c Task 7) ---------------------------------------------------

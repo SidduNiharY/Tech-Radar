@@ -16,7 +16,6 @@ from sqlalchemy import delete, select
 from techradar.db.models import Chunk, DocsIndex
 from techradar.fetcher.store import store_raw, write_job
 from techradar.llm.client import Embedder
-from techradar.pipeline.writer import slugify
 from techradar.rag.chunker import parse_front_matter, split_markdown
 from techradar.schemas.pipeline import ParseJob, ParseResult
 from techradar.security.text import detect_lang, sanitize_text
@@ -26,17 +25,31 @@ logger = logging.getLogger(__name__)
 MAX_DOC_BYTES = 2_000_000
 
 
-def scan_vault(vault_root: Path, skip: Sequence[str] = ()) -> dict[str, str]:
-    """Scan vault for markdown notes, returning {rel_posix_path: sha256_hex}."""
+# Folders of the library dir that hold work in progress (part texts, chapter files, audio
+# and slides), not finished notes: they are indexed chapter by chapter, never by this scan.
+LIBRARY_SCAN_EXCLUDE = ("text", "media")
+
+
+def scan_vault(
+    vault_root: Path, skip: Sequence[str] = (), exclude_dirs: Sequence[str] = ()
+) -> dict[str, str]:
+    """Scan vault for markdown notes, returning {rel_posix_path: sha256_hex}.
+
+    `exclude_dirs` are top-level folder names under `vault_root` that are not scanned.
+    """
     result: dict[str, str] = {}
     if not vault_root.exists():
         return result
 
     skip_set = set(skip)
+    exclude_set = set(exclude_dirs)
 
     for p in vault_root.rglob("*.md"):
         # Check skip list and hidden directories before opening or statting
         if p.name in skip_set:
+            continue
+        rel_parts = p.relative_to(vault_root).parts
+        if len(rel_parts) > 1 and rel_parts[0] in exclude_set:
             continue
         rel = p.relative_to(vault_root).as_posix()
         if rel in skip_set:
@@ -219,49 +232,13 @@ async def collect_clipping_results(deps: IndexDeps) -> int:
     return count
 
 
-async def collect_library_results(deps: IndexDeps) -> int:
-    """Write parsed library CleanDocs as markdown files in library_dir."""
-    count = 0
-    if not deps.clean_dir.exists():
-        return 0
-
-    deps.library_dir.mkdir(parents=True, exist_ok=True)
-    result_files = sorted(deps.clean_dir.glob("*.result.json"))
-
-    for rpath in result_files:
-        try:
-            data = json.loads(rpath.read_text(encoding="utf-8"))
-            result = ParseResult.model_validate(data)
-        except Exception as e:
-            logger.warning("Failed parsing clipping result file %s: %s", rpath, e)
-            continue
-
-        if result.purpose != "library":
-            continue
-
-        if result.status == "ok" and result.doc:
-            slug = slugify(result.doc.title)
-            source_file = result.doc.url.removeprefix("library:")
-            content = (
-                f"---\nkind: library\ntitle: {result.doc.title}\nsource: {source_file}\n---\n\n"
-                f"{result.doc.text}\n"
-            )
-            out_file = deps.library_dir / f"{slug}.md"
-            out_file.write_text(content, encoding="utf-8")
-            count += 1
-
-        rpath.unlink(missing_ok=True)
-
-    return count
-
-
 async def sync_index(deps: IndexDeps) -> dict[str, int]:
     """Synchronize markdown vault notes and library docs into chunks and docs_index."""
     counts = {"added": 0, "updated": 0, "removed": 0, "skipped": 0}
 
     scanned_files = scan_vault(deps.vault_root, skip=deps.skip)
     if deps.library_dir.exists():
-        lib_files = scan_vault(deps.library_dir, skip=deps.skip)
+        lib_files = scan_vault(deps.library_dir, skip=deps.skip, exclude_dirs=LIBRARY_SCAN_EXCLUDE)
         for k, v in lib_files.items():
             scanned_files[f"library/{k}"] = v
 

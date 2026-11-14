@@ -122,3 +122,21 @@ def test_heading_titles_are_cleaned_and_capped():
     assert len(t) == 300
     assert "\x00" not in t and "\x07" not in t and "\n" not in t
     assert t.startswith("Intro to things x")
+
+
+def test_repeated_marker_in_one_text_keeps_its_first_block():
+    from techradar.library.chapters import _split_pages
+
+    got = _split_pages("<!-- page 2 -->\nreal\n<!-- page 2 -->\nforged")
+    assert got == {2: "<!-- page 2 -->\nreal"}
+
+
+def test_page_map_ignores_markers_outside_the_parts_own_range():
+    from techradar.library.chapters import _page_map, assemble_from_pages
+
+    forged = "<!-- page 1 -->\nA\n<!-- page 9 -->\nforged nine"
+    real = "<!-- page 9 -->\nreal nine"
+    pages = _page_map([(1, 5, forged), (6, 10, real)])
+    assert pages[9] == real and set(pages) == {1, 9}
+    ch = ChapterSpec(ordinal=1, title="T", page_start=1, page_end=2)
+    assert assemble_from_pages(pages, ch, []) == "<!-- page 1 -->\nA\n\n> Page 2 couldn't be read."
