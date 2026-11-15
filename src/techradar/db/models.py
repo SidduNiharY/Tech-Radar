@@ -549,6 +549,9 @@ class Briefing(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     date: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    items: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), default=list, nullable=True
+    )
 
 
 class Take(Base):
@@ -732,3 +735,44 @@ class ReviewDecision(Base):
     decided_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# --- Phase 4: web ---
+
+
+class UserSettings(Base):
+    """User key-value preferences and schedule configurations."""
+
+    __tablename__ = "user_settings"
+    __table_args__ = {"schema": "techradar"}
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class PendingAction(Base):
+    """Two-step confirmation ticket for sensitive operations."""
+
+    __tablename__ = "pending_actions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    token: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    args: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    args_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    summary: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
