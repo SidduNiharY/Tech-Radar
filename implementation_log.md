@@ -44,5 +44,15 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 3 Task 4: Facts-first MCQs with two-family checking · 055ab14 · 2026-11-15
+- Built: practice/mcq.py, evals/mcq/export.py
+- Tests: 22 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: background job `mcq_job` calling `run_make_mcqs(session, maker_model, checker_model, today)`; evaluation harness `export_eval_dataset`
+- Old code removed: none
+- Open questions: none
+
+
 
 
