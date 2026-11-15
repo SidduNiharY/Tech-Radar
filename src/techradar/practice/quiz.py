@@ -1,124 +1,209 @@
+# WIRING(claude): routing quiz, cards; callbacks ans, rate
+# WIRING(claude): jobs quiz_job, cards_job, mistakes_page_job
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.practice.fsrs import Card, State
-from techradar.practice.mcq import MCQDraft
+from techradar.db.models import MCQ, Flashcard, Mistake, QuizAttempt
+from techradar.messaging.outbox import Button, enqueue_message
+from techradar.practice.flashcards import new_card_state
 
-
-class TwoModelKeyChecker:
-    """Checks generated MCQ keys against a secondary model's answer pick (SEC-20)."""
-
-    @staticmethod
-    def verify_mcq_key(draft: MCQDraft, checker_answer_index: int) -> bool:
-        """Compares generator's draft.answer_index with secondary model's checker_answer_index.
-
-        If they disagree, returns False (MCQ dropped and never shown, SEC-20).
-        """
-        return draft.answer_index == checker_answer_index
+LETTERS: list[str] = ["A", "B", "C", "D"]
 
 
-class _FilterCallable:
-    def __init__(self, target: Any) -> None:
-        self.target = target
-
-    def __call__(
-        self,
-        due_cards: list[Card],
-        is_final_mode: bool = False,
-    ) -> list[Card]:
-        new_limit = getattr(self.target, "new_limit", getattr(self.target, "DEFAULT_NEW_LIMIT", 10))
-        review_limit = getattr(
-            self.target,
-            "review_limit",
-            getattr(self.target, "DEFAULT_REVIEW_LIMIT", 40),
-        )
-        final_limit = getattr(
-            self.target,
-            "final_mode_review_limit",
-            getattr(self.target, "DEFAULT_FINAL_MODE_REVIEW_LIMIT", 80),
-        )
-        max_reviews = final_limit if is_final_mode else review_limit
-        new_cards = [c for c in due_cards if c.state == State.NEW]
-        review_cards = [c for c in due_cards if c.state != State.NEW]
-        return new_cards[:new_limit] + review_cards[:max_reviews]
-
-
-class _HybridFilterDescriptor:
-    def __get__(self, instance: Any, owner: Any = None) -> _FilterCallable:
-        if instance is not None:
-            return _FilterCallable(instance)
-        return _FilterCallable(owner)
-
-
-class DailyPracticeLimits:
-    """Daily study limits: 10 new cards, 40 reviews (80 in final 30 days exam mode)."""
-
-    DEFAULT_NEW_LIMIT = 10
-    DEFAULT_REVIEW_LIMIT = 40
-    DEFAULT_FINAL_MODE_REVIEW_LIMIT = 80
-
-    def __init__(
-        self,
-        new_limit: int = DEFAULT_NEW_LIMIT,
-        review_limit: int = DEFAULT_REVIEW_LIMIT,
-        final_mode_review_limit: int = DEFAULT_FINAL_MODE_REVIEW_LIMIT,
-    ) -> None:
-        self.new_limit = new_limit
-        self.review_limit = review_limit
-        self.final_mode_review_limit = final_mode_review_limit
-
-    filter_due_cards = _HybridFilterDescriptor()
-
-
-class MistakeEntry(BaseModel):
-    user_id: int
-    question_id: str
-    chosen_option: int
-    correct_option: int
+class McqRow(BaseModel):
+    id: int
+    question: str
+    options: list[str]
+    answer_index: int
     explanation: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    fact_id: int | None = None
+    chunk_id: int | None = None
+    chapter_id: int | None = None
+    status: str = "active"
 
-    def __getitem__(self, item: str) -> Any:
-        return getattr(self, item)
+
+def render_mcq(m: Any, n: int, total: int) -> tuple[str, list[list[Button]]]:
+    """Renders a multiple choice question with formatted text and A-D buttons.
+
+    Text starts with: Q<n>/<total> · <question>
+    Buttons: A-D with data ans:<mcq_id>:<0-3>
+    """
+    options: Sequence[str] = getattr(m, "options", [])
+    question: str = getattr(m, "question", "")
+    mcq_id: int = getattr(m, "id", 0)
+
+    lines = [f"Q{n}/{total} · {question}\n"]
+    for i, opt in enumerate(options):
+        letter = LETTERS[i] if i < len(LETTERS) else str(i)
+        lines.append(f"{letter}. {opt}")
+    text = "\n".join(lines)
+
+    button_count = min(len(LETTERS), len(options)) if options else 4
+    buttons = [[Button(text=LETTERS[i], data=f"ans:{mcq_id}:{i}") for i in range(button_count)]]
+    return text, buttons
 
 
-class MistakesNotebook:
-    """Records incorrect quiz answers for prioritized spaced repetition."""
+class AnswerOutcome(BaseModel):
+    correct: bool
+    correct_index: int
+    explanation: str
+    already_answered: bool
 
-    def __init__(self) -> None:
-        self._mistakes: dict[int, list[MistakeEntry]] = defaultdict(list)
 
-    def record_mistake(
-        self,
-        user_id: int,
-        question_id: str,
-        chosen_option: int,
-        correct_option: int,
-        explanation: str,
-    ) -> None:
-        entry = MistakeEntry(
-            user_id=user_id,
-            question_id=question_id,
-            chosen_option=chosen_option,
-            correct_option=correct_option,
-            explanation=explanation,
+async def record_answer(
+    session: AsyncSession,
+    mcq_id: int,
+    chosen: int,
+    now: datetime,
+) -> AnswerOutcome:
+    """Records a user's answer to an MCQ.
+
+    Idempotent per mcq_id per day. A wrong answer creates a Mistake row
+    (kind='mcq') and an FSRS Flashcard.
+    """
+    today: date = now.date() if hasattr(now, "date") else now
+
+    # Check for existing attempt today (idempotency)
+    stmt = select(QuizAttempt).where(
+        QuizAttempt.mcq_id == mcq_id,
+        QuizAttempt.date == today,
+    )
+    res = await session.execute(stmt)
+    existing = res.scalars().first()
+
+    # Load MCQ record
+    mcq = await session.get(MCQ, mcq_id)
+    if mcq is None:
+        raise ValueError(f"MCQ with id {mcq_id} not found")
+
+    if existing is not None:
+        return AnswerOutcome(
+            correct=existing.correct,
+            correct_index=mcq.answer_index,
+            explanation=mcq.explanation,
+            already_answered=True,
         )
-        self._mistakes[user_id].append(entry)
 
-    def get_mistakes(self, user_id: int) -> list[MistakeEntry]:
-        return list(self._mistakes.get(user_id, []))
+    is_correct = chosen == mcq.answer_index
+    attempt = QuizAttempt(
+        mcq_id=mcq_id,
+        chosen_index=chosen,
+        correct=is_correct,
+        answered_at=now,
+        date=today,
+    )
+    session.add(attempt)
 
-    def get_user_mistakes(self, user_id: int) -> list[MistakeEntry]:
-        return self.get_mistakes(user_id)
+    if not is_correct:
+        # Create a Mistake row
+        chosen_letter = LETTERS[chosen] if 0 <= chosen < len(LETTERS) else str(chosen)
+        correct_letter = (
+            LETTERS[mcq.answer_index]
+            if 0 <= mcq.answer_index < len(LETTERS)
+            else str(mcq.answer_index)
+        )
+        chosen_text = mcq.options[chosen] if 0 <= chosen < len(mcq.options) else str(chosen)
+        correct_text = (
+            mcq.options[mcq.answer_index]
+            if 0 <= mcq.answer_index < len(mcq.options)
+            else str(mcq.answer_index)
+        )
 
-    def __getitem__(self, user_id: int) -> list[MistakeEntry]:
-        return self.get_mistakes(user_id)
+        mistake = Mistake(
+            kind="mcq",
+            ref_id=mcq_id,
+            detail={
+                "question": mcq.question,
+                "chosen_index": chosen,
+                "chosen_letter": chosen_letter,
+                "chosen_text": chosen_text,
+                "correct_index": mcq.answer_index,
+                "correct_letter": correct_letter,
+                "correct_text": correct_text,
+                "explanation": mcq.explanation,
+            },
+            created_at=now,
+        )
+        session.add(mistake)
 
-    @property
-    def mistakes(self) -> dict[int, list[MistakeEntry]]:
-        return self._mistakes
+        # Create an FSRS Flashcard
+        fsrs_card_state, card_due = new_card_state(now)
+        back_text = f"{correct_letter}. {correct_text}\n\n{mcq.explanation}"
+        flashcard = Flashcard(
+            front=mcq.question,
+            back=back_text,
+            source_kind="mcq",
+            source_id=mcq_id,
+            fsrs_card=fsrs_card_state,
+            due=card_due,
+            first_shown_at=None,
+            chunk_id=getattr(mcq, "chunk_id", None),
+            retired=False,
+        )
+        session.add(flashcard)
+
+    await session.flush()
+
+    return AnswerOutcome(
+        correct=is_correct,
+        correct_index=mcq.answer_index,
+        explanation=mcq.explanation,
+        already_answered=False,
+    )
+
+
+def render_feedback(o: AnswerOutcome, options: list[str]) -> str:
+    """Renders user feedback for an answer outcome."""
+    if o.correct:
+        return "✅ Correct."
+
+    letter = (
+        LETTERS[o.correct_index] if 0 <= o.correct_index < len(LETTERS) else str(o.correct_index)
+    )
+    opt = options[o.correct_index] if 0 <= o.correct_index < len(options) else ""
+    return f"❌ Answer: {letter}. {opt} — {o.explanation}"
+
+
+class QuizResult(BaseModel):
+    questions_sent: int = 0
+    mcq_ids: list[int] = Field(default_factory=list)
+    skipped_reason: str | None = None
+
+
+async def run_quiz(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    owner_chat_id: int,
+    limit: int = 10,
+) -> QuizResult:
+    """Job body for quiz_job. Enqueues up to limit active MCQs to owner_chat_id."""
+    stmt = select(MCQ).where(MCQ.status == "active").order_by(MCQ.id.desc()).limit(limit)
+    res = await session.execute(stmt)
+    mcqs = list(res.scalars().all())
+
+    if not mcqs:
+        return QuizResult(skipped_reason="no_active_mcqs")
+
+    total = len(mcqs)
+    mcq_ids: list[int] = []
+    for n, m in enumerate(mcqs, 1):
+        text, buttons = render_mcq(m, n, total)
+        await enqueue_message(
+            session,
+            chat_id=owner_chat_id,
+            text=text,
+            buttons=buttons,
+            purpose="quiz",
+            ref_id=m.id,
+        )
+        mcq_ids.append(m.id)
+
+    return QuizResult(questions_sent=total, mcq_ids=mcq_ids)
