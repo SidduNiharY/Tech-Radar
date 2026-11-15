@@ -167,6 +167,25 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 
 ## Phase 5 handed back · 079a748
 
+## Phase 6: Voice Coach v1 and English Practice · fe8fb58 · 2026-11-15
+- Built:
+  - Models: `VoiceSession`, `VoiceMetrics`, `PronunciationScore`, `WritingFeedback`, `Story`, `StoryDraft`, `Listening`, `Reflection`, `VoiceNotice` in `src/techradar/db/models.py`
+  - Migration: `src/techradar/db/migrations/versions/0008_voice.py` revising `0007_planner`
+  - Voice intake & audio: `voice/intake.py` (duration/size limits, OggS magic check, 0o640 file save), `voice/audio.py` (decode_audio, compute_peaks)
+  - Transcription & library video: `voice/transcribe.py` (Word, Transcript, Transcriber Protocol, no_speech), `voice/library_audio.py` (offset_words, SlideText, TimedChapter, chapters_by_time)
+  - Metrics & pronunciation: `voice/metrics.py` (compute_metrics, SpeechMetrics, fillers, long pauses, TTR, overused words), `voice/align.py` (CTC Viterbi forced alignment, phone_scores, to_vocab_ids), `voice/pronounce.py` (expected_ipa, PhonemeModel Protocol, WordScore, score_words)
+  - Voice feedback & jobs: `voice/feedback.py` (choose_fixes top 3, phrase_feedback, render_voice_report), `voice/speak.py` (Speaker Protocol, KokoroOnnxSpeaker), `voice/jobs.py` (analyse_voice, cleanup_voice with 24h retention)
+  - English practice: `english/grammar_check.py` (check_grammar, GrammarIssue, RULE_MAP), `english/writing.py` (Rubric, WritingFeedback, feedback_on_text, render_writing_feedback, route_and_validate_polish), `english/stories.py` (STAR_FIELDS, story_step), `english/reading.py` (reading_quiz), `english/listening.py` (KeyPoints, Coverage, render_coverage), `english/reflection.py` (save_reflection), `voice/practice_time.py` (reminder_due)
+  - Security checks: `scripts/check_model_files.py` (banning .pt/.pth/.pkl/.ckpt and gating .bin)
+- Tests: 37 unit tests pass across `tests/voice`, `tests/english`, `tests/scripts` (4 db tests marked)
+- Not run: `docker compose run --rm migrate` and live GPU tests (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: `voice-worker` service (GPU, whisper, kokoro, wav2vec2), `languagetool` container on `tools` network, Telegram voice handler & `keep_voice` callback, API voice routes & Next.js Voice Report screen, `make gate-6`
+- Old code removed: `src/techradar/voice/fluency.py`, `src/techradar/voice/grammar.py`, and obsolete tests
+- Open questions: none
+
+## Phase 6 handed back · fe8fb58
+
 
 
 
