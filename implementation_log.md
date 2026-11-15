@@ -111,6 +111,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 
 ## Phase 4 handed back · 4f257be
 
+## Phase 5 Task 1: Study sessions and 1-7-30 revision calendar · dbfcb29 · 2026-11-15
+- Built: planner/sessions.py (Goal, revision_dates, parse_study_command, join_dates, goal_for_doc, start_session, stop_session, schedule_chapter_revisions, close_stale_sessions), models.py (StudySession, Revision, Checkin, Plan), migrations/0007_planner.py
+- Tests: 4 unit pass; 4 db written, collect, not run
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: bot commands `/study`, `/stop`; background job `close_stale_sessions_job` (hourly)
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
