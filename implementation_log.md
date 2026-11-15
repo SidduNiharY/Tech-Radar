@@ -186,6 +186,25 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 
 ## Phase 6 handed back · fe8fb58
 
+## Phase 7: Understanding and World · a73dc76 · 2026-11-15
+- Built:
+  - Models: `DeepDive`, `GlossaryTerm`, `Timeline`, `Prediction`, `EconSeries`, `FactCheck` in `src/techradar/db/models.py`
+  - Migration: `src/techradar/db/migrations/versions/0009_world.py` revising `0008_voice`
+  - Night foundations: `night/foundations.py` (`wikipedia_url`, `queue_background`, `GENERATED_START`, `GENERATED_END`, `replace_generated_block`, `FoundationSection`, `fill_foundation`), `fetcher/wikipedia.py` (`wikipedia_url`)
+  - Deep dives: `night/deep_dive.py` (`ClusterStat`, `pick_topic`, `DDSection`, `DeepDive`, `write_deep_dive`)
+  - Glossary, timelines, causal chains: `night/glossary.py` (`glossary_candidates`, `GlossaryEntry`, `write_glossary_entry`), `night/timelines.py` (`TimelineEntry`, `timeline_entries`, `write_timeline`), `night/chains.py` (`CausalChain`, `sanitize_label`, `chain_to_mermaid`)
+  - Politics: `pipeline/politics.py` (`POLITICS_SYSTEM`, `Opinion`, `FactClaim`, `PoliticsView`, `keep_attributed`, `render_opinion_sections`)
+  - Predictions: `world/predictions.py` (`parse_predict`, `render_predictions_context`, `get_due_predictions`, `record_prediction`, `record_outcome`, `sync_predictions_vault`)
+  - Economy: `world/econ.py` (`SERIES`, `SeriesSpec`, `extract_series_value`, `parse_worldbank`, `parse_econ_command`, `change_sentence`)
+- Tests: 90 unit tests pass across `tests/night`, `tests/world`, `tests/pipeline`, `tests/fetcher` (16 db tests collect)
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: `foundation_fill_job`, `deep_dive_job`, `prediction_reminder_job`; SearXNG service & allowlists; bot `/predict`, `/econ`, `/check` routing and callbacks; API `/v1/world/econ` route and Next.js World screen
+- Old code removed: `src/techradar/practice/predictions.py`, `src/techradar/world/causality.py`, `src/techradar/world/economy.py`, `src/techradar/world/glossary.py`, and obsolete tests
+- Open questions: none
+
+## Phase 7 handed back · a73dc76
+
 
 
 
