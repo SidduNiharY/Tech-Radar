@@ -5,8 +5,14 @@ from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from techradar.db.models import Briefing as BriefingModel
+from techradar.messaging.outbox import enqueue_message
 from techradar.schemas.pipeline import Section
+
+# WIRING(claude): worker/tasks.py needs briefing_job (queue io, 15m) calling run_briefing.
 
 SECTION_ORDER = [
     Section.TECH,
@@ -191,3 +197,60 @@ def briefing_due(
     scheduled_dt = datetime.combine(now_local.date(), target_time, tzinfo=now_local.tzinfo)
     deadline_dt = scheduled_dt + timedelta(seconds=grace_s)
     return scheduled_dt <= now_local <= deadline_dt
+
+
+class BriefingResult(BaseModel):
+    briefing_id: int | None = None
+    messages_sent: int = 0
+    items_count: int = 0
+    skipped_reason: str | None = None
+
+
+async def run_briefing(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    owner_chat_id: int,
+    candidates: Sequence[StoryCandidate] | None = None,
+    official_domains: frozenset[str] = frozenset(),
+    at_time: time | None = None,
+    grace_s: int = 21600,
+    plan_lines: list[str] | None = None,
+) -> BriefingResult:
+    """Body of briefing_job. Checks due, composes, enqueues to outbox, and logs to briefings."""
+    res = await session.execute(
+        select(BriefingModel.date).order_by(BriefingModel.date.desc()).limit(1)
+    )
+    last_sent = res.scalar_one_or_none()
+
+    if not briefing_due(now, last_sent, at_time=at_time, grace_s=grace_s):
+        return BriefingResult(skipped_reason="not_due")
+
+    cands_list = list(candidates or [])
+    selected = select_items(cands_list, official_domains)
+
+    briefing_obj = Briefing(
+        date=now.date(),
+        items=selected,
+        plan_lines=plan_lines or [],
+    )
+
+    briefing_row = BriefingModel(date=now.date(), sent_at=now)
+    session.add(briefing_row)
+    await session.flush()
+
+    messages = render_briefing(briefing_obj)
+    for msg in messages:
+        await enqueue_message(
+            session,
+            chat_id=owner_chat_id,
+            text=msg,
+            purpose="briefing",
+            ref_id=briefing_row.id,
+        )
+
+    return BriefingResult(
+        briefing_id=briefing_row.id,
+        messages_sent=len(messages),
+        items_count=len(selected),
+    )

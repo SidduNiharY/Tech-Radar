@@ -535,3 +535,200 @@ class StarterPackItem(Base):
         Text, server_default="pending", default="pending", nullable=False
     )
     doc_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+# --- Phase 3: practice ---
+
+
+class Briefing(Base):
+    """Daily morning briefing record."""
+
+    __tablename__ = "briefings"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Take(Base):
+    """User's one-line take on a briefing."""
+
+    __tablename__ = "takes"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    briefing_id: Mapped[int] = mapped_column(ForeignKey("techradar.briefings.id"), nullable=False)
+    text: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MCQ(Base):
+    """Multiple choice question generated from verified facts or library chunks."""
+
+    __tablename__ = "mcqs"
+    __table_args__ = (
+        CheckConstraint(
+            "(fact_id IS NOT NULL AND chunk_id IS NULL) "
+            "OR (fact_id IS NULL AND chunk_id IS NOT NULL)",
+            name="ck_mcqs_single_source",
+        ),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    fact_id: Mapped[int | None] = mapped_column(ForeignKey("techradar.facts.id"), nullable=True)
+    chunk_id: Mapped[int | None] = mapped_column(ForeignKey("techradar.chunks.id"), nullable=True)
+    chapter_id: Mapped[int | None] = mapped_column(
+        ForeignKey("techradar.library_chapters.id"), nullable=True
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    answer_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        Text, default="active", server_default="active", nullable=False
+    )
+
+
+class QuizAttempt(Base):
+    """Attempt and outcome for a quiz question."""
+
+    __tablename__ = "quiz_attempts"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    mcq_id: Mapped[int] = mapped_column(ForeignKey("techradar.mcqs.id"), nullable=False)
+    chosen_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    answered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class Flashcard(Base):
+    """FSRS flashcard for spaced repetition."""
+
+    __tablename__ = "flashcards"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    front: Mapped[str] = mapped_column(Text, nullable=False)
+    back: Mapped[str] = mapped_column(Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    fsrs_card: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), default=dict, nullable=False
+    )
+    due: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    first_shown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    chunk_id: Mapped[int | None] = mapped_column(ForeignKey("techradar.chunks.id"), nullable=True)
+    doc_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ts_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retired: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+
+
+class Mistake(Base):
+    """Mistake notebook record for wrong quiz or drill answers."""
+
+    __tablename__ = "mistakes"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    ref_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    detail: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Vocab(Base):
+    """Vocabulary item extracted from reading."""
+
+    __tablename__ = "vocab"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    word: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    sentence: Mapped[str] = mapped_column(Text, nullable=False)
+    meaning: Mapped[str] = mapped_column(Text, nullable=False)
+    synonyms: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), default=list, nullable=False
+    )
+    antonyms: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), default=list, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GrammarItem(Base):
+    """Grammar drill question generated and verified."""
+
+    __tablename__ = "grammar_items"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    answer_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    rule: Mapped[str] = mapped_column(Text, nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExamWatch(Base):
+    """Configured exam watch targets."""
+
+    __tablename__ = "exam_watches"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    watch_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Alert(Base):
+    """Alert for exam watch changes."""
+
+    __tablename__ = "alerts"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    watch_id: Mapped[int] = mapped_column(ForeignKey("techradar.exam_watches.id"), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReviewDecision(Base):
+    """Review decisions made on quarantined or flagged intake items."""
+
+    __tablename__ = "review_decisions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    decision: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
