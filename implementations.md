@@ -20,7 +20,7 @@ Your work is done when Claude can connect it without renaming or reshaping anyth
 1. **Use your own folder.** The main folder has unfinished Phase 2c work in it. From the main folder run this once, then open the new folder in Antigravity:
 
    ```bash
-   git fetch origin && git worktree add ../TechRadarBrain-basic -b basic/phases-3-12 origin/fix/b5-real-gates
+   git worktree add ../TechRadarBrain-basic -b basic/phases-3-12 fix/b5-real-gates
    ```
 
    ```bash
@@ -29,7 +29,7 @@ Your work is done when Claude can connect it without renaming or reshaping anyth
 
 2. **Read, in this order:** `AGENTS.md` · the overview plan `docs/superpowers/plans/2026-11-07-techradar-00-overview.md` (Decisions, Global Constraints, Conventions) · this file · the plan of the phase you are on · `TODO.md` section 2.
 3. **Go in phase order: 3, 4, 5, 6, 7, 8, 9, 10, 11, 12.** The migrations form one chain (`0005` to `0014`), so a phase cannot be skipped.
-4. **Before each phase:** `git fetch origin && git merge origin/fix/b5-real-gates`. Claude's fixes land there. Never rebase, never force-push, never push to `main` or to `fix/b5-real-gates`.
+4. **Before each phase:** `git merge fix/b5-real-gates`. Claude's fixes land on that branch, and both folders share one repository, so no fetch is needed. Never rebase. Never check out, commit to or push `main` or `fix/b5-real-gates`. Do not push at all: Claude reads your branch from this Mac.
 5. **After each task:** one commit, then one entry in `implementation_log.md` (section 12).
 
 Use only the five skills in `AGENTS.md` section 6. Install no other skill, plugin or MCP server.
@@ -427,7 +427,7 @@ Log entry format:
 - Open questions: none
 ```
 
-At the end of a phase, push the branch (`git push -u origin basic/phases-3-12`) and add a line `## Phase 3 handed back · <last commit sha>`.
+At the end of a phase, add a line `## Phase 3 handed back · <last commit sha>` to the log and commit it. Then tell the owner the phase is ready for Claude.
 
 ## 13. What Claude does with each phase you hand back
 
