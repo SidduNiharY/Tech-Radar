@@ -842,4 +842,3 @@ class Plan(Base):
     lines: Mapped[list[str]] = mapped_column(
         JSONB, server_default=text("'[]'::jsonb"), default=list, nullable=False
     )
-
