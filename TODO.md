@@ -1,478 +1,269 @@
-# TechRadar Brain: Master Implementation & Development Tracker
+# TechRadar Brain: TODO
 
-**Status (2026-11-12):** No gate is passed. Logic modules exist for most phases; only Phases 1 to 2b are partly wired and have run on the TUF. See the status table below; it replaces the ticks.  
-**Target Environment:** MacBook Air M4 (development) and ASUS TUF A15 running Ubuntu 26.04 (server, set up 2026-11-11)  
-**Security Baseline:** SEC-01 through SEC-68 (Strict Zero-Inbound, Least-Privilege, Sandbox Verification)
+**Status date:** 2026-11-15 · **Branch:** `fix/b5-real-gates` (never merge to `main` without the owner) · **Rough progress:** about a quarter of the whole project.
+
+This file is the tracker. The task details are in the phase plans under `docs/superpowers/plans/`. The brief for Antigravity is [`implementations.md`](implementations.md). Server steps are in `TODO_TUF_AND_MAC.md`; gate sign-offs are in `docs/security/gates.md`.
+
+The tick list this file held until 2026-11-12 is gone on purpose: a tick there meant only "a small module with fake-based tests exists", often under a different name than the plan. It is still in git (`git show f2631a7:TODO.md`).
 
 ---
 
-## 0. Truthful Status (2026-11-12)
+## 1. Who does what
 
-**Read this before any tick below.** An audit on 2026-11-10 found that a tick in this file meant only that a small logic module with unit tests (using fakes) existed, often under different names than the plans. The ticks are kept as history. This table is the status:
+| Who | Does |
+|---|---|
+| **Antigravity** | The basic work of phases 3 to 12: plain logic, data shapes, message text, database models and migrations, unit tests. Exactly as [`implementations.md`](implementations.md) says, on its own branch. |
+| **Claude** | Phase 2c to the end; then, for every phase Antigravity hands back: review, wiring (jobs, bot handlers, API, containers), every security task, the database tests on the TUF, the gaps. |
+| **Owner** | Sudo and secrets on the TUF, approvals (dependencies, URLs), the checks only a person can do (50 MCQs, real book, nmap), signing gates. |
 
-- **LOGIC**: the module exists and its unit tests pass with fakes.
-- **WIRED**: jobs, migrations, bot handlers or API routes call it, so it runs inside the app.
-- **VERIFIED-ON-TUF**: its database, egress or end-to-end tests have passed on the Linux server.
+## 2. Status by phase
 
-| Phase | LOGIC | WIRED | VERIFIED-ON-TUF | Notes |
+Three levels, in this order. A phase is done only when all three are "yes" and its gate is signed.
+
+- **Basic**: the plan's modules exist under the plan's names, with unit tests.
+- **Wired**: migrations, jobs, bot handlers and API routes call them, so it runs inside the app.
+- **On TUF**: its database, egress and end-to-end tests have passed on the server.
+
+| Phase | Basic | Wired | On TUF | Next step, and whose |
 |---|---|---|---|---|
-| 1 Foundation | Yes | Yes | Partly | 31 db tests, 7 of 8 egress tests, compose policy, scanners in `make security` (2026-11-12). Host daemons, restore test, simulated attacks, nmap and heartbeat not done yet. |
-| 2 Ingest | Yes | Partly | Partly | Intake Gateway now runs on every parser job (2026-11-12). The fake pipeline runs on Postgres. Not run with real feeds or models. |
-| 2b RAG and Ask | Yes | Partly | Partly | RAG db tests pass. No eval with real models. |
-| 2c Library | Partly | No | No | Most plan tasks not built. |
-| 3 Briefing and practice | Yes | No | No | Not called by any job or bot handler. |
-| 4 Web app | Partly | No | No | Pages show placeholder data and never call the API. API fails closed (2026-11-12). |
-| 5 Planner | Yes | No | No | No tables or jobs. |
-| 6 Voice and English | Partly | No | No | |
-| 7 World | Partly | No | No | The "fact-checker" is an in-memory list; no SearXNG. |
-| 8 Exams | Partly | No | No | |
-| 9 Live voice | No | No | No | |
-| 10 Models and MCP | Partly | No | No | The vault MCP is a plain class (not FastMCP: `fastmcp` is not approved). |
-| 11 Feedback | Partly | No | No | |
-| 12 Jarvis | Partly | No | No | |
+| 1 Foundation | yes | yes | partly | Owner: nmap from the Mac, Telegram stage (heartbeat), `filelock` decision. Then sign gate 1. |
+| 2 Ingest | yes | partly | partly | Internet stage: real feeds, real models, `guard-eval`, red-team. |
+| 2b RAG and Ask | yes | partly | partly | Internet stage: `rag-eval` in live mode. |
+| 2c Library | 10 of 11 tasks | mostly | partly (157 db tests pass at `6e38f25`) | Claude: finish starter packs and the quarantine mounts, then run `make gate-2c` on the TUF. See section 4. |
+| 3 Briefing and practice | old code only | no | no | Antigravity: basic work. |
+| 4 Web app | old code only | no | no | Antigravity: tables and schemas. Claude: the API, the web scaffold, all security. Screens after the scaffold. |
+| 5 Planner | old code only | no | no | Antigravity: basic work. |
+| 6 Voice and English | a little | no | no | Antigravity: metrics, scoring, English practice. Claude: audio intake, containers, models. |
+| 7 World | old code only | no | no | Antigravity: night writers, predictions. Claude: Wikipedia, SearXNG, economy fetch. |
+| 8 Exams | old code only | no | no | Antigravity: syllabus, drills, weights. Claude: past-paper and screenshot intake. |
+| 9 Live voice and group | none | no | no | Mostly Claude (security). Antigravity: small pure parts. |
+| 10 Models and extras | a little | no | no | Mostly Claude. Antigravity: fit estimate, bench scoring, digest logic. |
+| 11 Feedback | old code only | no | no | Antigravity: tables, signals, weights, patterns. Claude: rules and liked examples. |
+| 12 Jarvis | old code only | no | no | Mostly Claude. Antigravity: tables, read-only skills, greeting. |
 
-Only migrations 0001 to 0004 exist (the plans need about 15). The worker has 5 jobs, all for Phases 2 and 2b. The server work and the remaining steps are tracked in `TODO_TUF_AND_MAC.md`; gate status is in `docs/security/gates.md`.
+"Old code" means the modules from the first Antigravity run. They sit under other names and keep data in memory instead of the database, so nothing can call them. `implementations.md` section 6 says what replaces each one.
 
----
+Migrations today: `0001` to `0004b`. The plans need `0005` to `0014`.
 
-## 1. Hardware & Execution Boundary Strategy
+## 3. In flight right now (read before touching the tree)
 
-Because development is starting on the **MacBook Air M4** while the **ASUS TUF A15 (Linux)** server is not currently available:
+- **Three commits are local only** (not pushed): `c2c0666` (ask one book, night answers), `310e75d` (book evals in `rag-eval`), `00823ea` (gate 2c wiring).
+- **Starter packs (2c Task 9) are half done and uncommitted.** Files are staged: `library/packs.py`, `fetcher/packs_cycle.py`, `bot/packs_command.py`, `infra/sources/exam_packs.yaml`, their tests. The agent stopped during its last test run. Two tests fail until it is finished.
+- **Quarantine mounts are half done and uncommitted**: `compose.yaml`, `tests/security/test_compose_policy.py`, hunks in `bot/main.py`, `bot/callbacks.py`, `library/quarantine.py`, `worker/tasks.py`. The agent stopped just before its commit.
+- So `make test` is not green on the working tree. It is green at `00823ea` minus the packs files.
 
-| Subsystem | Mac Development Execution (Now) | Linux Server Deployment (Later) |
+## 4. Phase 2c: what is done, what is left
+
+| Plan task | State |
+|---|---|
+| 1 Tables, schema fields, settings | Done. Database tests pass on the TUF. |
+| 2 Library inbox intake | Done. No-follow opens, hash while copying, 50 files a run. |
+| 3 Gateway steps 4 to 6 | Done. Zip and Office checks, media probe, pixel rebuild for flagged PDFs. |
+| 4 Big PDFs in parts, chapters, night window | Done. Parts are 25 pages; one part took 58 s in the real image. |
+| 5 Videos: audio, frames, slides | Done and hardened. Not yet timed with OCR on the TUF. |
+| 6 Indexing | Done. |
+| 7 Summaries, Ready message, book evals | Done. Retries, give-up after 3 tries, night budget. |
+| 8 RAG upgrades | Done (`c2c0666`): reply to a Ready message asks that book; hard questions go to the night model. Its database test has not run on the TUF. |
+| 9 Starter packs | **In progress, uncommitted.** |
+| 10 Quarantine | Done: notice, `/quarantine`, two-step release, delete. **Compose mounts for it are in progress.** |
+| 11 Gate 2c | Wired (`310e75d`, `00823ea`). **Not run on the TUF.** |
+
+Left for Claude, in order:
+
+- [ ] Finish and review Task 9 (starter packs) and the quarantine mounts; commit; push.
+- [ ] On the TUF: pull, `make test-db`, `make security` (first shellcheck of `phase2c.sh`), `make simulate-2c`, `make gate-2c`.
+- [ ] Time on the TUF: OCR of 20 frames in one media job, and 25 dense PDF pages. Both must stay under 120 s.
+- [ ] Decide and fix: a flagged document stays `processing` for ever (the summaries job skips it).
+- [ ] Held news and Telegram items cannot be released yet (the bot has no gate); only library documents can.
+- [ ] A quarantined video is copied whole once per segment, and every segment job repeats the probe and the antivirus scan. Make it once per file.
+- [ ] Retention: when a held library item expires, its original and its row stay.
+- [ ] `init: true` for the parser service (it reaps children in code today).
+- [ ] The summaries job ends without a retry when the model call raises; two books can overlap if the `llm` queue ever runs more than one job.
+- [ ] Remove the old 2c modules once nothing imports them: `library/summarizer.py`, and check `library/models.py` and `library/media.py`.
+- [ ] Bring the plan text in line with the code (note folders are `<slug>-<doc_id>`; `ask_night` takes no chat id).
+- [ ] Update `HANDOFF.md`, `TODO_TUF_AND_MAC.md` and `docs/security/gates.md` when gate 2c has run.
+
+Waiting on the internet stage (the gate prints these as WAITING): the Ready message and quarantine notices in the real bot, summaries and book evals with real models, pack downloads.
+
+## 5. Phases 3 to 12: task tracker
+
+One row per plan task. **Basic** is Antigravity's column, **Wired** is Claude's. Values: `no`, `old` (old module, to be replaced), `part`, `yes`, `claude` (no basic part: Claude does the whole task). Update the cell and add the commit when it changes.
+
+### Phase 3: Briefing, practice, exam alerts (`0005_practice`)
+
+| Task | Basic | Wired |
 |---|---|---|
-| **Language & Environment** | Python 3.14 via `uv`, src layout `src/techradar` | Same Python/uv in Docker images |
-| **Testing Harness** | Unit tests run via mock protocols (`fakes.py`) without requiring Docker/Postgres | Integration tests run against containerized Postgres + pgvector |
-| **Database** | In-memory/SQLite fakes for unit tests, local Postgres or Docker when available | Production PostgreSQL 18 + pgvector + pgaudit |
-| **Local Models** | Native Mac Ollama (Gemma 4 E2B, Qwen3.5-4B) / Fake LLM completers | Ollama on NVIDIA RTX 3060 Laptop GPU (6GB VRAM) |
-| **Frontend** | Next.js 14 (App Router), React 18, Tailwind 3 on Node 20 (no shadcn/ui or Three.js orb yet) | Next.js running in Docker behind Tailscale Serve HTTPS |
-| **Intake Gateway** | Native Python sandbox logic (libmagic, pdfid, YARA, text normalization) | ClamAV daemon container, no-network parser container |
-| **Security & Auditing** | Static checks: semgrep, ruff, gitleaks, `check_deps.py`, `check_mcp.py` | Host daemons: Falco (eBPF), auditd, AIDE, Lynis, Alerter |
-| **Voice Engine** | Web Audio API, openWakeWord, Kokoro ONNX, faster-whisper (CPU/Metal) | Pipecat WebRTC live pipeline on GPU |
+| 1 Briefing composer and schedule | part (text and selection exist; no tables, no run function) | no |
+| 2 "My take" replies | old | no |
+| 3 Links, PDFs and pasted text from me | claude | no |
+| 4 Facts-first MCQs, two-family check | old | no |
+| 5 Quiz, flashcards, mistakes notebook | old | no |
+| 5b Mark chapter as read, chapter cards | old | no |
+| 6 Grammar set and vocabulary | old | no |
+| 7 Exam notification watcher | old (text parts only) | no |
+| 8 Monthly capsule and review inbox | no | no |
+| 8b Outdated facts retire cards and MCQs | no | no |
+| 9 Gate 3 | n/a | no |
 
----
+### Phase 4: Web app v1 (`0006_web`)
 
-## 2. Phase-by-Phase Master Roadmap
+| Task | Basic | Wired |
+|---|---|---|
+| 1 API service, service token, owner check | claude | part (fails closed since 2026-11-12) |
+| 2 API routes and OpenAPI export | part (tables and schemas are Antigravity's) | no |
+| 2b Confirmation tickets | claude | no |
+| 3 Next.js scaffold, supply chain, headers | claude | no |
+| 4 Server-only API client, streaming | claude | no |
+| 5 Screens and design system | old (placeholder pages) | no |
+| 5b Library, Quarantine, Security screens | old | no |
+| 6 Containers, `edge` network, Tailscale Serve, Langfuse | claude | no |
+| 6b Cross-site and host hardening | claude | no |
+| 6c Uploads from the Library screen | claude | no |
+| 7 Web security suite and gate 4 | claude | no |
 
-### Phase 1: Secure Foundation (`docs/superpowers/plans/2026-11-07-techradar-phase1-foundation.md`)
-**Gate Criteria:** `make gate-1` passes (lint, tests, policy checks, fake bot, config validation)
+### Phase 5: Planner, progress, reliability (`0007_planner`)
 
-- [x] **Task 1: Repository skeleton, tooling and agent rules** `[Mac Ready]`
-  - *Files:* `pyproject.toml`, `.python-version`, `.gitignore`, `.pre-commit-config.yaml`, `AGENTS.md`, `README.md`, `.env.example`, `secrets.example/`, `src/techradar/__init__.py`, `tests/test_smoke.py`
-  - *SEC:* SEC-11, SEC-34
-  - *Verify:* `git init`, `uv run pytest tests/test_smoke.py` passes. (Done: commit 4ad3187)
-- [x] **Task 2: CI security pipeline and custom semgrep rules** `[Mac Ready]`
-  - *Files:* `security/semgrep/rules.yaml`, `security/semgrep/rules.py`, `.github/workflows/ci.yml`, `.github/dependabot.yml`
-  - *SEC:* SEC-22, SEC-23, SEC-33
-  - *Verify:* All 7 custom rules defined with test cases; syntax clean. (Done: commit 5adb7b2)
-- [x] **Task 3: Settings, secrets reader and environment validation** `[Mac Ready]`
-  - *Files:* `src/techradar/settings.py`, `tests/test_settings.py`
-  - *SEC:* SEC-10, SEC-35 (`TR_ALLOW_CLOUD_LLM=false`, strip whitespace from secrets)
-  - *Verify:* Secret reading strips CRLF/spaces; invalid environments fail fast. (Done: commit 77ea1ea, 7 tests pass)
-- [x] **Task 4: JSON logs with secret redaction** `[Mac Ready]`
-  - *Files:* `src/techradar/logs.py`, `tests/test_logs.py`
-  - *SEC:* SEC-32 (Redact tokens, DB passwords, exact secrets, PII)
-  - *Verify:* JSON logs with ISO8601 timestamps and regex token redaction. (Done: commit 673a69a, 8 tests pass)
-- [x] **Task 5: Docker Compose architecture and policy tests** `[Mac Ready]`
-  - *Files:* `compose.yaml`, `compose.dev.yaml`, `infra/policy/compose_exceptions.yaml`, `tests/security/test_compose_policy.py`
-  - *SEC:* SEC-01, SEC-02, SEC-06, SEC-07, SEC-55 (Pinned SHA-256 digests, 127.0.0.1 bindings)
-  - *Verify:* Policy test asserts zero ports bound to 0.0.0.0 and all digests present. (Done: commit 9882043, 16 tests pass)
-- [x] **Task 6: Squid egress proxy configuration and allowlists** `[Mac Ready / Linux Integration]`
-  - *Files:* `infra/squid/squid.conf`, `infra/squid/allowlist.txt`, `tests/security/test_egress.py`
-  - *SEC:* SEC-05, SEC-25, SEC-59 (Outbound allowlist only; logging deny alarms)
-  - *Verify:* Configuration blocks internal IP access and non-allowlisted domains. (Done: commit 88f0619)
-- [x] **Task 7: Database roles, Dockerfile and baseline migration** `[Mac Ready / Linux Integration]`
-  - *Files:* `infra/postgres/init/01-roles.sh`, `infra/docker/Dockerfile`, `alembic.ini`, `src/techradar/db/`, `tests/db/test_engine.py`, `tests/db/test_roles.py`
-  - *SEC:* SEC-12 (Separate app, migrator, and read-only roles)
-  - *Verify:* SQLAlchemy 2 models validate cleanly with psycopg 3 types. (Done: commit b92f526, 21 tests pass)
-- [x] **Task 8: Model roles and LiteLLM abstraction** `[Mac Ready]`
-  - *Files:* `src/techradar/llm/roles.py`, `src/techradar/llm/client.py`, `infra/models/roles.yaml`, `tests/fakes.py`
-  - *SEC:* SEC-23 (GGUF/safetensors validation, no pickle, no trust_remote_code)
-  - *Verify:* Worker/checker routing correctly separates model families. (Done: commit 19424e9, 12 tests pass)
-- [x] **Task 9: Model downloads and fit test bench** `[Mac Ready (Mac models) / Linux (GPU)]`
-  - *Files:* `evals/fit/fit.py`, `tests/evals/test_fit.py`, `infra/models/README.md`
-  - *SEC:* SEC-23, Decision D6
-  - *Verify:* Evaluates context limits, VRAM projections, and speed thresholds. (Done: commit b6db3dd, 6 tests pass)
-- [x] **Task 10: Owner-only Telegram bot skeleton & `/status`** `[Mac Ready]`
-  - *Files:* `src/techradar/bot/`, `src/techradar/ops/status.py`, `tests/bot/`
-  - *SEC:* SEC-26 (Strict owner chat ID check; strangers get zero response)
-  - *Verify:* Non-owner messages ignored; `/status` returns clean system summary. (Done: commit 8fed414)
-- [x] **Task 11: Encrypted backup scripts with restic** `[Mac Ready (Scripts) / Linux (Cron)]`
-  - *Files:* `infra/backup/backup.sh`, `infra/backup/restore_test.sh`, `tests/infra/test_backup_script.py`
-  - *SEC:* SEC-14 (Encrypted snapshots, exclude honeytokens)
-  - *Verify:* Dry-run backup script generates valid restic commands. (Done: commit c1ce98b)
-- [x] **Task 12: CI security workflow and static analysis** `[Mac Ready]`
-  - *Files:* `.github/workflows/ci.yml`, `Makefile`, `security/semgrep/`, `infra/host/RUNBOOK.md`, `infra/host/check_host.sh`
-  - *SEC:* SEC-33 (Pinned GitHub Actions commit SHAs, gitleaks, ruff, semgrep)
-  - *Verify:* `make lint` and `make security` execute without errors. (Done: commit 59be5f7)
-- [x] **Task 13: Dependency approval and MCP allowlists** `[Mac Ready]`
-  - *Files:* `infra/policy/approved_deps.yaml`, `scripts/check_deps.py`, `scripts/check_mcp.py`, `scripts/check_skills.py`
-  - *SEC:* SEC-52, SEC-53 (Blocks typosquatting, slopsquatting, unvetted agent plugins)
-  - *Verify:* CI script fails if an unapproved package is added to `pyproject.toml`. (Done: commit fa64e9d, 8 tests pass)
-- [x] **Task 14: Host Alerter daemon, heartbeat, and egress alarms** `[Mac Ready (Scripts) / Linux (Host)]`
-  - *Files:* `src/techradar/hostsec/alerter.py`, `src/techradar/hostsec/contain.py`, `tests/hostsec/test_alerts.py`, `tests/hostsec/test_contain.py`
-  - *SEC:* SEC-59, SEC-66 (Separate bot token, daily 06:25 AM heartbeat, deduplication)
-  - *Verify:* Alerter formats alarms, dedupes bursts, and logs to append-only file. (Done: commit 0ae6bd0)
-- [x] **Task 15: Honeytokens, host integrity checks & auditing** `[Mac Ready (Templates) / Linux (Host)]`
-  - *Files:* `scripts/plant_honeytokens.py`, `scripts/integrity_check.py`, `src/techradar/hostsec/integrity.py`, `tests/hostsec/test_integrity.py`, `tests/hostsec/test_honeytokens.py`
-  - *SEC:* SEC-60, SEC-61, SEC-62, SEC-63 (AIDE, auditd, pgaudit, fake credentials)
-  - *Verify:* Scripts correctly configure honeytoken paths and exclude them from backups. (Done: commit cb8bab8)
-- [x] **Task 16: Falco configuration and containment rules** `[Mac Ready (Rules) / Linux (Host eBPF)]`
-  - *Files:* `infra/falco/`, `scripts/build_falco_lists.py`, `src/techradar/hostsec/resources.py`, `tests/security/test_falco_rules.py`, `tests/hostsec/test_resources.py`
-  - *SEC:* SEC-58, SEC-65 (Alert on unexpected shells, container isolation)
-  - *Verify:* Rule syntax passes linter; containment logic isolates containers safely. (Done: commit 3a71c23)
-- [x] **Task 17: Phase 1 gate verification (`make gate-1`)** `[Mac Ready]`
-  - *Files:* `Makefile`, `docs/security/gates.md`, `security/simulate/phase1.sh`, `tests/security/test_simulate_script.py`
-  - *Verify:* Full automated pass of all unit, security, and policy tests. (Done: commit pending Gate 1)
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Study sessions, 1-7-30 revisions | old | no |
+| 2 One-tap energy check-in | no | no |
+| 3 Daily plan in the briefing | old | no |
+| 4 Progress screen and weekly review | part | no |
+| 5 Skill map updates | part | no |
+| 6 Failure alerts and health checks | part | no |
+| 7 Catch-up test and gate 5 | claude | no |
 
----
+### Phase 6: Voice Coach v1 and English (`0008_voice`)
 
-### Phase 2: Secure Ingest & Markdown Vault (`docs/superpowers/plans/2026-11-07-techradar-phase2-ingest.md`)
-**Gate Criteria:** `make gate-2` passes (Intake Gateway, sanitized feed parsing, LangGraph pipeline) — NOT PASSED (the sign-off at 470844e was withdrawn on 2026-11-12; see `docs/security/gates.md`)
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Voice note intake | claude | no |
+| 2 `voice-worker` service and transcription | claude (Antigravity: result shapes only) | no |
+| 2b Library audio transcription | claude | no |
+| 3 Speech metrics in code | old | no |
+| 4 LanguageTool grammar checks | old (rule list, not LanguageTool) | no |
+| 5 Pronunciation scoring | no | no |
+| 6 Fixes, spoken feedback, analysis job, retention | no | no |
+| 7 Writing practice | no | no |
+| 8 Story bank, reading quiz, listening, reflection | no | no |
+| 9 Voice report screen | no | no |
+| 9b English practice time | no | no |
+| 10 Voice evals and gate 6 | no | no |
 
-- [x] **Task 1: Intake Gateway file-type & structural scanning** `[Mac Ready]` (Done: commit 21ec369)
-- [x] **Task 2: Antivirus client & ClamAV daemon socket wrapper** `[Mac Ready]` (Done: commit 21ec369)
-- [x] **Task 3: Text normalization & invisible character stripping** `[Mac Ready]` (Done: commit 21ec369)
-- [x] **Task 4: Prompt injection classifier integration** `[Mac Ready]` (Done: commit 21ec369)
-- [x] **Task 5: Feed fetching engine & RSS client** `[Mac Ready]` (Done: commit d4940f8)
-- [x] **Task 6: Clean article extraction sandbox (trafilatura & Docling)** `[Mac Ready]` (Done: commit 32adcd7)
-- [x] **Task 7: Deduplication & cosine similarity filter** `[Mac Ready]` (Done: commit 470844e)
-- [x] **Task 8: LangGraph reader step (tool-less model extraction)** `[Mac Ready]` (Done: commit 470844e)
-- [x] **Task 9: Cross-model verification node (Gemma writes, Qwen checks)** `[Mac Ready]` (Done: commit 470844e)
-- [x] **Task 10: Outdated facts & superseded data tracking** `[Mac Ready]` (Done: commit 470844e)
-- [x] **Task 11: Markdown vault writer & frontmatter generator** `[Mac Ready]` (Done: commit 470844e)
-- [x] **Task 12: Syncthing vault folder structure initialization** `[Mac Ready]` (Done: commit 470844e)
-- [x] **Task 13: Red-team prompt injection test suite** `[Mac Ready]` (Done: commit 470844e)
-- [x] **Task 14: Phase 2 gate verification (`make gate-2`)** `[Mac Ready]` (Done: commit 470844e)
+### Phase 7: Understanding and World (`0009_world`)
 
----
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Night queue | claude | no |
+| 2 Wikipedia background, foundation pages | no | no |
+| 3 Weekly deep dive | no | no |
+| 4 Glossary, timelines, cause-and-effect chains | old | no |
+| 5 Politics: facts apart from opinions | no | no |
+| 6 Opinions and predictions log | old | no |
+| 7 Economy dashboard data | old | no |
+| 8 Forward fact-checker with approval | claude (old in-memory list exists) | no |
+| 9 World screen | old | no |
+| 10 Gate 7 | n/a | no |
 
-### Phase 2b: RAG Knowledge Index & Ask (`docs/superpowers/plans/2026-11-07-techradar-phase2b-rag.md`)
-**Gate Criteria:** `make gate-2b` passes (hybrid search, reciprocal rank fusion, citation checking) — NOT PASSED (the sign-off at e24a85a was withdrawn on 2026-11-12; see `docs/security/gates.md`)
+### Phase 8: Exams (`0010_exams`)
 
-- [x] **Task 1: Chunking engine with contextual breadcrumbs** `[Mac Ready]` (Done: commit e24a85a)
-- [x] **Task 2: Postgres vector + BM25 hybrid index** `[Mac Ready]` (Done: commit e24a85a)
-- [x] **Task 3: BGE-reranker cross-encoder integration** `[Mac Ready]` (Done: commit 70e0e87)
-- [x] **Task 4: LangGraph `/ask` synthesis pipeline** `[Mac Ready]` (Done: commit 27f7482)
-- [x] **Task 5: Citation verifier & hallucination guard** `[Mac Ready]` (Done: commit 27f7482)
-- [x] **Task 6: Bot `/ask` command handler with Telegram outbox** `[Mac Ready]` (Done: commit 615f887)
-- [x] **Task 7: Retrieval evaluation suite & redteam suite** `[Mac Ready]` (Done: commit e24a85a)
-- [x] **Task 8: Phase 2b gate verification (`make gate-2b`)** `[Mac Ready]` (Done: commit e24a85a)
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Syllabus topics and coverage | old | no |
+| 2 GATE past-paper bank | no | no |
+| 2b Sources for every syllabus topic | no | no |
+| 3 Code-generated drills | old (3 generators) | no |
+| 4 Daily drills on Telegram | no | no |
+| 5 Mock-test analyser | no | no |
+| 6 Cutoffs and topic weightage | no | no |
+| 6b Official answer keys | no | no |
+| 7 Final 30 days mode | no | no |
+| 8 Exams screen | no | no |
+| 9 Gate 8 | n/a | no |
 
----
+### Phase 9: Study smarter and live voice (`0011_live_group`)
 
-### Phase 2c: The Library (Large PDFs, Videos & Study Packs) (`docs/superpowers/plans/2026-11-08-techradar-phase2c-library.md`)
-**Gate Criteria:** `make gate-2c` passes (resumable bulk queue, 25-page PDF chunking, media sandboxing)
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Handwritten notes, safe maths checks | claude | no |
+| 2 Study group mode | claude (Antigravity: leaderboard and text) | no |
+| 3 The `voice-live` service | claude | no |
+| 4 Live voice screen | no | no |
+| 5 After-session analysis, shadowing pitch | no | no |
+| 6 Interview briefs, "Know yourself" pack | no | no |
+| 7 Gate 9 | n/a | no |
 
-- [x] **Task 1: Library models & hierarchical TOC extractor** `[Mac Ready]` (Done: commit 8149f8d)
-  - *Files:* `src/techradar/library/models.py`, `src/techradar/library/toc.py`, `tests/library/test_toc.py`
-  - *SEC:* Chapter slugification, 25-page chunking boundary validation
-- [x] **Task 2: Procrastinate `bulk` queue & settling detection** `[Mac Ready]` (Done: commit fa58a19)
-  - *Files:* `src/techradar/library/bulk.py`, `tests/library/test_bulk.py`
-  - *Verify:* `test_partial_sync_file_skipped`, `test_duplicate_book_detected`, `test_bulk_resumes_after_restart`
-- [x] **Task 3: Docling 25-page segmented PDF processor & outline parser** `[Mac Ready]` (Done: commit 8149f8d)
-- [x] **Task 4: ffmpeg audio & slide frame extractor sandbox** `[Mac Ready]` (Done: commit fa58a19)
-  - *Files:* `src/techradar/library/media.py`, `tests/library/test_media.py`
-  - *SEC:* SEC-44 (`-protocol_whitelist file`, reject playlists, no network)
-- [x] **Task 5: Chapter summary generator & vault note creator** `[Mac Ready]` (Done: commit 489ee0c)
-  - *Files:* `src/techradar/library/summarizer.py`, `tests/library/test_summarizer.py`
-  - *SEC:* Night window check (01:00–05:00 Asia/Kolkata), code-checked citations `[C#]`
-- [x] **Task 6: Starter pack downloader (NCERT, NIOS, RBI, Budget)** `[Mac Ready]` (Done: commit 489ee0c)
-  - *Files:* `infra/sources/exam_packs.yaml`, `src/techradar/library/starter_packs.py`, `tests/library/test_starter_packs.py`
-  - *SEC:* Downloads only after explicit allowlist approval, <= 200MB size limit
-- [x] **Task 7: "Ask this PDF" scoped RAG query engine** `[Mac Ready]` (Done: commit f1e8f50)
-  - *Files:* `src/techradar/rag/scoped_ask.py`, `tests/rag/test_scoped_ask.py`
-- [x] **Task 8: Phase 2c gate verification (`make gate-2c`)** `[Mac Ready]` (Done: commit c988d96)
+### Phase 10: Models admin and tech extras (`0012_models`)
 
----
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Model registry, switch, rollback | claude | no |
+| 2 Approved models, owner-run downloads | claude | no |
+| 3 GPU stats service and fit estimate | old (fit only) | no |
+| 4 Test bench | no | no |
+| 5 Models screen admin | claude | no |
+| 6 Weekly release digest | no | no |
+| 7 "Rising fast" trends | no | no |
+| 8 Read-only vault MCP server | claude (plain class exists; `fastmcp` not approved) | no |
+| 9 Optional cloud fallback | claude, only if the owner wants it | no |
+| 10 Gate 10 | n/a | no |
 
-### Phase 3: Daily Briefing, Practice & Exam Alerts (`docs/superpowers/plans/2026-11-07-techradar-phase3-briefing-practice.md`)
-**Gate Criteria:** First usable MVP (Telegram daily briefing, FSRS flashcard engine, MCQs, website watcher) — NOT PASSED (the sign-off at c988d96 was withdrawn on 2026-11-12; see `docs/security/gates.md`)
+### Phase 11: Feedback and self-improvement (`0013_feedback`)
 
-- [x] **Task 1: Morning briefing generator (Tech, India, World, Economy, Science, Daily Life)** `[Mac Ready]` (Done: commit 2c6dde9)
-  - *Files:* `src/techradar/briefing/compose.py`, `tests/briefing/test_compose.py`
-  - *SEC:* SEC-20 (Politics 3-domain rule, verified stories preferred)
-- [x] **Task 2: "My take" user opinion & prediction tracker** `[Mac Ready]` (Done: commit 112f25b)
-  - *Files:* `src/techradar/practice/predictions.py`, `tests/practice/test_predictions.py`
-- [x] **Task 3: MCQ generator & 4-option draft schema** `[Mac Ready]` (Done: commit 8222e18)
-  - *Files:* `src/techradar/practice/mcq.py`, `tests/practice/test_mcq.py`
-  - *SEC:* SEC-20 (Generated strictly from verified facts, deterministic option shuffling)
-- [x] **Task 4: FSRS v5 spaced repetition flashcard scheduler** `[Mac Ready]` (Done: commit 8222e18)
-  - *Files:* `src/techradar/practice/fsrs.py`, `tests/practice/test_fsrs.py`
-  - *SEC:* Daily caps: 10 new cards, 40 reviews (FSRS optimizer)
-- [x] **Task 4b: Dual-model key checker & practice limits** `[Mac Ready]` (Done: commit 2c6dde9)
-  - *Files:* `src/techradar/practice/quiz.py`, `tests/practice/test_quiz.py`
-  - *SEC:* SEC-20 (Two-model family key agreement, drop on mismatch)
-- [x] **Task 5: "Mark chapter as read" event trigger** `[Mac Ready]` (Done: commit 112f25b)
-  - *Files:* `src/techradar/practice/chapter_cards.py`, `tests/practice/test_chapter_cards.py`
-  - *SEC:* Idempotent card generation (10–20 cards per chapter)
-- [x] **Task 6: Mistakes notebook & review loop** `[Mac Ready]` (Done: commit 112f25b)
-  - *Files:* `src/techradar/practice/mistakes.py`, `tests/practice/test_mistakes.py`
-- [x] **Task 7: Grammar & vocabulary daily practice generator** `[Mac Ready]` (Done: commit 03b46f4)
-  - *Files:* `src/techradar/practice/grammar.py`, `src/techradar/practice/vocab.py`, `tests/practice/test_grammar.py`, `tests/practice/test_vocab.py`
-- [x] **Task 8: changedetection.io exam notification watcher integration** `[Mac Ready]` (Done: commit 03b46f4)
-  - *Files:* `src/techradar/exams/watcher.py`, `tests/exams/test_watcher.py`
-- [x] **Task 9: Bot interactive quiz & card review session handlers** `[Mac Ready]` (Done: commit aff208f)
-  - *Files:* `src/techradar/bot/commands.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py`
-- [x] **Task 10: Phase 3 gate verification (`make gate-3`)** `[Mac Ready]` (Done: commit c988d96)
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Feedback, profile, improvement tables | no | no |
+| 2 Feedback buttons and action log | old | no |
+| 3 Edits to generated notes | no | no |
+| 4 Bounded weights and ranking | old | no |
+| 5 Nightly pattern finding | no | no |
+| 6 Weekly review and improvement report | claude (rules); Antigravity: report text | no |
+| 7 Answers in my way: profiles, mastery, liked examples | no | no |
+| 8 Regression cases, search tuning | old | no |
+| 9 "Which is better?" pairs, FSRS optimizer | no | no |
+| 10 My profile page | no | no |
+| 11 Gate 11 | n/a | no |
 
----
+### Phase 12: Jarvis (`0014_jarvis`)
 
-### Phase 4: Web Application v1 (`docs/superpowers/plans/2026-11-07-techradar-phase4-web-app.md`)
-**Gate Criteria:** Next.js UI over Tailscale HTTPS with streaming answers, CSRF protection, and confirmation tickets — NOT PASSED (the sign-off at c988d96 was withdrawn on 2026-11-12; see `docs/security/gates.md`)
+| Task | Basic | Wired |
+|---|---|---|
+| 1 Jarvis tables | no | no |
+| 2 Skills and the router | claude (old intent matcher exists) | no |
+| 3 Permission levels, voice tickets, write limit | claude (old executor exists) | no |
+| 4 `jarvis` service, `api-voice` socket | claude | no |
+| 5 Jarvis mode in `voice-live`: echo, barge-in, GPU lease | claude | no |
+| 6 Wake word in the Mac's Jarvis tab | part (browser code exists) | no |
+| 7 Wake-word helper on the server (optional) | claude | no |
+| 8 The ten skills | no | no |
+| 9 Morning greeting | no | no |
+| 10 Conversation memory | claude | no |
+| 11 Jarvis screen, orb on every screen | old | no |
+| 12 Voice red-team and gate 12 | claude | no |
 
-- [x] **Task 1: FastAPI service & security middleware** `[Mac Ready]` (Done: commit da74fd7)
-  - *Files:* `src/techradar/api/main.py`, `src/techradar/api/deps.py`, `tests/api/test_auth.py`
-  - *SEC:* SEC-27, SEC-51 (TrustedHostMiddleware, MAX_BODY=64KB limit, disabled docs in prod)
-- [x] **Task 2: Service-token and Tailscale owner authentication** `[Mac Ready]` (Done: commit da74fd7)
-  - *Files:* `src/techradar/api/deps.py`, `tests/api/test_auth.py`
-  - *SEC:* SEC-27, SEC-41 (Constant-time token comparison, owner login header check)
-- [x] **Task 2b: One-time confirmation ticket system (`pending_actions`)** `[Mac Ready]` (Done: commit 2aac042)
-  - *Files:* `src/techradar/api/ticket.py`, `tests/api/test_ticket.py`
-  - *SEC:* SEC-56 (60s tap expiry, single action, single use, HMAC replay protection)
-- [x] **Task 3: openapi-typescript client generation pipeline** `[Mac Ready]` (Done: commit 18e5e85)
-  - *Files:* `scripts/export_openapi.py`, `apps/web/lib/api/types.ts`, `apps/web/lib/api/client.ts`, `tests/api/test_openapi_export.py`
-- [x] **Task 4: Today screen (sectioned cards, "Why it matters", "How it affects me")** `[Mac Ready]` (Done: commit c1bfb3b)
-  - *Files:* `apps/web/src/app/today/page.tsx`, `apps/web/src/components/today/`
-- [x] **Task 5: Ask screen with Vercel AI SDK 7 streaming & Streamdown KaTeX/Mermaid** `[Mac Ready]` (Done: commit c1bfb3b)
-  - *Files:* `apps/web/src/app/ask/page.tsx`, `apps/web/src/components/ask/streamdown.tsx`, `apps/web/src/components/ask/citation-drawer.tsx`
-  - *SEC:* SEC-28 (Render Markdown only, block external images)
-- [x] **Task 6: Library screen (chapter view, "Ask this PDF", file upload)** `[Mac Ready]` (Done: commit f1e8f50, c1bfb3b)
-  - *Files:* `apps/web/src/app/library/page.tsx`, `src/techradar/api/uploads.py`, `tests/api/test_uploads.py`
-  - *SEC:* Decision D48 (Path traversal protection, mode 0o600, <= 300MB)
-- [x] **Task 7: Practice screen (MCQ timer, flashcard deck, mistakes notebook)** `[Mac Ready]` (Done: commit c1bfb3b)
-  - *Files:* `apps/web/src/app/practice/page.tsx`, `apps/web/src/components/practice/`
-- [x] **Task 8: Read-only Models screen (VRAM, GPU temperature, loaded models)** `[Mac Ready]` (Done: commit c1bfb3b)
-  - *Files:* `apps/web/src/app/models/page.tsx`, `apps/web/src/components/models/vram-meter.tsx`
-- [x] **Task 9: Security screen (Quarantine manager, active alarms, heartbeat status)** `[Mac Ready]` (Done: commit c1bfb3b)
-  - *Files:* `apps/web/src/app/security/page.tsx`, `apps/web/src/components/security/quarantine-table.tsx`
-- [x] **Task 10: frontend scaffold** (actually Next.js 14, React 18, Tailwind 3; no shadcn/ui) `[Mac Ready]` (Done: commit c1bfb3b)
-  - *Files:* `apps/web/package.json`, `apps/web/src/app/globals.css`, `apps/web/src/proxy.ts`, `apps/web/src/components/orb.tsx`
-- [x] **Task 11: End-to-end testing with component contracts & axe accessibility** `[Mac Ready]` (Done: commit c1bfb3b)
-  - *Files:* `apps/web/src/lib/security.test.ts`, `apps/web/src/components/ask/ask.test.ts`, `apps/web/src/components/practice/practice.test.ts`
-- [x] **Task 12: Phase 4 gate verification (`make gate-4`)** `[Mac Ready]` (Done: commit c988d96, c1bfb3b)
+## 6. Owner's list
 
----
+- [ ] Tailscale SSH asks for a browser check again from time to time. Approve the link when Claude shows it.
+- [ ] Phase 2c: check each starter-pack URL in a browser, then add it; set up the Library folder in Syncthing; on the TUF `mkdir` and `chown 1000:1000` for `data/library-inbox`, `data/library-packs`, `data/library`.
+- [ ] Phase 2c: say whether Claude may run the "restart `worker-bulk` after 3 parts" check against the real stack.
+- [ ] Gate 1 leftovers: nmap from the Mac, `filelock` decision, text-mode boot decision.
+- [ ] Dependencies the later phases need and that are **not approved** yet (`infra/policy/approved_deps.yaml`). Nothing that needs them can be finished until you decide:
+  - Phase 3: `fsrs` (py-fsrs), `spacy`, `wordfreq`, the `en_core_web_sm` model wheel.
+  - Phase 4: the web stack the plan names (Next.js 16, Tailwind v4, shadcn/ui, AI SDK, Streamdown, Playwright, axe). Today the web folder has Next.js 14 with loose versions and no lock file.
+  - Phase 6: `faster-whisper`, Kokoro (ONNX), `transformers` and `torch` for wav2vec2.
+  - Phase 9: Pipecat, `sympy`.
+  - Phase 10: `fastmcp`. Phase 12: `onnxruntime-web`.
+  - Still open from Phase 2: `python-magic`, `yara-python`.
+- [ ] Decisions: GATE paper (CS or DA), when to merge the branch, the backup destination.
+- [ ] Internet stage, last: the two Telegram bots and their secrets, the alerter, real feeds and models, the heartbeat.
 
-### Phase 5: Planner, Progress & Reliability (`docs/superpowers/plans/2026-11-07-techradar-phase5-planner.md`)
-- [x] **Task 1: Daily plan generator matching study blocks to energy levels** `[Mac Ready]` (Done: commit 9028f05)
-  - *Files:* `src/techradar/planner/schedule.py`, `tests/planner/test_schedule.py`
-- [x] **Task 2: Revision calendar (+1, +7, +30, and +90 days for exam topics)** `[Mac Ready]` (Done: commit 9028f05)
-  - *Files:* `src/techradar/planner/revision.py`, `tests/planner/test_revision.py`
-- [x] **Task 3: Study time tracking per goal (GATE, SSC, Bank, Dev, English)** `[Mac Ready]` (Done: commit 5b624d2)
-  - *Files:* `src/techradar/planner/tracker.py`, `tests/planner/test_tracker.py`
-- [x] **Task 4: Progress dashboard & weekly review with streak, mastery, and pattern** `[Mac Ready]`
-  - *Files:* `src/techradar/planner/progress.py`, `src/techradar/vault/frontmatter.py`, `src/techradar/ops/alerts.py`, `src/techradar/ops/health.py`, `apps/web/src/app/progress/page.tsx`
-- [x] **Task 5: Catch-up engine (recovers queued tasks after server offline/reboot)** `[Mac Ready]` (Done: commit 5b624d2)
-  - *Files:* `src/techradar/planner/catchup.py`, `tests/planner/test_catchup.py`
+## 7. Where things run
 
----
+| Thing | Mac (development) | TUF (server, Ubuntu, host `jarvis`) |
+|---|---|---|
+| Unit tests, lint, import contracts | `make lint test`, `uv run --no-sync lint-imports` | same |
+| Database tests (`-m db`) | cannot run | `make test-db` (needs `TR_DB_TESTS_MAY_WIPE=1`, set by the target) |
+| Egress tests, attack simulations, gates | cannot run | `make test-egress`, `make simulate-N`, `make gate-N` |
+| Images, real models | no | yes |
 
-### Phase 6: Voice Coach v1 & English Practice (`docs/superpowers/plans/2026-11-07-techradar-phase6-voice-english.md`)
-- [ ] Telegram voice note receiver and faster-whisper transcription
-- [x] LanguageTool `en-GB` grammar analysis `[Mac Ready]` (Done: commit c360b9d)
-  - *Files:* `src/techradar/voice/grammar.py`, `tests/voice/test_grammar.py`
-- [ ] CTC Viterbi forced alignment pronunciation scoring
-- [x] Fluency & filler words ("um/uh") frequency counter `[Mac Ready]` (Done: commit c360b9d)
-  - *Files:* `src/techradar/voice/fluency.py`, `tests/voice/test_fluency.py`
-- [ ] Web audio waveform session report (wavesurfer.js)
-- [ ] Library lecture video transcription with timestamp alignment
-
----
-
-### Phase 7: World Understanding & Night Writer (`docs/superpowers/plans/2026-11-07-techradar-phase7-world.md`)
-- [ ] Night model batch orchestrator (Gemma 4 12B QAT, 01:00–05:00 AM)
-- [ ] Foundation pages generator (Economy, Finance, Politics, World, GK)
-- [ ] Weekly 20–30 minute deep-dive essay generator
-- [x] Cause-and-effect chain graph builder `[Mac Ready]` (Done: commit 200fb41)
-  - *Files:* `src/techradar/world/causality.py`, `tests/world/test_causality.py`
-- [x] Dynamic terminology glossary `[Mac Ready]` (Done: commit 200fb41)
-  - *Files:* `src/techradar/world/glossary.py`, `tests/world/test_glossary.py`
-- [x] Economy dashboard (RBI rates, GDP, CPI inflation, currency) `[Mac Ready]` (Done: commit 8f7cab6)
-  - *Files:* `src/techradar/world/economy.py`, `tests/world/test_economy.py`
-- [ ] SearXNG forward fact-checker with Telegram approval gate. Only an in-memory approval list exists (`world/factcheck.py`, commit 8f7cab6); no SearXNG, no Telegram.
-  - *Files:* `src/techradar/world/factcheck.py`, `tests/world/test_factcheck.py`
-
----
-
-### Phase 8: Exams Engine (GATE / SSC / Banking) (`docs/superpowers/plans/2026-11-07-techradar-phase8-exams.md`)
-- [x] **Task 1: Complete syllabus tree parser (GATE DA/CS, SSC CGL, Banking)** `[Mac Ready]` (Done: commit 1bce07b)
-  - *Files:* `src/techradar/exams/syllabus.py`, `tests/exams/test_syllabus.py`
-- [ ] Syllabus coverage tracker (highlights topics with "no source yet")
-- [ ] Previous Years Questions (PYQs) bank linked to syllabus nodes
-- [ ] Official answer key capture & cutoff PDF extractor
-- [x] **Task 5: Algorithmic aptitude & reasoning drill generator (calculated in code)** `[Mac Ready]` (Done: commit 1bce07b)
-  - *Files:* `src/techradar/exams/aptitude.py`, `tests/exams/test_aptitude.py`
-  - *SEC:* Calculated purely in code with verified integer ground truth
-- [ ] Timed speed maths and typing practice modules
-- [ ] Final 30-days intensive exam mode
-
----
-
-### Phase 9: Live Voice & 3D Audio-Reactive Orb (`docs/superpowers/plans/2026-11-07-techradar-phase9-live-voice-group.md`)
-- [ ] Pipecat WebRTC live audio streaming server
-- [ ] Three.js 3D sound-reactive orb (idle, listening, thinking, speaking)
-- [ ] Real-time Web Audio API volume and frequency visualizers
-- [ ] Live captions with post-session recasting corrections
-- [ ] Read-aloud & shadowing modes with pitch contour comparison
-- [ ] Mock interview panel & group discussion simulator
-
----
-
-### Phase 10: Models Admin & Vault MCP Server (`docs/superpowers/plans/2026-11-07-techradar-phase10-models-extras.md`)
-- [ ] Full Models Admin UI (model downloads, fit checks, test bench)
-- [ ] A/B test voting suite for candidate models
-- [ ] Read-only FastMCP server for Claude Code on macOS. A plain class with the plan's path rules exists (`mcp/server.py`; .md only, no symlinks, 200 KB cap since 2026-11-12); the FastMCP wrapper waits for `fastmcp` approval.
-  - *Files:* `src/techradar/mcp/server.py`, `tests/mcp/test_server.py`
-- [x] Models Admin VRAM fit and config evaluator `[Mac Ready]` (Done: commit 8ae0a1e)
-  - *Files:* `src/techradar/llm/admin.py`, `tests/llm/test_admin.py`
-- [ ] Tech stack release digest & "Rising fast" tool analyzer
-- [ ] Optional cloud fallback toggle with strict spend limits
-
----
-
-### Phase 11: Feedback & Self-Improvement (`docs/superpowers/plans/2026-11-08-techradar-phase11-feedback.md`)
-- [x] User feedback action buttons & types (👍, 👎, "Too long", "Wrong fact") `[Mac Ready]` (Done: commit c742ca8)
-  - *Files:* `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`
-- [x] Bounded topic and source weights (0.2 to 2.0 with exam floors) `[Mac Ready]` (Done: commit c742ca8)
-  - *Files:* `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`
-- [x] Automatic regression test generator (`regression_cases`) `[Mac Ready]` (Done: commit c742ca8)
-  - *Files:* `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py`
-- [ ] "Answers in my way" style profile engine per exam/goal mode
-- [ ] Sunday weekly improvement report generator
-- [ ] "My Profile" transparency dashboard
-
----
-
-### Phase 12: Jarvis System-Wide Voice Assistant (`docs/superpowers/plans/2026-11-08-techradar-phase12-jarvis.md`)
-- [x] openWakeWord local wake word detection ("Hey Jarvis") `[Mac Ready]`
-  - *Files:* `apps/web/src/lib/wakeword/`, `apps/web/src/components/jarvis/`, `apps/web/src/app/jarvis/page.tsx`, `scripts/fetch_wakeword_models.py`, `infra/models/wakeword.yaml`
-- [x] Unified conversational intent router (Qwen3.5-4B) `[Mac Ready]` (Done: commit c988d96)
-  - *Files:* `src/techradar/jarvis/intent.py`, `tests/jarvis/test_intent.py`
-- [x] 10-second spoken confirmation ticket evaluator (SEC-56) `[Mac Ready]` (Done: commit c988d96)
-  - *Files:* `src/techradar/jarvis/executor.py`, `tests/jarvis/test_executor.py`
-- [ ] Self-hearing and echo cancellation suppression (SEC-68)
-- [ ] Proactive morning greeting and day plan briefing
-- [x] System-wide voice action executor (read immediate, write confirmed) `[Mac Ready]` (Done: commit c988d96)
-  - *Files:* `src/techradar/jarvis/executor.py`, `tests/jarvis/test_executor.py`
-
----
-
-## 3. Subagent Parallel Dispatch Strategy
-
-When implementing multi-file tasks on the Mac, tasks must be grouped into **independent problem domains** without shared state:
-
-```dot
-digraph subagent_domains {
-    "Task Dispatcher" -> "Agent A: Tooling & Skeleton" [label="Independent files"];
-    "Task Dispatcher" -> "Agent B: Test Harness & Fakes" [label="Independent files"];
-    "Task Dispatcher" -> "Agent C: Security Semgrep & Policies" [label="Independent files"];
-    
-    "Agent A: Tooling & Skeleton" -> "Integration & Verification";
-    "Agent B: Test Harness & Fakes" -> "Integration & Verification";
-    "Agent C: Security Semgrep & Policies" -> "Integration & Verification";
-}
-```
-
-* **Batch 1 (Sequential Initialization):** Task 1 (Repo skeleton, `pyproject.toml`, `git init`, `src/techradar/__init__.py`) must run sequentially first so the module and git tree exist.
-* **Batch 2 (Parallel Dispatch):**
-  * Subagent 1: Task 2 (`tests/fakes.py`, protocols, `tests/conftest.py`).
-  * Subagent 2: Task 3 (`src/techradar/config.py`, settings, Pydantic env validation).
-  * Subagent 3: Task 9 (`src/techradar/logging.py`, PII redaction filter).
-  * Subagent 4: Task 13 (`infra/policy/check_deps.py`, `approved_deps.yaml`).
-* **Batch 3 (Parallel Dispatch):**
-  * Subagent 1: Task 4 (Database models & SQLAlchemy schema).
-  * Subagent 2: Task 5 (Model router & LiteLLM wrapper).
-  * Subagent 3: Task 7 (Docker Compose policy validator).
-  * Subagent 4: Task 8 (Squid configuration & allowlist validator).
-* **Batch 4 (Integration Gate):**
-  * Run `make gate-1` on the combined codebase.
-
----
-
-## 4. Cross-Subagent Integration Checklist & Contract Verification
-
-An **Integration Verification Agent** continuously audits the deliverables of all parallel subagents before merging and pushing to ensure zero regressions and strict architectural compliance.
-
-### Active Parallel Agent Sprint & Integration Checklist
-
-The **Integration Verification Agent** continuously audits the deliverables of all parallel subagents before merging and pushing to ensure zero regressions and strict architectural compliance.
-
-#### Completed Subagent Assignments (Sprint Batch 2)
-- **Subagent 7 (Library Summaries & Starter Packs):** `src/techradar/library/summarizer.py`, `src/techradar/library/starter_packs.py`, `infra/sources/exam_packs.yaml`, `tests/library/test_summarizer.py`, `tests/library/test_starter_packs.py` (Done: commit 489ee0c).
-- **Subagent 8 (Predictions & Practice Loops):** `src/techradar/practice/predictions.py`, `src/techradar/practice/chapter_cards.py`, `src/techradar/practice/mistakes.py`, `tests/practice/test_predictions.py`, `tests/practice/test_chapter_cards.py`, `tests/practice/test_mistakes.py` (Done: commit 112f25b).
-- **Subagent 9 (Uploads & Scoped RAG):** `src/techradar/api/uploads.py`, `src/techradar/rag/scoped_ask.py`, `tests/api/test_uploads.py`, `tests/rag/test_scoped_ask.py` (Done: commit f1e8f50).
-- **Subagent 10 (Planner & Revision Calendar):** `src/techradar/planner/schedule.py`, `src/techradar/planner/revision.py`, `tests/planner/test_schedule.py`, `tests/planner/test_revision.py` (Done: commit 9028f05).
-- **Subagent 11 (Exams Syllabus & Aptitude Drills):** `src/techradar/exams/syllabus.py`, `src/techradar/exams/aptitude.py`, `tests/exams/test_syllabus.py`, `tests/exams/test_aptitude.py` (Done: commit 1bce07b).
-- **Subagent 12 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes (Done: commit 6dcd45b).
-
-#### Completed Subagent Assignments (Sprint Batch 3)
-- **Subagent 13 (Bot Interactive Commands):** `src/techradar/bot/commands/quiz.py`, `src/techradar/bot/commands/cards.py`, `src/techradar/bot/routing.py`, `tests/bot/test_commands.py`, `tests/bot/test_routing.py` (Done: commit aff208f).
-- **Subagent 14 (Voice Coach Engine):** `src/techradar/voice/fluency.py`, `src/techradar/voice/grammar.py`, `tests/voice/test_fluency.py`, `tests/voice/test_grammar.py` (Done: commit c360b9d).
-- **Subagent 15 (World Understanding & Causality):** `src/techradar/world/glossary.py`, `src/techradar/world/causality.py`, `tests/world/test_glossary.py`, `tests/world/test_causality.py` (Done: commit 200fb41).
-- **Subagent 16 (Vault MCP class & Models Admin; not FastMCP):** `src/techradar/mcp/server.py`, `src/techradar/llm/admin.py`, `tests/mcp/test_server.py`, `tests/llm/test_admin.py` (Done: commit 8ae0a1e).
-- **Subagent 17 (Feedback & Improvement Engine):** `src/techradar/pipeline/feedback.py`, `tests/pipeline/test_feedback.py` (Done: commit c742ca8).
-- **Subagent 18 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
-
-#### Completed Subagent Assignments (Sprint Batch 4)
-- **Subagent 19 (Jarvis Voice Assistant Intent & Spoken Tickets):** `src/techradar/jarvis/intent.py`, `src/techradar/jarvis/executor.py`, `tests/jarvis/test_intent.py`, `tests/jarvis/test_executor.py` (Done: commit c988d96).
-- **Subagent 20 (Web App API Client & OpenAPI Exporter):** `apps/web/lib/api/client.ts`, `apps/web/lib/api/types.ts`, `scripts/export_openapi.py`, `tests/api/test_openapi_export.py` (Done: commit 18e5e85).
-- **Subagent 21 (Gate Verification Targets):** `infra/gates/gate_2c.py`, `infra/gates/gate_3.py`, `infra/gates/gate_4.py`, `tests/security/test_gates.py`, `Makefile` targets (`make gate-2c`, `make gate-3`, `make gate-4`) (Done: commit 903285c).
-- **Subagent 22 (Study Time Tracking & Catch-Up Engine):** `src/techradar/planner/tracker.py`, `src/techradar/planner/catchup.py`, `tests/planner/test_tracker.py`, `tests/planner/test_catchup.py` (Done: commit 5b624d2).
-- **Subagent 23 (Economy Dashboard & Fact-Checker Approval):** `src/techradar/world/economy.py`, `src/techradar/world/factcheck.py`, `tests/world/test_economy.py`, `tests/world/test_factcheck.py` (Done: commit 8f7cab6).
-- **Subagent 24 (Integration Verification):** Continuous contract validation, integration test regression, one-task-one-commit gating, and GitHub pushes.
-
-### Integration Checklist
-
-- [x] **1. Architectural Boundary Isolation (`lint-imports`)**
-  - [x] Contract 1: `techradar.parser` does NOT import `httpx`, `techradar.db`, or `techradar.llm`.
-  - [x] Contract 2: `techradar.pipeline.reader` does NOT import `writer`, `db`, `vault`, `httpx`, or `subprocess`.
-  - [x] Contract 3: `techradar.pipeline.writer` does NOT import `llm` or `httpx`.
-  - [x] Contract 4: `techradar.fetcher` does NOT import `llm`, `pipeline`, or `vault`.
-  - [x] Contract 5: `pipeline`, `worker`, `rag`, `bot`, and `api` do NOT import parser submodules directly (SEC-57 One Door).
-  - [x] Contract 6: `techradar.intake` does NOT import `httpx`, `db`, or `llm`.
-  - [x] Contract 7: `techradar.rag` does NOT import `httpx` or `subprocess`.
-  - [x] New subsystems (`library`, `briefing`, `practice`, `exams`, `api`, `voice`, `world`, `mcp`, `jarvis`, `planner`) remain strictly decoupled and do not violate existing boundaries.
-
-- [x] **2. Dependency Allowlist & Policy Audit (SEC-52)**
-  - [x] `scripts/check_deps.py` passes with zero unapproved packages in `pyproject.toml`.
-  - [x] `scripts/check_mcp.py` and `scripts/check_skills.py` confirm zero unvetted plugins/MCP tools.
-  - [x] Every pinned Docker image retains its immutable `@sha256:` digest in `compose.yaml` and `infra/docker/Dockerfile`.
-
-- [x] **3. Compose Policy & Host Hardening (SEC-01–SEC-07, SEC-55)**
-  - [x] `tests/security/test_compose_policy.py` passes all checks (127.0.0.1 bindings, non-root, read-only, tmpfs, cap_drop ALL).
-  - [x] `tests/security/test_falco_rules.py` validates eBPF process baselines.
-
-- [x] **4. Subsystem Interoperability & Data Contract Checks**
-  - [x] **Library & Media (Subagent 1):** File settling skips partial syncs; duplicate books detected via SHA-256; restart resumption picks up next unfinished part; ffmpeg commands strictly enforce `-protocol_whitelist file` and reject playlists/remote URLs (SEC-44).
-  - [x] **Practice & Briefing (Subagent 2):** Politics stories require 3+ independent domains; item selection caps at 3/section and 15 total; dual-model key checker drops MCQs when models disagree (SEC-20); daily limits enforce 10 new cards and 40 reviews.
-  - [x] **API & Security (Subagent 3):** `TrustedHostMiddleware` blocks foreign Host headers (SEC-51); body limiter enforces 64KB max (413); `/docs` and `/openapi.json` are hidden in prod; constant-time service token check and owner login check gate all `/v1/*` routes (SEC-27, SEC-41).
-  - [x] **Exam Watcher (Subagent 4):** Validates Squid allowlisted domains; strictly sanitizes raw HTML, scripts, and embedded external links in headlines (SEC-26); suppresses duplicate alerts.
-  - [x] **Grammar & Vocab Practice (Subagent 5):** Validates exactly 4 unique options and link-free explanations (SEC-20); generates daily 10-question sessions and 5-item vocab batches integrated into FSRS v5.
-  - [x] **Library Summaries & Starter Packs (Subagent 7):** Enforces 01:00–05:00 Asia/Kolkata night window gate; checks citation markers `[C#]` in key ideas; validates allowlisted exam starter packs with <= 200MB size limit.
-  - [x] **Practice Loops & Predictions (Subagent 8):** Validates briefing reply take tracking; generates idempotent 10–20 cards per chapter; manages user mistakes notebook for priority review.
-  - [x] **Uploads & Scoped RAG (Subagent 9):** Path traversal prevention enforces files stay within `data/library-uploads/` with mode `0o600` and <= 300MB limit; scoped retrieval constrains search to specific document chunks ("Ask this PDF").
-  - [x] **Planner & Revision Calendar (Subagent 10):** Matches daily study blocks to energy levels (HIGH/MEDIUM/LOW); calculates +1, +7, +30, and +90 day spaced revision checkpoints.
-  - [x] **Syllabus & Aptitude Engine (Subagent 11):** Hierarchical syllabus tree parser with coverage calculation; algorithmic math/reasoning drill generator with code-verified ground truth (SEC-20).
-  - [x] **Bot Interactive Commands (Subagent 13):** Formats quiz and grammar inline cards matching Telegram callback regex `^[a-z_]{1,20}(:[0-9]{1,12}){1,2}$`; implements reveal/rating states for flashcards; routes interactive commands and active briefing takes with strict unauthorized chat rejection (SEC-26).
-  - [x] **Voice Fluency & Grammar (Subagent 14):** Fully offline speech fluency analysis and filler-word counter (`um`, `uh`, `like`); detects stutters, double comparatives, double negatives, and subject-verb mismatches without network dependency.
-  - [x] **World Glossary & Causality (Subagent 15):** Curated baseline terms with wiki-link regex cross-referencing `[[term]]`; DAG causal graph engine with 3-color DFS cycle detection and root-cause tracing.
-  - [x] **Vault MCP class & Models Admin (Subagent 16; not FastMCP):** Read-only Obsidian vault MCP class for Claude Code on macOS with SEC-24 traversal and symlink escape rejection; models admin parses role configs and computes concurrent VRAM fit with headroom/overflow detection.
-  - [x] **Feedback & Improvement (Subagent 17):** Bounded topic/source weights ($0.2$ to $2.0$) with official domain floors ($1.0$); records user feedback records and stores automatic regression cases.
-  - [x] **Gate Verification Targets (Subagent 21):** Automated `make gate-2c`, `make gate-3`, and `make gate-4` targets in Makefile with comprehensive target and dry-run validation.
-  - [x] **API Client & OpenAPI Exporter (Subagent 20):** Clean schema export to `data/openapi.json` with TypeScript API contracts matching backend FastAPI routes and SEC-27/SEC-41 headers.
-  - [x] **Economy & Fact-Check Approval (Subagent 23):** Macroeconomic indicator tracking with validation and markdown summary cards; forward fact-checking claims queued in `PENDING_APPROVAL` gate before inclusion.
-  - [x] **Study Time & Catch-Up (Subagent 22):** Multi-goal study duration logging with active streak tracking; reboot offline task recovery sorted by priority and capped at batch limit.
-  - [x] **Jarvis Voice Assistant (Subagent 19):** Spoken intent classification distinguishing read-only from destructive operations; 10-second spoken confirmation tickets (SEC-56) with affirmative word verification and replay prevention.
-
-- [x] **5. Code Quality & Formatting Gate**
-  - [x] `make lint` passes 100% clean across all `src/`, `tests/`, `evals/`, and `scripts/` (263 files verified).
-  - [x] `make test` executes all unit test suites without failures (716 passed).
-  - [x] `make security` runs all automated security audits green.
-  - [x] `make gate-1`, `make gate-2`, `make gate-2b`, `make gate-2c`, `make gate-3`, `make gate-4` all pass 100%.
-
-- [x] **6. Git Discipline & Push Readiness**
-  - [x] One task, one commit with clear conventional commit messages (`903285c`, `18e5e85`, `8f7cab6`, `5b624d2`, `c988d96`).
-  - [x] No uncommitted scratch files or untracked debris left in the working tree.
-  - [x] Commits pushed cleanly to `git@github.com:SidduNiharY/Tech-Radar.git` on `main`.
-
+Code changes happen on the Mac, are pushed, then pulled on the TUF. Nothing is edited on the TUF.
