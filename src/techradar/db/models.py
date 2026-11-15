@@ -776,3 +776,70 @@ class PendingAction(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# --- Phase 5: planner ---
+
+
+class StudySession(Base):
+    """User study sessions tracked for goals and topics."""
+
+    __tablename__ = "study_sessions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str] = mapped_column(String(120), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_closed: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+
+
+class Revision(Base):
+    """Spaced 1-7-30 revision items scheduled for topics and chapters."""
+
+    __tablename__ = "revisions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("techradar.study_sessions.id"), nullable=True
+    )
+    chapter_id: Mapped[int | None] = mapped_column(
+        ForeignKey("techradar.library_chapters.id"), nullable=True
+    )
+
+
+class Checkin(Base):
+    """Daily sleep, energy, and mood self-assessments."""
+
+    __tablename__ = "checkins"
+    __table_args__ = {"schema": "techradar"}
+
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    sleep_band: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    energy: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mood: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Plan(Base):
+    """Generated daily morning plan lines."""
+
+    __tablename__ = "plans"
+    __table_args__ = {"schema": "techradar"}
+
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    lines: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), default=list, nullable=False
+    )
+
