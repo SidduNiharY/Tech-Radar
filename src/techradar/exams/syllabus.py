@@ -1,202 +1,176 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from techradar.db.models import Revision, StudySession, SyllabusTopic, TopicSource
+from techradar.pipeline.writer import slugify
+from techradar.vault.frontmatter import FRONTMATTER_PATTERN
 
 
-class SyllabusNode(BaseModel):
-    id: str
-    title: str
-    exam_code: str
-    parent_id: str | None = None
-    subtopics: list[str] = Field(default_factory=list)
-    weight: float = 1.0
-    covered: bool = False
+class TopicCoverage(BaseModel):
+    subject: str
+    topic: str
+    studied_minutes: int
+    revisions_done: int
+    covered: bool
+    n_sources: int = 0
+    has_source: bool = False
 
 
-_DEFAULT_GATE_CS_SYLLABUS = [
-    SyllabusNode(
-        id="gate_cs_algo",
-        title="Algorithms",
-        exam_code="GATE_CS",
-        subtopics=[
-            "Asymptotic analysis",
-            "Recurrence relations",
-            "Divide and conquer",
-            "Greedy algorithms",
-            "Dynamic programming",
-            "Graph traversals and MST",
-        ],
-        weight=1.0,
-    ),
-    SyllabusNode(
-        id="gate_cs_os",
-        title="OS",
-        exam_code="GATE_CS",
-        subtopics=[
-            "Processes and threads",
-            "CPU scheduling",
-            "Deadlocks and synchronization",
-            "Memory management and virtual memory",
-            "File systems and I/O",
-        ],
-        weight=1.0,
-    ),
-    SyllabusNode(
-        id="gate_cs_dbms",
-        title="DBMS",
-        exam_code="GATE_CS",
-        subtopics=[
-            "ER-model and relational schema",
-            "Relational algebra and tuple calculus",
-            "SQL queries",
-            "Integrity constraints and normalization",
-            "Transactions and concurrency control",
-        ],
-        weight=1.0,
-    ),
-    SyllabusNode(
-        id="gate_cs_networks",
-        title="Networks",
-        exam_code="GATE_CS",
-        subtopics=[
-            "OSI and TCP/IP protocol suite",
-            "Framing and flow/error control",
-            "Routing algorithms and IP addressing",
-            "TCP/UDP and congestion control",
-            "Network security and firewalls",
-        ],
-        weight=1.0,
-    ),
-]
+def parse_topics(md: str) -> list[str]:
+    """Parse list of topics from markdown text.
 
-_DEFAULT_SSC_CGL_SYLLABUS = [
-    SyllabusNode(
-        id="ssc_cgl_quant",
-        title="Quantitative Aptitude",
-        exam_code="SSC_CGL",
-        subtopics=[
-            "Percentages, profit and loss",
-            "Ratio, proportion and averages",
-            "Time and work",
-            "Speed, time and distance",
-            "Algebra, geometry and trigonometry",
-        ],
-        weight=1.0,
-    ),
-    SyllabusNode(
-        id="ssc_cgl_reasoning",
-        title="Reasoning",
-        exam_code="SSC_CGL",
-        subtopics=[
-            "Analogies and classification",
-            "Number and alphabet series",
-            "Coding-decoding",
-            "Syllogisms and Venn diagrams",
-            "Blood relations and directions",
-        ],
-        weight=1.0,
-    ),
-    SyllabusNode(
-        id="ssc_cgl_english",
-        title="English",
-        exam_code="SSC_CGL",
-        subtopics=[
-            "Reading comprehension",
-            "Spotting errors",
-            "Sentence improvement and cloze test",
-            "Idioms, phrases and one word substitution",
-            "Synonyms and antonyms",
-        ],
-        weight=1.0,
-    ),
-    SyllabusNode(
-        id="ssc_cgl_ga",
-        title="General Awareness",
-        exam_code="SSC_CGL",
-        subtopics=[
-            "Current affairs and national events",
-            "Indian history and culture",
-            "Polity and constitution",
-            "Geography and environment",
-            "General science and economic policies",
-        ],
-        weight=1.0,
-    ),
-]
+    Finds bullet lines ('- ') under '## Topics' heading up to the next heading.
+    Each topic is capped at 120 characters.
+    """
+    topics: list[str] = []
+    in_topics = False
+
+    for line in md.splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith("#"):
+            if trimmed.lower() == "## topics":
+                in_topics = True
+                continue
+            elif in_topics:
+                # Reached next section heading
+                break
+        elif in_topics and trimmed.startswith("- "):
+            item = trimmed[2:].strip()[:120]
+            if item:
+                topics.append(item)
+
+    return topics
 
 
-def get_default_syllabus(exam_code: str) -> list[SyllabusNode]:
-    """Returns curated baseline syllabus tree nodes for recognized exams."""
-    normalized = exam_code.strip().upper().replace("-", "_").replace(" ", "_")
-    if normalized == "GATE_CS":
-        return [node.model_copy() for node in _DEFAULT_GATE_CS_SYLLABUS]
-    if normalized == "SSC_CGL":
-        return [node.model_copy() for node in _DEFAULT_SSC_CGL_SYLLABUS]
-    return []
+async def sync_syllabus(session: AsyncSession, vault_root: Path) -> int:
+    """Read every syllabus/**/*.md file and sync topics to syllabus_topics table.
+
+    Front matter must specify `exam` and `title` (subject).
+    Returns count of topics processed.
+    """
+    syllabus_dir = vault_root / "syllabus"
+    if not syllabus_dir.exists():
+        return 0
+
+    count = 0
+    for md_file in sorted(syllabus_dir.glob("**/*.md")):
+        text = md_file.read_text(encoding="utf-8")
+        match = FRONTMATTER_PATTERN.match(text)
+        if not match:
+            continue
+
+        raw_fm = match.group(1) or ""
+        fm = yaml.safe_load(raw_fm)
+        if not isinstance(fm, dict):
+            continue
+
+        exam = fm.get("exam")
+        title = fm.get("title")
+        if not exam or not title:
+            continue
+
+        exam_str = str(exam).strip()
+        subject_str = str(title).strip()
+        rel_path = str(md_file.relative_to(vault_root))
+
+        topics = parse_topics(text)
+        for t in topics:
+            slug = slugify(t)
+            stmt = select(SyllabusTopic).where(
+                SyllabusTopic.exam == exam_str,
+                SyllabusTopic.subject == subject_str,
+                SyllabusTopic.slug == slug,
+            )
+            res = await session.execute(stmt)
+            existing = res.scalar_one_or_none()
+            if existing:
+                existing.topic = t
+                existing.vault_path = rel_path
+            else:
+                session.add(
+                    SyllabusTopic(
+                        exam=exam_str,
+                        subject=subject_str,
+                        topic=t,
+                        slug=slug,
+                        vault_path=rel_path,
+                    )
+                )
+            count += 1
+
+    await session.flush()
+    return count
 
 
-class SyllabusTree:
-    """In-memory syllabus tree representation with hierarchy and coverage tracking."""
+async def _coverage_for_topic(session: AsyncSession, topic_row: SyllabusTopic) -> TopicCoverage:
+    # 1. Studied minutes: sum of StudySession.minutes where lower(topic) matches
+    session_stmt = select(func.coalesce(func.sum(StudySession.minutes), 0)).where(
+        func.lower(StudySession.topic) == func.lower(topic_row.topic)
+    )
+    studied_minutes: int = int((await session.execute(session_stmt)).scalar() or 0)
 
-    def __init__(self) -> None:
-        self._nodes: dict[str, SyllabusNode] = {}
+    # 2. Revisions done: count of Revision where lower(topic) matches and done_at is not null
+    rev_stmt = (
+        select(func.count())
+        .select_from(Revision)
+        .where(
+            func.lower(Revision.topic) == func.lower(topic_row.topic),
+            Revision.done_at.is_not(None),
+        )
+    )
+    revisions_done: int = int((await session.execute(rev_stmt)).scalar() or 0)
 
-    def add_node(self, node: SyllabusNode) -> None:
-        """Adds or updates a syllabus node."""
-        self._nodes[node.id] = node
+    # 3. Sources: count of confirmed topic_sources for this topic_id
+    src_stmt = (
+        select(func.count())
+        .select_from(TopicSource)
+        .where(
+            TopicSource.topic_id == topic_row.id,
+            TopicSource.status == "confirmed",
+        )
+    )
+    n_sources: int = int((await session.execute(src_stmt)).scalar() or 0)
 
-    def get_node(self, node_id: str) -> SyllabusNode | None:
-        """Retrieves a syllabus node by ID."""
-        return self._nodes.get(node_id)
+    covered = (studied_minutes >= 30) or (revisions_done >= 1)
+    has_source = n_sources > 0
 
-    def get_children(self, parent_id: str) -> list[SyllabusNode]:
-        """Returns direct children of a given parent node."""
-        return [node for node in self._nodes.values() if node.parent_id == parent_id]
+    return TopicCoverage(
+        subject=topic_row.subject,
+        topic=topic_row.topic,
+        studied_minutes=studied_minutes,
+        revisions_done=revisions_done,
+        covered=covered,
+        n_sources=n_sources,
+        has_source=has_source,
+    )
 
-    def get_nodes(self, exam_code: str | None = None) -> list[SyllabusNode]:
-        """Returns all nodes, optionally filtered by exam code."""
-        if exam_code is None:
-            return list(self._nodes.values())
-        normalized = exam_code.strip().upper().replace("-", "_").replace(" ", "_")
-        return [
-            node
-            for node in self._nodes.values()
-            if node.exam_code.strip().upper().replace("-", "_").replace(" ", "_") == normalized
-        ]
 
-    def mark_covered(self, node_id: str, covered: bool = True) -> None:
-        """Marks a node as covered or uncovered."""
-        node = self._nodes.get(node_id)
-        if node is not None:
-            node.covered = covered
+async def coverage(session: AsyncSession, exam: str) -> list[TopicCoverage]:
+    """Calculate syllabus topic coverage for an exam."""
+    stmt = (
+        select(SyllabusTopic)
+        .where(SyllabusTopic.exam == exam)
+        .order_by(SyllabusTopic.subject, SyllabusTopic.id)
+    )
+    topics = list((await session.execute(stmt)).scalars().all())
 
-    def get_uncovered_topics(self, exam_code: str) -> list[SyllabusNode]:
-        """Returns all syllabus nodes for an exam where covered is False."""
-        normalized = exam_code.strip().upper().replace("-", "_").replace(" ", "_")
-        return [
-            node
-            for node in self._nodes.values()
-            if node.exam_code.strip().upper().replace("-", "_").replace(" ", "_") == normalized
-            and not node.covered
-        ]
+    results: list[TopicCoverage] = []
+    for t in topics:
+        cov = await _coverage_for_topic(session, t)
+        results.append(cov)
+    return results
 
-    def calculate_coverage(self, exam_code: str, weighted: bool = False) -> float:
-        """Returns coverage percentage (0.0 to 100.0) of topics for an exam."""
-        nodes = self.get_nodes(exam_code)
-        if not nodes:
-            return 0.0
-        if weighted:
-            total_weight = sum(node.weight for node in nodes)
-            if total_weight <= 0:
-                return 0.0
-            covered_weight = sum(node.weight for node in nodes if node.covered)
-            return round((covered_weight / total_weight) * 100.0, 2)
-        covered_count = sum(1 for node in nodes if node.covered)
-        return round((covered_count / len(nodes)) * 100.0, 2)
 
-    def load_default_syllabus(self, exam_code: str) -> list[SyllabusNode]:
-        """Loads curated default syllabus nodes into the tree and returns them."""
-        nodes = get_default_syllabus(exam_code)
-        for node in nodes:
-            self.add_node(node)
-        return nodes
+async def coverage_for(session: AsyncSession, topic_id: int) -> TopicCoverage | None:
+    """Calculate topic coverage for a specific topic id."""
+    stmt = select(SyllabusTopic).where(SyllabusTopic.id == topic_id)
+    topic_row = (await session.execute(stmt)).scalar_one_or_none()
+    if not topic_row:
+        return None
+    return await _coverage_for_topic(session, topic_row)

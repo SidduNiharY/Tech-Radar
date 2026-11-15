@@ -48,16 +48,20 @@ class FoundationSection(BaseModel):
 
 async def queue_background(session: AsyncSession, titles: Sequence[str]) -> int:
     """Queue background fetching and indexing of Wikipedia foundation topics."""
+    import hashlib
+
     from techradar.db.models import RawItem
 
     queued = 0
     for t in titles:
+        url = f"https://en.wikipedia.org/wiki/{t.replace(' ', '_')}"
+        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
         raw = RawItem(
-            source="wikipedia",
-            external_id=t,
+            source_id=1,
+            url=url,
+            url_hash=url_hash,
             title=t,
-            url=f"https://en.wikipedia.org/wiki/{t.replace(' ', '_')}",
-            body="",
+            kind="html",
             status="pending",
         )
         session.add(raw)

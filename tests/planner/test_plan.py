@@ -51,6 +51,21 @@ def test_plan_final_30_first_line():
     assert lines[0] == "⏳ Final 30 days: SSC CGL"
 
 
+def test_plan_in_final_mode_never_suggests_new_topic():
+    lines = compose_plan(
+        TODAY,
+        due_revisions=[],
+        due_cards=0,
+        quiz_ready=False,
+        minutes_this_week={},
+        targets=TARGETS,
+        priority=[Goal.GOV],
+        final_30_exam="SSC CGL",
+    )
+    assert not any("next topic" in line for line in lines)
+    assert any("revise" in line for line in lines)
+
+
 def test_briefing_shows_plan_block_first():
     b = Briefing(
         date=TODAY,

@@ -1,184 +1,137 @@
 from __future__ import annotations
 
-from techradar.exams.syllabus import SyllabusNode, SyllabusTree, get_default_syllabus
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from techradar.db.engine import make_engine
+from techradar.db.models import Revision, StudySession, SyllabusTopic
+from techradar.exams.syllabus import coverage, parse_topics, sync_syllabus
+from techradar.settings import Settings
 
 
-def test_hierarchical_node_insertion_and_parent_child_tracking():
-    tree = SyllabusTree()
+def test_parse_topics_stops_at_next_heading():
+    md = "# OS\n## Topics\n- Processes\n- Deadlocks\n## Notes\n- not a topic\n"
+    assert parse_topics(md) == ["Processes", "Deadlocks"]
 
-    parent = SyllabusNode(
-        id="gate_cs_algo",
-        title="Algorithms",
-        exam_code="GATE_CS",
-        subtopics=["Analysis", "Greedy", "DP"],
-        weight=2.0,
+
+def test_parse_topics_caps_length():
+    long_topic = "A" * 150
+    md = f"## Topics\n- {long_topic}\n"
+    parsed = parse_topics(md)
+    assert len(parsed) == 1
+    assert len(parsed[0]) == 120
+
+
+@pytest.fixture
+def db_settings() -> Settings:
+    return Settings(
+        telegram_owner_chat_id=1,
+        db_host="127.0.0.1",
+        db_port=55432,
+        db_name="techradar",
+        secrets_dir=Path("secrets"),
     )
-    child1 = SyllabusNode(
-        id="gate_cs_algo_dp",
-        title="Dynamic Programming",
-        exam_code="GATE_CS",
-        parent_id="gate_cs_algo",
-        subtopics=["Optimal Substructure", "Knapsack"],
-        weight=1.0,
+
+
+@pytest.fixture
+async def session(db_settings: Settings) -> AsyncGenerator[AsyncSession]:
+    engine = make_engine("app", db_settings)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as s:
+        yield s
+        await s.rollback()
+    await engine.dispose()
+
+
+@pytest.mark.db
+async def test_sync_syllabus_from_vault(tmp_path: Path, session: AsyncSession):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    syllabus_dir = vault / "syllabus" / "gate"
+    syllabus_dir.mkdir(parents=True)
+
+    note = syllabus_dir / "os.md"
+    note.write_text(
+        "---\nexam: GATE CS\ntitle: Operating Systems\n---\n"
+        "# Operating Systems\n\n## Topics\n- Processes\n- Deadlocks\n\n"
+        "## References\n- Silberschatz\n",
+        encoding="utf-8",
     )
-    child2 = SyllabusNode(
-        id="gate_cs_algo_graphs",
-        title="Graph Algorithms",
-        exam_code="GATE_CS",
-        parent_id="gate_cs_algo",
-        subtopics=["BFS/DFS", "Dijkstra"],
-        weight=1.0,
+
+    count = await sync_syllabus(session, vault)
+    assert count == 2
+
+    # Second run is idempotent
+    count2 = await sync_syllabus(session, vault)
+    assert count2 == 2
+
+
+@pytest.mark.db
+async def test_coverage_rules(session: AsyncSession):
+    # Setup syllabus topics
+    t1 = SyllabusTopic(
+        exam="GATE CS",
+        subject="Operating Systems",
+        topic="Deadlocks",
+        slug="deadlocks",
+        vault_path="syllabus/gate/os.md",
     )
-    other = SyllabusNode(
-        id="gate_cs_os",
-        title="OS",
-        exam_code="GATE_CS",
-        weight=1.5,
+    t2 = SyllabusTopic(
+        exam="GATE CS",
+        subject="Operating Systems",
+        topic="Processes",
+        slug="processes",
+        vault_path="syllabus/gate/os.md",
     )
-
-    tree.add_node(parent)
-    tree.add_node(child1)
-    tree.add_node(child2)
-    tree.add_node(other)
-
-    # Node retrieval
-    assert tree.get_node("gate_cs_algo") == parent
-    assert tree.get_node("gate_cs_algo_dp") == child1
-    assert tree.get_node("non_existent") is None
-
-    # Parent-child tracking
-    algo_children = tree.get_children("gate_cs_algo")
-    assert len(algo_children) == 2
-    assert {c.id for c in algo_children} == {"gate_cs_algo_dp", "gate_cs_algo_graphs"}
-    assert tree.get_children("gate_cs_os") == []
-    assert tree.get_children("unknown_id") == []
-
-    # Node parent_id inspection
-    assert child1.parent_id == "gate_cs_algo"
-    assert parent.parent_id is None
-
-
-def test_coverage_calculation_empty_and_levels():
-    tree = SyllabusTree()
-
-    # Empty tree returns 0.0
-    assert tree.calculate_coverage("GATE_CS") == 0.0
-
-    node1 = SyllabusNode(
-        id="t1",
-        title="Topic 1",
-        exam_code="GATE_CS",
-        covered=False,
+    t3 = SyllabusTopic(
+        exam="GATE CS",
+        subject="Operating Systems",
+        topic="Paging",
+        slug="paging",
+        vault_path="syllabus/gate/os.md",
     )
-    node2 = SyllabusNode(
-        id="t2",
-        title="Topic 2",
-        exam_code="GATE_CS",
-        covered=False,
+    session.add_all([t1, t2, t3])
+    await session.flush()
+
+    # 45 min study on "deadlocks" (case-insensitive) -> covered
+    now = datetime.now(UTC)
+    s1 = StudySession(
+        goal="GATE CS",
+        topic="deadlocks",
+        started_at=now,
+        minutes=45,
     )
-    tree.add_node(node1)
-    tree.add_node(node2)
+    session.add(s1)
 
-    # 0% coverage
-    assert tree.calculate_coverage("GATE_CS") == 0.0
-    uncovered = tree.get_uncovered_topics("GATE_CS")
-    assert len(uncovered) == 2
-    assert {n.id for n in uncovered} == {"t1", "t2"}
-
-    # 50% coverage
-    tree.mark_covered("t1", True)
-    assert tree.calculate_coverage("GATE_CS") == 50.0
-    uncovered = tree.get_uncovered_topics("GATE_CS")
-    assert len(uncovered) == 1
-    assert uncovered[0].id == "t2"
-
-    # 100% coverage
-    tree.mark_covered("t2", True)
-    assert tree.calculate_coverage("GATE_CS") == 100.0
-    assert tree.get_uncovered_topics("GATE_CS") == []
-
-
-def test_weighted_coverage_calculation():
-    tree = SyllabusTree()
-
-    node1 = SyllabusNode(
-        id="w1",
-        title="Core Topic",
-        exam_code="GATE_CS",
-        weight=3.0,
-        covered=False,
+    # 10 min study + 0 revisions on "processes" -> not covered
+    s2 = StudySession(
+        goal="GATE CS",
+        topic="processes",
+        started_at=now,
+        minutes=10,
     )
-    node2 = SyllabusNode(
-        id="w2",
-        title="Minor Topic",
-        exam_code="GATE_CS",
-        weight=1.0,
-        covered=False,
+    session.add(s2)
+
+    # 0 min study + 1 revision done on "paging" -> covered
+    r1 = Revision(
+        goal="GATE CS",
+        topic="Paging",
+        due_date=now.date(),
+        done_at=now,
     )
-    tree.add_node(node1)
-    tree.add_node(node2)
+    session.add(r1)
+    await session.flush()
 
-    # Both uncovered
-    assert tree.calculate_coverage("GATE_CS", weighted=True) == 0.0
+    cov_list = await coverage(session, "GATE CS")
+    cov_by_topic = {c.topic: c for c in cov_list}
 
-    # Covering node with weight 3 out of total weight 4 -> 75%
-    tree.mark_covered("w1", True)
-    assert tree.calculate_coverage("GATE_CS", weighted=True) == 75.0
-
-    # Covering both -> 100%
-    tree.mark_covered("w2", True)
-    assert tree.calculate_coverage("GATE_CS", weighted=True) == 100.0
-
-
-def test_default_syllabus_loader_gate_cs():
-    tree = SyllabusTree()
-    gate_nodes = tree.load_default_syllabus("GATE_CS")
-
-    assert len(gate_nodes) == 4
-    titles = [n.title for n in gate_nodes]
-    assert "Algorithms" in titles
-    assert "OS" in titles
-    assert "DBMS" in titles
-    assert "Networks" in titles
-
-    for node in gate_nodes:
-        assert node.exam_code == "GATE_CS"
-        assert not node.covered
-        assert len(node.subtopics) > 0
-
-    # Initial coverage is 0.0%
-    assert tree.calculate_coverage("GATE_CS") == 0.0
-
-    # All nodes are uncovered initially
-    assert len(tree.get_uncovered_topics("GATE_CS")) == 4
-
-
-def test_default_syllabus_loader_ssc_cgl():
-    tree = SyllabusTree()
-    ssc_nodes = tree.load_default_syllabus("SSC_CGL")
-
-    assert len(ssc_nodes) == 4
-    titles = [n.title for n in ssc_nodes]
-    assert "Quantitative Aptitude" in titles
-    assert "Reasoning" in titles
-    assert "English" in titles
-    assert "General Awareness" in titles
-
-    for node in ssc_nodes:
-        assert node.exam_code == "SSC_CGL"
-        assert not node.covered
-        assert len(node.subtopics) > 0
-
-    assert tree.calculate_coverage("SSC_CGL") == 0.0
-
-
-def test_default_syllabus_normalization_and_unknown():
-    # Test case and punctuation normalization
-    nodes_lower = get_default_syllabus("gate-cs")
-    assert len(nodes_lower) == 4
-
-    nodes_spaced = get_default_syllabus("SSC CGL")
-    assert len(nodes_spaced) == 4
-
-    # Unknown exam code returns empty list
-    assert get_default_syllabus("UNKNOWN_EXAM") == []
+    assert cov_by_topic["Deadlocks"].covered is True
+    assert cov_by_topic["Deadlocks"].studied_minutes == 45
+    assert cov_by_topic["Processes"].covered is False
+    assert cov_by_topic["Processes"].studied_minutes == 10
+    assert cov_by_topic["Paging"].covered is True
+    assert cov_by_topic["Paging"].revisions_done == 1

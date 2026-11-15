@@ -76,7 +76,11 @@ def compose_plan(
             break
 
     goal_name = chosen_goal.name
-    lines.append(f"🎓 {goal_name}: {first_topic} (45 min)")
+    if final_30_exam:
+        topic_str = first_topic if first_topic != "next topic" else "weak areas"
+        lines.append(f"🎓 {goal_name}: revise {topic_str} (45 min)")
+    else:
+        lines.append(f"🎓 {goal_name}: {first_topic} (45 min)")
 
     # 6. English practice
     lines.append("🔤 English: 5 new words + 10 grammar questions")
