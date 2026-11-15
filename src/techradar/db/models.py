@@ -708,6 +708,8 @@ class ExamWatch(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     watch_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
+    capture_pattern: Mapped[str | None] = mapped_column(Text, nullable=True)
+    capture_exam: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -1083,3 +1085,592 @@ class FactCheck(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     saved_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# --- Phase 8: exams ---
+
+
+class SyllabusTopic(Base):
+    """Syllabus topics for competitive and academic exams."""
+
+    __tablename__ = "syllabus_topics"
+    __table_args__ = (
+        UniqueConstraint("exam", "subject", "slug", name="uq_syllabus_topics_exam_subject_slug"),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    exam: Mapped[str] = mapped_column(Text, nullable=False)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    vault_path: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class PyqQuestion(Base):
+    """Past-year question with official answer keys."""
+
+    __tablename__ = "pyq_questions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    exam: Mapped[str] = mapped_column(Text, nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    paper: Mapped[str] = mapped_column(Text, nullable=False)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    qtype: Mapped[str] = mapped_column(Text, nullable=False)  # MCQ, MSQ, NAT
+    answer_key: Mapped[str] = mapped_column(Text, nullable=False)
+    marks: Mapped[float] = mapped_column(Numeric(4, 2), nullable=False)
+    topic_id: Mapped[int | None] = mapped_column(
+        ForeignKey("techradar.syllabus_topics.id"), nullable=True
+    )
+    tag_status: Mapped[str] = mapped_column(
+        Text, server_default="none", default="none", nullable=False
+    )
+
+
+class DrillAttempt(Base):
+    """User attempt record on daily aptitude and reasoning drills."""
+
+    __tablename__ = "drill_attempts"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    item: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    chosen: Mapped[str] = mapped_column(Text, nullable=False)
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MockResult(Base):
+    """Recorded scores from full-length mock examinations."""
+
+    __tablename__ = "mock_results"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    exam: Mapped[str] = mapped_column(Text, nullable=False)
+    taken_on: Mapped[date] = mapped_column(Date, nullable=False)
+    total: Mapped[float] = mapped_column(Float, nullable=False)
+    max_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sections: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Cutoff(Base):
+    """Official qualification thresholds by exam year, tier and category."""
+
+    __tablename__ = "cutoffs"
+    __table_args__ = {"schema": "techradar"}
+
+    exam: Mapped[str] = mapped_column(Text, primary_key=True)
+    year: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tier: Mapped[str] = mapped_column(Text, primary_key=True)
+    category: Mapped[str] = mapped_column(Text, primary_key=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class TopicWeight(Base):
+    """Subject and topic question mark weights based on past analysis."""
+
+    __tablename__ = "topic_weights"
+    __table_args__ = {"schema": "techradar"}
+
+    exam: Mapped[str] = mapped_column(Text, primary_key=True)
+    subject: Mapped[str] = mapped_column(Text, primary_key=True)
+    topic: Mapped[str] = mapped_column(Text, primary_key=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class TopicSource(Base):
+    """Learning sources mapped to syllabus topics."""
+
+    __tablename__ = "topic_sources"
+    __table_args__ = (
+        UniqueConstraint("topic_id", "kind", "ref_id", name="uq_topic_sources_topic_kind_ref"),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    topic_id: Mapped[int] = mapped_column(
+        ForeignKey("techradar.syllabus_topics.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)  # chapter, pyq, pack_item, note
+    ref_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # suggested, confirmed, dismissed
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# --- Phase 9: live voice and study group ---
+
+
+class GroupMember(Base):
+    """Study group members identified by hashed salt for privacy."""
+
+    __tablename__ = "group_members"
+    __table_args__ = {"schema": "techradar"}
+
+    member_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class GroupPoll(Base):
+    """Quiz polls sent to allowed study groups."""
+
+    __tablename__ = "group_polls"
+    __table_args__ = {"schema": "techradar"}
+
+    poll_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    mcq_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    group_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GroupAnswer(Base):
+    """Member answers to group quiz polls."""
+
+    __tablename__ = "group_answers"
+    __table_args__ = {"schema": "techradar"}
+
+    poll_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    member_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class LiveSession(Base):
+    """Live voice coach session records."""
+
+    __tablename__ = "live_sessions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    dir: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+# --- Phase 11: feedback and self-improvement ---
+
+
+class Feedback(Base):
+    """User feedback signals on items, answers, summaries, cards, MCQs and voice."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_kind", "target_id", "signal", "day", name="uq_feedback_target_signal_day"
+        ),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    target_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    signal: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)  # telegram, web, voice
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ActionLog(Base):
+    """Activity action log for implicit feedback and usage patterns."""
+
+    __tablename__ = "action_log"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    kind: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )  # open, skip, save, ask, follow_up, session_start, session_end, card_review, quiz_answer
+    target: Mapped[str] = mapped_column(String(200), nullable=False)
+    topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Edit(Base):
+    """User edits made to generated notes or summaries."""
+
+    __tablename__ = "edits"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    doc_path: Mapped[str] = mapped_column(Text, nullable=False)
+    before_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    after_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    length_change: Mapped[int] = mapped_column(Integer, nullable=False)
+    sections_removed: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", default=list, nullable=False
+    )
+    words_replaced: Mapped[int] = mapped_column(Integer, nullable=False)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Weight(Base):
+    """Topic, source, and search weights for ranking and retrieval."""
+
+    __tablename__ = "weights"
+    __table_args__ = {"schema": "techradar"}
+
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)  # topic, source, search
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    floor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PreferenceRule(Base):
+    """Style rules proposed by night pattern detection and approved by owner."""
+
+    __tablename__ = "preference_rules"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    field: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # proposed, active, ignored, undone
+    proposed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    report_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class RegressionCase(Base):
+    """Saved negative feedback cases to guard against model regressions."""
+
+    __tablename__ = "regression_cases"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    question: Mapped[str] = mapped_column(String(500), nullable=False)
+    doc_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    bad_answer: Mapped[str] = mapped_column(Text, nullable=False)
+    must_not_include: Mapped[str] = mapped_column(String(300), nullable=False)
+    must_include: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    from_feedback_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    passing: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ImprovementLog(Base):
+    """Log of all automatic and approved self-improvement modifications."""
+
+    __tablename__ = "improvement_log"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)  # weight, rule, search, fsrs, content
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    automatic: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StyleProfile(Base):
+    """Mode-level style profile configuration from /setup."""
+
+    __tablename__ = "style_profiles"
+    __table_args__ = {"schema": "techradar"}
+
+    mode: Mapped[str] = mapped_column(Text, primary_key=True)
+    setup: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TopicMastery(Base):
+    """Learner topic mastery levels computed from reviews and quizzes."""
+
+    __tablename__ = "topic_mastery"
+    __table_args__ = {"schema": "techradar"}
+
+    topic: Mapped[str] = mapped_column(Text, primary_key=True)
+    level: Mapped[str] = mapped_column(Text, nullable=False)  # new, learning, exam_ready, mastered
+    quiz_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stability_days: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reviews: Mapped[int] = mapped_column(Integer, server_default="0", default=0, nullable=False)
+    prev_level: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LikedExample(Base):
+    """High-quality answers approved as few-shot style examples."""
+
+    __tablename__ = "liked_examples"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    question: Mapped[str] = mapped_column(String(500), nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
+    from_feedback_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    fact_ids: Mapped[list[int]] = mapped_column(
+        ARRAY(BigInteger), server_default="{}", default=list, nullable=False
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+
+
+class PreferencePair(Base):
+    """Which-is-better comparison pairs for human preference alignment."""
+
+    __tablename__ = "preference_pairs"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    version_a: Mapped[str] = mapped_column(Text, nullable=False)
+    version_b: Mapped[str] = mapped_column(Text, nullable=False)
+    variant_a: Mapped[str] = mapped_column(Text, nullable=False)
+    variant_b: Mapped[str] = mapped_column(Text, nullable=False)
+    chosen: Mapped[str | None] = mapped_column(Text, nullable=True)  # a, b, skip
+    asked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ImprovementReport(Base):
+    """Weekly self-improvement digest reports sent to owner."""
+
+    __tablename__ = "improvement_reports"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    week_start: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# --- Phase 10: models admin and tech extras ---
+
+
+class ModelRegistry(Base):
+    """Model assignment registry by role."""
+
+    __tablename__ = "model_registry"
+    __table_args__ = {"schema": "techradar"}
+
+    role: Mapped[str] = mapped_column(Text, primary_key=True)
+    ollama_tag: Mapped[str] = mapped_column(Text, nullable=False)
+    family: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ModelChange(Base):
+    """Log of model switches and rollbacks."""
+
+    __tablename__ = "model_changes"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    old_tag: Mapped[str] = mapped_column(Text, nullable=False)
+    new_tag: Mapped[str] = mapped_column(Text, nullable=False)
+    test_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actor: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    rolled_back: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+
+
+class ModelTest(Base):
+    """Evaluation test results for candidate models."""
+
+    __tablename__ = "model_tests"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    tag: Mapped[str] = mapped_column(Text, nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ModelRequest(Base):
+    """Requests to pull new candidate models."""
+
+    __tablename__ = "model_requests"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    tag: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # pending, pulled, rejected
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PlaygroundRun(Base):
+    """Test inference runs in model playground."""
+
+    __tablename__ = "playground_runs"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TrendCount(Base):
+    """Daily mention counts for emerging tech and world topics."""
+
+    __tablename__ = "trend_counts"
+    __table_args__ = {"schema": "techradar"}
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    term: Mapped[str] = mapped_column(Text, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+# --- Phase 12: Jarvis ---
+
+
+class JarvisSession(Base):
+    """Active or past conversation sessions with Jarvis."""
+
+    __tablename__ = "jarvis_sessions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    device: Mapped[str] = mapped_column(Text, nullable=False)  # mac, phone, server
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    practice: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quiz: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class JarvisTurn(Base):
+    """Individual spoken or typed dialog turns in a Jarvis session."""
+
+    __tablename__ = "jarvis_turns"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("techradar.jarvis_sessions.id"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)  # me, jarvis
+    text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    skill: Mapped[str | None] = mapped_column(Text, nullable=True)
+    list_len: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ticket_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reply_to: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reply: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    keep: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class JarvisWrite(Base):
+    """Pending or confirmed write actions requested by voice."""
+
+    __tablename__ = "jarvis_writes"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    args: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    inverse_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    inverse_args: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # awaiting_tap, done, expired, undone
+    tap_by: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class JarvisGreeting(Base):
+    """Daily greeting generated for Jarvis devices."""
+
+    __tablename__ = "jarvis_greetings"
+    __table_args__ = {"schema": "techradar"}
+
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    greeting: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    shown_devices: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", default=list, nullable=False
+    )
+
+
+class GpuLease(Base):
+    """Single-row GPU lease coordinator."""
+
+    __tablename__ = "gpu_lease"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_gpu_lease_single_row"),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    holder: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
