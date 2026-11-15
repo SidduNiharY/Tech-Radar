@@ -71,6 +71,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 3 Task 5b: Mark chapter as read and chapter cards · 88385cd · 2026-11-15
+- Built: practice/chapter_cards.py (render_chapter_list, make_chapter_cards, mark_chapter_read, run_make_chapter_cards)
+- Tests: 8 unit pass; 1 db written, collect, not run
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: bot callbacks `chap`, `read`, `src`; background job `make_chapter_cards_job`
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
