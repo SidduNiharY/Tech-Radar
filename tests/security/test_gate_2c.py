@@ -80,7 +80,11 @@ def test_gate_3_includes_gate_2c():
 
 
 def test_gate_1_mac_still_runs_no_simulation():
-    assert "phase2c" not in dry_run("gate-1-mac")
+    # The Mac gate lints every tracked shell script (shellcheck names phase2c.sh), but it must
+    # never run a simulation: no line may start the script or call a simulate target.
+    lines = dry_run("gate-1-mac").splitlines()
+    assert not [ln for ln in lines if re.search(r"\bbash\s+(?!-n\b)\S*simulate/phase\w+\.sh", ln)]
+    assert not [ln for ln in lines if re.search(r"\bsimulate-\w+", ln)]
 
 
 def test_parser_timeout_stays_120_seconds():
