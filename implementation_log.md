@@ -120,6 +120,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 5 Task 2: One-tap energy check-in · bcfcfc9 · 2026-11-15
+- Built: planner/checkin.py (checkin_keyboard, record_checkin, get_checkin, CHECKIN_TEXT)
+- Tests: 1 unit pass; 2 db written, collect, not run
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: bot callbacks `sleep`, `energy`, `mood`; send check-in message after morning briefing
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
