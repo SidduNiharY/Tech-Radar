@@ -205,6 +205,98 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 
 ## Phase 7 handed back · a73dc76
 
+## Phase 8: Exams (Basic Work) · 3e04dfe · 2026-11-15
+- Built:
+  - Models: `SyllabusTopic`, `PyqQuestion`, `DrillAttempt`, `MockResult`, `Cutoff`, `TopicWeight`, `TopicSource` in `src/techradar/db/models.py`
+  - Migration: `src/techradar/db/migrations/versions/0010_exams.py` revising `0009_world`
+  - Task 1 Syllabus: `src/techradar/exams/syllabus.py` (`parse_topics`, `sync_syllabus`, `TopicCoverage`, `coverage`, `coverage_for`), tested in `tests/exams/test_syllabus.py`
+  - Task 2 PYQs: `src/techradar/exams/pyq.py` (`QuestionChunk`, `split_questions`, `KeyEntry`, `parse_answer_key`, `check_answer`, `suggest_topic`), tested in `tests/exams/test_pyq.py`
+  - Task 2b Sources: `src/techradar/exams/sources.py` (`candidate_topics`, `suggest_for_chapter`, `suggest_topic_sources`, `decide_source`, `source_status`, `only_source_id`, `topics_without_sources`, `run_suggest_topic_sources`, `run_sources_digest`), tested in `tests/exams/test_sources.py`
+  - Task 3 Drills: `src/techradar/exams/drills/` (`DrillItem`, `daily_set`, `typing_passage`, `score_typing`, and 18 code-generators for quant, reasoning, and speed maths with exact oracles), tested in `tests/exams/test_drills.py` (200 random seeds per generator)
+  - Task 4 Deliver: `src/techradar/exams/deliver.py` (`record_drill`, `render_drill_summary`), tested in `tests/exams/test_deliver.py`
+  - Task 5 Mocks: `src/techradar/exams/mocks.py` (`SectionScore`, `MockScore`, `extract_mock_regex`, `numbers_present`, `extract_mock`, `render_mock_reply`), tested in `tests/exams/test_mocks.py`
+  - Task 6 Weights: `src/techradar/exams/weights.py` (`CutoffRow`, `WeightRow`, `TopicWeight`, `import_cutoffs`, `import_weightage`, `gate_weights`), tested in `tests/exams/test_weights.py`
+  - Task 6b Answer Keys: `src/techradar/exams/answer_keys.py` (`load_capture_pattern`, `matching_links`, `render_answer_key_notice`), tested in `tests/exams/test_answer_keys.py`
+  - Task 7 Final 30: `src/techradar/exams/final30.py` (`final_30`, `mini_mock`, `write_formula_sheet`, `capsule_bundle`), `src/techradar/planner/plan.py` (`final_30_exam` parameter), tested in `tests/exams/test_final30.py`
+- Tests: 83 tests pass across `tests/exams` and planner integration
+- Not run: `docker compose run --rm migrate` (needs server)
+- Differs from the plan: none
+- Wiring for Claude: bot `/drill` command, callbacks `drill:<n>:<0-3>`, `srcok:<id>`, `srcno:<id>`; inbox routing for `gate/<year>/`, `cutoffs/`, `weightage/`; `syllabus_sync_job`, `suggest_topic_sources_job`, `sources_digest_job`, `formula_sheets_job`; parser image sandbox integration (`parser/image.py`); API `/v1/exams` routes and Exams web screen
+- Old code removed: in-memory `SyllabusTree` and `SyllabusNode` replaced with DB-backed schema
+- Open questions: none
+
+## Phase 8 handed back · 3e04dfe
+
+## Phase 9: Study Smarter and Live Voice (Basic Work) · be8e103 · 2026-11-15
+- Built:
+  - Models: `GroupMember`, `GroupPoll`, `GroupAnswer`, `LiveSession` in `src/techradar/db/models.py`
+  - Migration: `src/techradar/db/migrations/versions/0011_live_group.py` revising `0010_exams`
+  - Task 2 Study Group: `src/techradar/group/group.py` (`LeaderboardEntry`, `calculate_leaderboard`, `render_leaderboard`, `leaderboard`, `member_hash`, `group_allowed`, `GROUP_MESSAGE_KINDS`), tested in `tests/group/test_group.py`
+  - Task 5 Voice Pitch: `src/techradar/voice/pitch.py` (`PitchFeedback`, `pitch_contour`, `compare_pitch_contours`), tested in `tests/voice/test_pitch.py`
+  - Task 6 Live Briefs: `src/techradar/voice_live/briefs.py` (`build_live_brief`, `HR_QUESTIONS`, `BANK_PANEL_QUESTIONS`, `SessionBrief`, `build_brief`), `src/techradar/night/know_yourself.py` (`generate_user_portrait`, `know_yourself`), tested in `tests/voice_live/test_briefs.py` and `tests/night/test_know_yourself.py`
+- Tests: 25 unit tests pass across `tests/group`, `tests/voice/test_pitch.py`, `tests/voice_live`, and `tests/night`
+- Not run: `docker compose run --rm migrate` (needs server)
+- Differs from the plan: none
+- Wiring for Claude: group allowlists, privacy salt, Telegram group message handlers; `voice-live` container wiring; `live_jobs.py`; live audio capture
+- Old code removed: none
+- Open questions: none
+
+## Phase 9 handed back · be8e103
+
+## Phase 10: Models Admin and Tech Extras (Basic Work) · 88017c6 · 2026-11-15
+- Built:
+  - Models: `ModelRegistry`, `ModelChange`, `ModelTest`, `ModelRequest`, `PlaygroundRun`, `TrendCount` in `src/techradar/db/models.py`
+  - Migration: `src/techradar/db/migrations/versions/0012_models.py` revising `0011_live_group`
+  - Task 3 Fit: `src/techradar/models/fit.py` (`ModelVramEstimate`, `estimate_vram_and_fit`, `kv_estimate`, `estimate_fit`), tested in `tests/models/test_fit.py`
+  - Task 4 Eval Bench: `src/techradar/models/bench.py` (`BenchScore`, `score_bench_run`, `passes_worker`, `passes_checker`, `passes_embed`, `passes_night`), `evals/sets/README.md`, `evals/sets/gate_cs.example.yaml`, tested in `tests/models/test_bench.py`
+  - Task 6 Release Digest: `src/techradar/digest/releases.py` (`ReleaseItem`, `Update`, `parse_release_payload`, `format_release_digest`, `render_digest`, `parse_uv_lock`, `parse_pnpm_lock`, `compare`), tested in `tests/digest/test_releases.py`
+  - Task 7 Emerging Trends: `src/techradar/digest/trends.py` (`TopicTrend`, `Rising`, `normalise_term`, `rising`, `rank_emerging_topics`, `format_trends_digest`), tested in `tests/digest/test_trends.py`
+- Tests: 38 unit tests pass across `tests/models` and `tests/digest`
+- Not run: `docker compose run --rm migrate` (needs server)
+- Differs from the plan: none
+- Wiring for Claude: GPU stats collection service; model pull/switch/rollback jobs; package release fetching and `tracked.yaml` allowlists; `rag/retrieve.py` trend boosting
+- Old code removed: none
+- Open questions: none
+
+## Phase 10 handed back · 88017c6
+
+## Phase 11: Feedback and Self-Improvement (Basic Work) · cd3a912 · 2026-11-15
+- Built:
+  - Models: `Feedback`, `ActionLog`, `Edit`, `Weight`, `PreferenceRule`, `RegressionCase`, `ImprovementLog`, `StyleProfile`, `TopicMastery`, `LikedExample`, `PreferencePair`, `ImprovementReport` in `src/techradar/db/models.py`
+  - Migration: `src/techradar/db/migrations/versions/0013_feedback.py` revising `0012_models`
+  - Task 2 Signals & Actions: `src/techradar/feedback/__init__.py`, `src/techradar/feedback/signals.py` (`Signal`, `TargetKind`, `TARGET_CODES`, `BUTTONS`, `feedback_buttons`, `record_feedback`), `src/techradar/feedback/actions.py` (`log_action`, `infer_skips`), tested in `tests/feedback/test_signals.py`
+  - Task 3 Feedback Edits: `src/techradar/feedback/edits.py` (`EditMetrics`, `compare_edit`, `diff_ratio`, `generate_critique_signals`, `snapshot_path`, `save_snapshot`, `load_snapshot`, `record_edit`), tested in `tests/feedback/test_edits.py`
+  - Task 4 Feedback Weights: `src/techradar/feedback/weights.py` (`STEP`, `bounded`, `effective`, `score`, `is_favourite`, `pick_outside_usual`, `apply_signal`), tested in `tests/feedback/test_weights.py`
+  - Task 5 Pattern Detection: `src/techradar/feedback/patterns.py` (`Mode`, `Evidence`, `StyleProposal`, `WeightProposal`, `ContentProposal`, `PatternCandidate`, `find_patterns`, `run_find_patterns`, `find_recurring_patterns`), tested in `tests/feedback/test_patterns.py`
+  - Task 6 Feedback Report: `src/techradar/feedback/rules.py` (`StyleRule`, `Pick`, `Picks`, `choose_and_word`), `src/techradar/feedback/report.py` (`verify_evidence`, `render_report`, `render_feedback_report`), tested in `tests/feedback/test_rules.py` and `tests/feedback/test_report.py`
+  - Task 7 Profiles: `src/techradar/profile/__init__.py`, `src/techradar/profile/style.py` (`TEMPLATES`, `INVARIANT_LINE`, `render_profile_block`, `mode_for`), `src/techradar/profile/mastery.py` (`mastery_level`, `mastery_line`), `src/techradar/profile/setup.py` (`SETUP_QUESTIONS`, `get_setup_questions`, `setup_buttons`, `parse_setup_choice`), tested in `tests/profile/test_profiles.py`
+  - Task 8 Regression & Tuning: `src/techradar/feedback/regression.py` (`RegressionReport`, `normalize_sentence`, `save_regression_case`, `run_regression`), `src/techradar/feedback/search_tuning.py` (`tune_book`), tested in `tests/feedback/test_regression.py`
+  - Task 9 Feedback Pairs: `src/techradar/feedback/pairs.py` (`VARIANTS`, `pair_due`, `make_pair`, `format_pair_message`, `create_pair`, `record_pair_choice`), tested in `tests/feedback/test_pairs.py`
+- Tests: 43 unit tests pass across `tests/feedback`, `tests/profile`, and DB schema verification
+- Not run: `docker compose run --rm migrate` (needs server)
+- Differs from the plan: none
+- Wiring for Claude: bot `/improvements` and `/setup` commands and callbacks (`rule_ok`, `rule_no`, `undo`, `pair`); `weekly_report_job`, `find_patterns_job`, `tune_books_job`; API `/v1/feedback` and `/v1/profile` routes; Next.js profile page with confirmed deletes and undo
+- Old code removed: none
+- Open questions: none
+
+## Phase 11 handed back · cd3a912
+
+## Phase 12: Jarvis Assistant Router & Skills (Basic Work) · 0b89b69 · 2026-11-15
+- Built:
+  - Models: `JarvisSession`, `JarvisTurn`, `JarvisWrite`, `JarvisGreeting`, `GpuLease` in `src/techradar/db/models.py`
+  - Migration: `src/techradar/db/migrations/versions/0014_jarvis.py` revising `0013_feedback`
+  - Task 8 The Ten Read Skills: Pure functions in `src/techradar/jarvis/skill_impl/` returning spoken text (`briefing.py`, `practice.py`, `exams.py`, `voice.py`, `world.py`, `library.py`, `search.py`, `planner.py`, `status.py`, `help.py`), tested in `tests/jarvis/test_skills.py`
+  - Task 9 Jarvis Greeting: `src/techradar/jarvis/greeting.py` (`is_quiet_hours`, `suggest_next_actions`, `prepare_greeting`, `run_prepare_greeting`), tested in `tests/jarvis/test_greeting.py`
+- Tests: 77 unit tests pass across `tests/jarvis` and DB schema verification
+- Not run: `docker compose run --rm migrate` (needs server)
+- Differs from the plan: none
+- Wiring for Claude: Jarvis write actions execution, tickets, and fast/slow LLM router; `greeting_job`; Jarvis web screen and floating orb
+- Old code removed: none
+- Open questions: none
+
+## Phase 12 handed back · 0b89b69
+
+
 
 
 
