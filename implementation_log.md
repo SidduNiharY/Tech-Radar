@@ -100,6 +100,18 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 
 ## Phase 3 handed back · 1bcf1ec
 
+## Phase 4 Task 2: Web app models, schemas, and migration 0006 · 4f257be · 2026-11-15
+- Built: api/schemas.py (TodayResponse, AskRequest, AnswerStatus, CardOut, QuizQuestion, AnswerOutcome, ModelsStatus, UserSettings, Ticket), db/models.py (UserSettings, PendingAction, Briefing.items), db/migrations/versions/0006_web.py
+- Tests: 6 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: FastAPI endpoints in `src/techradar/api/routes/{today,ask,practice,quiz,settings,models,tickets}.py`; OpenAPI export script `scripts/export_openapi.py`
+- Old code removed: none
+- Open questions: none
+
+## Phase 4 handed back · 4f257be
+
+
 
 
 
