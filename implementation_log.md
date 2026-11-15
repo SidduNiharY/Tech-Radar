@@ -138,6 +138,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 5 Task 4: Progress screen and weekly review · a2ff20d · 2026-11-15
+- Built: planner/progress.py (week_bounds, sleep_accuracy_pattern, week_progress, run_weekly_review)
+- Tests: 3 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: GET `/v1/progress` route, Next.js Progress UI; background job `weekly_review_job` (Sundays at 19:00)
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
