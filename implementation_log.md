@@ -26,3 +26,13 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 3 Task 5: Quiz, flashcards, mistakes · 0bda5a8 · 2026-11-15
+- Built: practice/quiz.py, practice/flashcards.py, practice/mistakes.py
+- Tests: 19 unit pass; 4 db written, collect, not run
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: routing `quiz`, `cards`; callbacks `ans`, `rate`; jobs quiz_job, cards_job, mistakes_page_job
+- Old code removed: practice/quiz.py classes TwoModelKeyChecker, DailyPracticeLimits
+- Open questions: none
+
+
