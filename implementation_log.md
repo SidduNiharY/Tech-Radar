@@ -53,6 +53,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 3 Task 6: Grammar set and vocabulary from reading · 7136ecf · 2026-11-15
+- Built: practice/grammar.py, practice/vocab.py (WordAnalyzer Protocol with pure Python DefaultWordAnalyzer)
+- Tests: 26 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: wordfreq / spacy abstracted behind WordAnalyzer Protocol to maintain zero unvetted dependencies in core
+- Wiring for Claude: bot commands `/grammar`, `/vocab`; daily schedule jobs; server can inject SpacyWordAnalyzer via WordAnalyzer Protocol
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
