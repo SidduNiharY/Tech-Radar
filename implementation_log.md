@@ -129,6 +129,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 5 Task 3: Daily plan in the briefing · 55bbed2 · 2026-11-15
+- Built: planner/plan.py (compose_plan), api/schemas.py UserSettings fields
+- Tests: 3 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: daily plan lines generated and saved to `plans` table; displayed in morning briefing
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
