@@ -80,6 +80,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 3 Task 8: Monthly capsule and review inbox · 3fe6778 · 2026-11-15
+- Built: briefing/capsule.py, pipeline/review.py
+- Tests: 4 unit pass; 2 db written, collect, not run
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: bot command `/inbox`, callbacks `keep`, `drop`; background job `capsule_job` at 07:00 on the 1st
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
