@@ -62,6 +62,16 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 3 Task 7: Exam notification watcher · fbb52a8 · 2026-11-15
+- Built: alerts/watcher.py
+- Tests: 6 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: polling job `exam_poll_job` every 15 min; feeds outbound alert queue with deduplication via `alerts` table
+- Old code removed: none
+- Open questions: none
+
+
 
 
 
