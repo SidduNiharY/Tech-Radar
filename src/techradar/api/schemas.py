@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from techradar.briefing.compose import Section
+from techradar.planner.sessions import Goal
 
 
 class TodayItem(BaseModel):
@@ -162,6 +163,17 @@ class UserSettings(BaseModel):
     briefing_time: Annotated[str, Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
     sections: list[Section | str] = Field(min_length=1)
     verified_only_default: bool = False
+    exam_priority: list[Goal] = Field(default_factory=lambda: [Goal.GOV, Goal.GATE])
+    exam_dates: dict[str, date] = Field(default_factory=dict)
+    weekly_targets_min: dict[Goal, int] = Field(
+        default_factory=lambda: {
+            Goal.DEV: 600,
+            Goal.GATE: 300,
+            Goal.GOV: 420,
+            Goal.CURRENT: 105,
+            Goal.ENGLISH: 140,
+        }
+    )
 
 
 class Ticket(BaseModel):
