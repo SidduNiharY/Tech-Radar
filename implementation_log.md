@@ -16,3 +16,13 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Open questions:
 
 -->
+
+## Phase 3 Task 1: Morning briefing composer, Phase 3 models and migration 0005 · 478f70b · 2026-11-15
+- Built: src/techradar/db/models.py (added Briefing, Take, MCQ, QuizAttempt, Flashcard, Mistake, Vocab, GrammarItem, ExamWatch, Alert, ReviewDecision), src/techradar/db/migrations/versions/0005_practice.py, src/techradar/briefing/compose.py (run_briefing, BriefingResult)
+- Tests: 14 briefing unit tests pass; 2 db orm tests pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: worker/tasks.py needs `briefing_job` (queue io, every 15 minutes) calling run_briefing
+- Old code removed: none
+- Open questions: none
+
