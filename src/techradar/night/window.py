@@ -105,6 +105,17 @@ def night_only(
                 log.warning("could not free the GPU before the night job: %s", exc)
             return await f(**kwargs)
 
+        wrapper.is_night_only = True  # type: ignore[attr-defined]
         return wrapper
 
     return decorate(fn) if fn is not None else decorate
+
+
+def is_night_only(task_or_fn: Any) -> bool:
+    """Check if a Procrastinate task or function has the night_only attribute."""
+    if hasattr(task_or_fn, "is_night_only"):
+        return bool(task_or_fn.is_night_only)
+    func = getattr(task_or_fn, "func", None)
+    if func is not None and hasattr(func, "is_night_only"):
+        return bool(func.is_night_only)
+    return False

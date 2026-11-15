@@ -18,8 +18,10 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -990,3 +992,94 @@ class VoiceNotice(Base):
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# --- Phase 7: understanding and world ---
+
+
+class DeepDive(Base):
+    """Weekly in-depth topical research report."""
+
+    __tablename__ = "deep_dives"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    week: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    vault_path: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GlossaryTerm(Base):
+    """Domain concept, term or acronym definition."""
+
+    __tablename__ = "glossary_terms"
+    __table_args__ = {"schema": "techradar"}
+
+    term: Mapped[str] = mapped_column(Text, primary_key=True)
+    vault_path: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Timeline(Base):
+    """Chronological event timeline for a person, company or story."""
+
+    __tablename__ = "timelines"
+    __table_args__ = {"schema": "techradar"}
+
+    entity: Mapped[str] = mapped_column(Text, primary_key=True)
+    vault_path: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Prediction(Base):
+    """User forward-looking forecasts with resolution tracking."""
+
+    __tablename__ = "predictions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    text: Mapped[str] = mapped_column(String(280), nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    outcome: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class EconSeries(Base):
+    """Macroeconomic indicator timeseries observations."""
+
+    __tablename__ = "econ_series"
+    __table_args__ = (
+        UniqueConstraint("series", "period", "source_kind", name="uq_econ_series_period_source"),
+        {"schema": "techradar"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    series: Mapped[str] = mapped_column(Text, nullable=False)
+    period: Mapped[date] = mapped_column(Date, nullable=False)
+    value: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
+    unit: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class FactCheck(Base):
+    """Claim extraction, verification verdict and evidence."""
+
+    __tablename__ = "fact_checks"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    claims: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    verdicts: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    saved_path: Mapped[str | None] = mapped_column(Text, nullable=True)

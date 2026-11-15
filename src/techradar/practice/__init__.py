@@ -18,7 +18,6 @@ from techradar.practice.mcq import (
     shuffle_options,
 )
 from techradar.practice.mistakes import MistakesNotebook
-from techradar.practice.predictions import PredictionTracker
 
 __all__ = [
     "CHAPTER_MCQ_SYSTEM",
@@ -34,7 +33,6 @@ __all__ = [
     "MCQ_SYSTEM",
     "MakeMCQsResult",
     "MistakesNotebook",
-    "PredictionTracker",
     "Rating",
     "State",
     "make_chapter_mcq",
