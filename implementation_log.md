@@ -89,6 +89,18 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 3 Task 8b: Outdated facts retire their cards and MCQs · 06d0204 · 2026-11-15
+- Built: practice/supersede.py (apply_fact_change, run_fact_changes, fact_changes_job)
+- Tests: 2 unit pass; 2 db written, collect, not run
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: background job `fact_changes_job` (queue `io`, every 15 minutes)
+- Old code removed: none
+- Open questions: none
+
+## Phase 3 handed back · 1bcf1ec
+
+
 
 
 
