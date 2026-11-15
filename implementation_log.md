@@ -147,6 +147,27 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: none
 - Open questions: none
 
+## Phase 5 Task 5: Skill map updates · a30076a · 2026-11-15
+- Built: vault/frontmatter.py (update_front_matter, set_skill_status)
+- Tests: 9 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: bot command `/skill <name> <status>`, PUT `/v1/skills/{slug}` route
+- Old code removed: none
+- Open questions: none
+
+## Phase 5 Task 6: Failure alerts and health checks · 079a748 · 2026-11-15
+- Built: ops/alerts.py (raise_alert, alert_on_failure), ops/health.py (check_health, HealthReport)
+- Tests: 8 unit pass
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: job failure decorator wrapping Procrastinate tasks; hourly health_job; backup.sh status file and compose mount
+- Old code removed: none
+- Open questions: none
+
+## Phase 5 handed back · 079a748
+
+
 
 
 
