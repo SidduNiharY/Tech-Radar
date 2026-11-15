@@ -35,4 +35,14 @@ A task that could not be done gets an entry too, with `BLOCKED` in the heading a
 - Old code removed: practice/quiz.py classes TwoModelKeyChecker, DailyPracticeLimits
 - Open questions: none
 
+## Phase 3 Task 2: "My take" replies · e420b38 · 2026-11-15
+- Built: briefing/takes.py
+- Tests: 6 unit pass; 2 db written, collect, not run
+- Not run: `docker compose run --rm migrate` (needs the server)
+- Differs from the plan: none
+- Wiring for Claude: bot handler for replies to briefing messages; extracts `take_text`, calls `save_take(session, briefing_id, take_text, today, vault_root)`
+- Old code removed: none
+- Open questions: none
+
+
 
