@@ -112,3 +112,51 @@ class FakeReranker:
         passage_list = list(passages)
         self.calls.append((query, passage_list))
         return [self.scores.get(p, self.default) for p in passage_list]
+
+
+class FakeTranscriber:
+    """Fake transcriber for deterministic testing without Whisper inference."""
+
+    def __init__(self, transcript: Any | None = None) -> None:
+        from techradar.voice.transcribe import Transcript
+
+        self.transcript = transcript or Transcript(
+            text="hello world", words=[], lang="en", duration_s=2.0
+        )
+        self.calls: list[Any] = []
+
+    def transcribe(self, path: Any) -> Any:
+        self.calls.append(path)
+        return self.transcript
+
+
+class FakePhonemeModel:
+    """Fake wav2vec2 phoneme model for deterministic CTC alignment testing."""
+
+    def __init__(self, prob: float = 0.8) -> None:
+        import string
+
+        self.prob = prob
+        # Basic vocab with blank at 0 and ASCII letters
+        self.blank_id = 0
+        self.vocab: dict[str, int] = {"<pad>": 0}
+        for i, c in enumerate(string.ascii_lowercase, start=1):
+            self.vocab[c] = i
+        self.calls: list[Any] = []
+
+    def log_probs(self, wav: Any) -> Any:
+        import math
+
+        import numpy as np
+
+        self.calls.append(wav)
+        # Create at least 30 frames
+        frames = max(30, int(len(wav) / 320))
+        vocab_size = len(self.vocab)
+        # Low background log prob
+        log_prob = np.full((frames, vocab_size), math.log(1e-6), dtype=np.float32)
+        # Assign self.prob to all valid symbols
+        target_lp = math.log(max(self.prob, 1e-6))
+        for token_id in self.vocab.values():
+            log_prob[:, token_id] = target_lp
+        return log_prob

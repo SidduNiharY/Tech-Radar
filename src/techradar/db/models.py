@@ -842,3 +842,151 @@ class Plan(Base):
     lines: Mapped[list[str]] = mapped_column(
         JSONB, server_default=text("'[]'::jsonb"), default=list, nullable=False
     )
+
+
+# --- Phase 6: voice ---
+
+
+class VoiceSession(Base):
+    """Recorded voice note or practice session."""
+
+    __tablename__ = "voice_sessions"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    duration_s: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kept: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", default=False, nullable=False
+    )
+    delete_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    peaks: Mapped[list[float] | None] = mapped_column(JSONB, nullable=True)
+    transcript: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class VoiceMetrics(Base):
+    """Speech and fluency metrics computed for a voice session."""
+
+    __tablename__ = "voice_metrics"
+    __table_args__ = {"schema": "techradar"}
+
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("techradar.voice_sessions.id"), primary_key=True
+    )
+    words_per_min: Mapped[float] = mapped_column(Float, nullable=False)
+    filler_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    fillers_per_min: Mapped[float] = mapped_column(Float, nullable=False)
+    filler_breakdown: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False)
+    long_pauses: Mapped[int] = mapped_column(Integer, nullable=False)
+    avg_sentence_words: Mapped[float] = mapped_column(Float, nullable=False)
+    type_token_ratio: Mapped[float] = mapped_column(Float, nullable=False)
+    overused: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+
+
+class PronunciationScore(Base):
+    """Phoneme-level pronunciation accuracy score for a word."""
+
+    __tablename__ = "pronunciation_scores"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("techradar.voice_sessions.id"), nullable=False
+    )
+    word: Mapped[str] = mapped_column(Text, nullable=False)
+    start_s: Mapped[float] = mapped_column(Float, nullable=False)
+    end_s: Mapped[float] = mapped_column(Float, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    flagged: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class WritingFeedback(Base):
+    """Grammar and style feedback for user writing practice."""
+
+    __tablename__ = "writing_feedback"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    original_text: Mapped[str] = mapped_column(Text, nullable=False)
+    critique: Mapped[str] = mapped_column(Text, nullable=False)
+    polished_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Story(Base):
+    """Personal stories and anecdotes in the story bank."""
+
+    __tablename__ = "stories"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class StoryDraft(Base):
+    """Drafts and revisions of stories in the story bank."""
+
+    __tablename__ = "story_drafts"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    story_id: Mapped[int | None] = mapped_column(ForeignKey("techradar.stories.id"), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Listening(Base):
+    """Audio clips and transcripts used for English listening comprehension."""
+
+    __tablename__ = "listening"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    audio_path: Mapped[str] = mapped_column(Text, nullable=False)
+    transcript: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Reflection(Base):
+    """Weekly self-reflections on learning and practice."""
+
+    __tablename__ = "reflections"
+    __table_args__ = {"schema": "techradar"}
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class VoiceNotice(Base):
+    """Tracking of one-time privacy notices sent to Telegram chats."""
+
+    __tablename__ = "voice_notices"
+    __table_args__ = {"schema": "techradar"}
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
