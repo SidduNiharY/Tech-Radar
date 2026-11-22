@@ -2,3 +2,7 @@
 
 ASK = "ask"
 SAVE_ANSWER = "save_answer"
+
+# The queue of every night-window job (Phase 7 Task 1). One worker serves it with concurrency 1,
+# so two heavy night jobs never share the GPU.
+NIGHT_QUEUE = "night"

@@ -17,7 +17,7 @@ from techradar.worker.tasks import summarize_chapters_job
 
 def test_summarize_job_declaration():
     assert summarize_chapters_job.name == "summarize_chapters_job"
-    assert summarize_chapters_job.queue == "llm"
+    assert summarize_chapters_job.queue == "night"
     assert app.tasks["summarize_chapters_job"] is summarize_chapters_job
 
 

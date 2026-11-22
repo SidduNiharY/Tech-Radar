@@ -39,6 +39,7 @@ from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
+from techradar.worker.names import NIGHT_QUEUE
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +234,7 @@ async def _defer_ask_night(question: str, doc_id: int | None) -> None:
     await ask_night.configure(**options).defer_async(question=question, doc_id=doc_id)
 
 
-@app.task(queue="llm", lock="ask", name="ask_night")
+@app.task(queue=NIGHT_QUEUE, lock="ask", name="ask_night")
 @night_only(task_name="ask_night")
 async def ask_night(question: str, doc_id: int | None = None) -> None:
     """Answer a deferred hard question with the night model and send it to the owner chat."""
@@ -434,7 +435,7 @@ async def _defer_summaries(when: datetime, kwargs: dict[str, Any]) -> None:
     await _queue_summaries(int(kwargs["doc_id"]), when=when)
 
 
-@app.task(queue="llm", name="summarize_chapters_job")
+@app.task(queue=NIGHT_QUEUE, name="summarize_chapters_job")
 @night_only(task_name="summarize_chapters_job", defer=_defer_summaries)
 async def summarize_chapters_job(doc_id: int) -> None:
     """Summarise a doc's chapters into the vault, then make it ready (night window only)."""

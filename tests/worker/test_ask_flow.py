@@ -329,10 +329,10 @@ def _wire(monkeypatch, *, hour: int) -> dict[str, Any]:
     return seen
 
 
-def test_ask_night_is_a_night_only_llm_job() -> None:
+def test_ask_night_is_a_night_only_night_queue_job() -> None:
     from techradar.worker.tasks import ask_job, ask_night
 
-    assert (ask_night.name, ask_night.queue) == ("ask_night", "llm")
+    assert (ask_night.name, ask_night.queue) == ("ask_night", "night")
     assert (ask_job.name, ask_job.queue) == ("ask", "llm")
     assert hasattr(ask_night.func, "__wrapped__")  # wrapped by night_only
 
