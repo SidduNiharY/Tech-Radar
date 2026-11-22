@@ -16,6 +16,7 @@ from sqlalchemy import select
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
+from techradar.exams.syllabus import sync_syllabus
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
@@ -467,3 +468,24 @@ async def summarize_chapters_job(doc_id: int) -> None:
         await _queue_summaries(
             doc_id, when=next_window_start(datetime.now(UTC).astimezone(zone), start)
         )
+
+
+# --- Phase 8: exams ---------------------------------------------------------------
+# Jobs of the exam tools (plans/2026-11-07-techradar-phase8-exams.md). Each one opens its own
+# session; the exams modules take the session and the time and never open one themselves.
+
+
+@app.periodic(cron="30 3 * * *")
+@app.task(queue="io", queueing_lock="syllabus_sync_queued", name="syllabus_sync_job")
+async def syllabus_sync_job(timestamp: int | None = None) -> None:
+    """Daily: read `syllabus/**/*.md` from the vault into `syllabus_topics` (Task 1).
+
+    A periodic job is always called with `timestamp=` (procrastinate adds it), so every
+    periodic job of this block takes it.
+    """
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        topics = await sync_syllabus(session, settings.data_dir / "vault")
+        await session.commit()
+    logger.info("syllabus sync: %d topics", topics)
