@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import date
-from typing import Any
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
-from techradar.planner.sessions import Goal
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from techradar.db.models import MCQ, Flashcard, Plan, QuizAttempt, Revision
+from techradar.exams.final30 import final_30
+from techradar.planner.sessions import Goal, local_date, minutes_by_goal
+
+
+@dataclass(frozen=True)
+class RevisionRow:
+    """A revision that is due: what `compose_plan` needs to name a topic."""
+
+    goal: Goal
+    topic: str
+    due_date: date | None = None
+
 
 DEFAULT_EXAM_PRIORITY = [Goal.GOV, Goal.GATE]
 DEFAULT_WEEKLY_TARGETS: dict[Goal, int] = {
@@ -19,7 +34,7 @@ DEFAULT_WEEKLY_TARGETS: dict[Goal, int] = {
 def compose_plan(
     today: date,
     *,
-    due_revisions: Sequence[Any],
+    due_revisions: Sequence[RevisionRow],
     due_cards: int,
     quiz_ready: bool,
     minutes_this_week: Mapping[Goal, int],
@@ -85,4 +100,72 @@ def compose_plan(
     # 6. English practice
     lines.append("🔤 English: 5 new words + 10 grammar questions")
 
+    return lines
+
+
+QUIZ_SIZE = 10
+
+
+async def plan_for_today(
+    session: AsyncSession,
+    now: datetime,
+    *,
+    targets: Mapping[Goal, int] | None = None,
+    priority: Sequence[Goal] | None = None,
+    exam_dates: Mapping[str, date] | None = None,
+) -> list[str]:
+    """Read today's facts from Postgres, compose the plan lines and store them in `plans`.
+
+    WIRING(claude): the briefing job calls this before `run_briefing` and passes the result as
+    `plan_lines`. Revisions that fell due while the server was off are still due, so a 30-hour
+    gap shows them in the next plan (no duplicates: one row per date).
+    """
+    today = local_date(now)
+    week_start = today - timedelta(days=today.weekday())
+
+    revs = (
+        (
+            await session.execute(
+                select(Revision)
+                .where(Revision.done_at.is_(None), Revision.due_date <= today)
+                .order_by(Revision.due_date, Revision.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    due_revisions = [RevisionRow(Goal(r.goal), r.topic, r.due_date) for r in revs]
+
+    due_cards = int(
+        (
+            await session.execute(
+                select(func.count(Flashcard.id)).where(
+                    Flashcard.retired.is_(False), Flashcard.due <= now
+                )
+            )
+        ).scalar_one()
+    )
+    unseen_mcqs = int(
+        (
+            await session.execute(
+                select(func.count(MCQ.id)).where(
+                    MCQ.status == "active",
+                    MCQ.id.not_in(select(QuizAttempt.mcq_id)),
+                )
+            )
+        ).scalar_one()
+    )
+
+    lines = compose_plan(
+        today,
+        due_revisions=due_revisions,
+        due_cards=due_cards,
+        quiz_ready=unseen_mcqs >= QUIZ_SIZE,
+        minutes_this_week=await minutes_by_goal(session, week_start, today),
+        targets=targets or DEFAULT_WEEKLY_TARGETS,
+        priority=priority or DEFAULT_EXAM_PRIORITY,
+        final_30_exam=final_30(exam_dates or {}, today),
+    )
+    await session.merge(Plan(date=today, lines=lines))
+    await session.flush()
     return lines

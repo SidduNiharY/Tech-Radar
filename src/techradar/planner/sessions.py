@@ -7,7 +7,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import LibraryChapter, LibraryDoc, Revision, StudySession
@@ -284,3 +284,22 @@ async def stop_reply(session: AsyncSession, now: datetime) -> str:
     if stopped.revision_dates:
         text += f" Revisions set for {join_dates(stopped.revision_dates)}."
     return text
+
+
+def local_day_bounds(first: date, last: date) -> tuple[datetime, datetime]:
+    """[start, end) timestamps covering the India days `first` to `last` inclusive."""
+    start = datetime.combine(first, datetime.min.time(), tzinfo=IST)
+    end = datetime.combine(last + timedelta(days=1), datetime.min.time(), tzinfo=IST)
+    return start, end
+
+
+async def minutes_by_goal(session: AsyncSession, first: date, last: date) -> dict[Goal, int]:
+    """Study minutes per goal for the India days `first` to `last` (closed sessions only)."""
+    start, end = local_day_bounds(first, last)
+    rows = await session.execute(
+        select(StudySession.goal, func.coalesce(func.sum(StudySession.minutes), 0))
+        .where(StudySession.started_at >= start, StudySession.started_at < end)
+        .where(StudySession.minutes.is_not(None))
+        .group_by(StudySession.goal)
+    )
+    return {Goal(goal): int(total) for goal, total in rows.all()}
