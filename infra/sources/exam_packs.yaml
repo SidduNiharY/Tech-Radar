@@ -1,27 +1,44 @@
-ncert_polity_class_11:
-  title: "NCERT Class 11 Political Science: Indian Constitution at Work"
-  exam: "UPSC/Govt"
-  approved: true
-  url: "https://ncert.nic.in/textbook/pdf/keps2dd.zip"
-  max_bytes: 200000000
+# Starter packs (Phase 2c Task 9; SEC-05, SEC-25, SEC-57).
+#
+# Seed only: no pack is approved and no item is listed. No URL here is invented.
+#
+# Owner steps for each item (docs/superpowers/plans/2026-11-08-techradar-phase2c-library.md,
+# Task 9 step 4):
+#   1. Open the URL in a browser and check it is the official or open source it claims.
+#   2. Add its exact host to infra/squid/allowlist.txt (if it is not there yet).
+#   3. Add the item below, then set `approved: true` for the pack.
+#   4. docker compose restart squid fetcher
+#
+# Rules the loader (src/techradar/library/packs.py) enforces:
+#   - Unknown keys, exams or kinds refuse the whole file.
+#   - exam: gate_cs | gate_da | ssc_cgl | bank
+#   - kind: pdf | html | docx; a pdf or docx URL must end in .pdf / .docx.
+#   - The URL must be https, with no user, password or port, on a host that is in the
+#     Squid allowlist and has a trust entry (official: *.gov.in, *.nic.in, rbi.org.in,
+#     ibps.in, sbi.co.in, nios.ac.in, the year's GATE site once added to GATE_SITES;
+#     open: nptel.ac.in, ocw.mit.edu). Otherwise the item is blocked (logged, shown by
+#     /packs) and never downloaded.
+#
+# Item structure (an example of the shape only, not a real URL):
+#
+#   items:
+#     - url: "https://<checked-host>/<path>/<file>.pdf"
+#       title: "<title as the site shows it>"
+#       kind: pdf
+#       licence: "<licence or terms the site states>"
 
-nios_economics:
-  title: "NIOS Senior Secondary Economics (318)"
-  exam: "Govt"
-  approved: true
-  url: "https://nios.ac.in/media/documents/srsec318new/318_Economy_Eng/ch1.pdf"
-  max_bytes: 200000000
+packs:
+  - name: gate
+    exam: gate_cs
+    approved: false
+    items: []
 
-rbi_annual_report:
-  title: "Reserve Bank of India Annual Report"
-  exam: "Banking"
-  approved: true
-  url: "https://rbi.org.in/Scripts/AnnualReportPublications.aspx"
-  max_bytes: 200000000
+  - name: ssc_cgl
+    exam: ssc_cgl
+    approved: false
+    items: []
 
-unapproved_sample:
-  title: "Unapproved Coaching Study Material Sample"
-  exam: "UPSC/Govt"
-  approved: false
-  url: "https://example.com/unapproved_sample.pdf"
-  max_bytes: 200000000
+  - name: bank
+    exam: bank
+    approved: false
+    items: []

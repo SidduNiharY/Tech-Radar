@@ -794,6 +794,19 @@ Expected: PASS
 git add infra/sources src/techradar/library src/techradar/fetcher src/techradar/bot compose.yaml infra/squid tests && git commit -m "feat(library): approved starter packs from allowlisted official and open sources"
 ```
 
+**As built (2026-11-14), and where the build differs from the text above:**
+
+- `library/packs.py` replaces the early `starter_packs.py` (deleted, with its test and its seed of unchecked URLs). `infra/sources/exam_packs.yaml` is the seed only: `gate`, `ssc_cgl`, `bank`, all `approved: false`, `items: []`. No domain was added to the Squid allowlist.
+- `load_packs` refuses the whole file (ValueError) on a structural error: unknown keys (`extra=forbid`, strict types), unknown exam or kind, a bad pack name, a duplicate pack or URL. A single item that breaks a rule (not https, userinfo or port, host not in the allowlist at load time, no `trust_for`, kind vs extension) is **kept and blocked** instead of raising: it is logged, stored as `rejected` and shown by `/packs` as blocked, and is never downloaded. When the owner fixes it (for example adds the domain), the next sync puts it back to `pending`.
+- Downloads use `fetch_pack_file`, not `fetch_url`: `fetch_url` buffers the body in memory and follows redirects to any allowlisted host. `fetch_pack_file` keeps the same checks (allowlist, resolved address, robots, per-host limiter) and adds: redirects only on the same host (https, at most 3), the content type must match the item's kind, the body is hashed while it streams into a private dotfile (intake skips dotfiles), it stops at `pack_max_bytes`, and a 120 s total timeout. A write error (a full disk) fails the item instead of the cycle.
+- It sends only through the fetcher's own client (`FetchDeps.client`: proxy `settings.https_proxy`, `trust_env=False`), so every pack request goes through Squid. `tests/security/test_packs_policy.py` checks that `packs.py` builds no client and opens no socket, and that only the fetcher runs the pack cycle.
+- Files land in `packs_dir/pack-<name>/<sha256>.<kind>` (mode 0440, never overwritten; the same bytes twice is a no-op). The `pack-` prefix is needed: the intake skips a `gate/` folder at the inbox root, so a pack named `gate` would never be taken in.
+- Trust: the intake stores every pack doc as `open`. `link_pack_docs` (fetcher, next cycle) reads a ledger (`packs_dir/.ledger/<sha256>` holds the item id), then sets the doc's `pack_item_id`, its title from the item and its trust from `trust_for(item host)`. It never changes the doc's status or `flagged`, so a quarantined pack file stays quarantined. A ledger entry whose file is gone with no doc means the intake refused it: the item becomes `failed`.
+- Safest defaults where the plan is silent: a failed download is not retried automatically; content already in the library links the item to the existing doc and leaves that doc's trust alone; when two items have the same bytes only the first one is linked to the doc; `GATE_SITES` is empty until the owner adds the year's checked GATE host.
+- `/packs` is owner-chat only (router and handler), read-only, and lists each pack (`<name> · <exam> · <approved|not approved> · <downloaded>/<total>`) with up to 10 items each (`waiting`, `downloaded`, `failed`, `blocked`).
+- Compose: the fetcher mounts `exam_packs.yaml` read-only and `data/library-packs` read-write, nothing else of the library (`tests/security/test_packs_policy.py`).
+- Internet stage (waiting): real downloads after step 4; `make test-db` for the `db` tests in `tests/library/test_packs.py` on the TUF.
+
 ### Task 10: Quarantine notices, release and retention
 
 **SEC:** SEC-14, SEC-15, SEC-43, SEC-57

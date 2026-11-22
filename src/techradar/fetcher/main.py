@@ -17,6 +17,7 @@ from techradar.db.models import RawItem, Source
 from techradar.fetcher.due import SourceRow, due_sources
 from techradar.fetcher.http import FetchDeps, SystemResolver, fetch_url
 from techradar.fetcher.limiter import DomainLimiter, SystemClock
+from techradar.fetcher.packs_cycle import packs_file, run_pack_cycle
 from techradar.fetcher.robots import RobotsCache
 from techradar.fetcher.store import store_raw, write_job
 from techradar.schemas.pipeline import JobKind, ParseJob
@@ -169,6 +170,18 @@ async def _run_fetcher(
                 print(f"Fetch cycle complete: {counts}")
             except Exception as exc:
                 print(f"Error in fetch cycle: {exc}")
+            try:  # starter packs: no HTTP unless a pack is approved (Phase 2c Task 9)
+                pack_counts = await run_pack_cycle(
+                    deps,
+                    session_factory,
+                    packs_file(),
+                    settings.library_packs_dir,
+                    settings.pack_max_bytes,
+                )
+                if any(pack_counts.values()):
+                    print(f"Pack cycle complete: {pack_counts}")
+            except Exception as exc:
+                print(f"Error in pack cycle: {type(exc).__name__}")
             await asyncio.sleep(60)
 
 

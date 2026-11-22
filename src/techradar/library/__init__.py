@@ -22,7 +22,6 @@ from techradar.library.media import (
     validate_media_limits,
 )
 from techradar.library.models import BookMeta, Chapter, LibraryDoc, LibraryPart, MediaInfo
-from techradar.library.starter_packs import StarterPackItem, StarterPackManager
 from techradar.library.summarizer import (
     ChapterSummary,
     render_chapter_vault_note,
@@ -47,8 +46,6 @@ __all__ = [
     "MediaInfo",
     "MediaLimitExceededError",
     "MediaSecurityError",
-    "StarterPackItem",
-    "StarterPackManager",
     "build_ffmpeg_audio_extract_args",
     "build_ffmpeg_frame_extract_args",
     "check_media_limits",

@@ -22,6 +22,7 @@ Action = Literal[
     "plan",
     "take",
     "quarantine",
+    "packs",
     "ignore",
 ]
 
@@ -102,6 +103,8 @@ def route_update(
     if cmd == "/quarantine":
         # Releasing held files is the owner's alone, never a study group's (SEC-14).
         return Routed("quarantine") if chat_id == owner_id else Routed("ignore")
+    if cmd == "/packs":  # starter packs status: the owner's own chat only
+        return Routed("packs") if chat_id == owner_id else Routed("ignore")
 
     if (
         not cmd.startswith("/")

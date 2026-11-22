@@ -146,6 +146,10 @@ services:
       - ./data/parse-jobs:/data/parse-jobs
       - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro
       - ./infra/sources/sources.yaml:/etc/techradar/sources.yaml:ro
+      # Phase 2c Task 9: starter packs. The fetcher writes downloads into the packs
+      # folder only; the worker's library intake takes them through the gateway.
+      - ./infra/sources/exam_packs.yaml:/etc/techradar/exam_packs.yaml:ro
+      - ./data/library-packs:/data/library-packs
     secrets:
       - tr_app_password
     environment:

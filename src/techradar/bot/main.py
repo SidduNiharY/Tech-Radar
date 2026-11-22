@@ -20,6 +20,7 @@ from telegram.ext import (
 
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
+from techradar.bot.packs_command import packs_reply
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.routing import route_update
 from techradar.db.engine import make_session_factory
@@ -103,6 +104,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else None
         )
         await update.message.reply_text(text, reply_markup=markup)
+        return
+
+    if routed.action == "packs":  # the router allows it from the owner's own chat only
+        bot_data = context.application.bot_data
+        owner = settings.telegram_owner_chat_id
+        reply = await packs_reply(chat_id, owner, bot_data.get("session_factory"))
+        if reply is not None:
+            await update.message.reply_text(reply)
         return
 
     if routed.action in ("ask", "ask_book"):
