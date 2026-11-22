@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import random
-import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from techradar.db.models import PyqQuestion
 from techradar.exams.drills import DrillItem, daily_set
+from techradar.pipeline.writer import slugify, write_note
+from techradar.rag.answer import answer_question
+from techradar.rag.retrieve import RagDeps
 
 
 class PyqRef(BaseModel):
@@ -40,75 +46,92 @@ def final_30(exam_dates: Mapping[str, date], today: date) -> str | None:
     return candidates[0][1]
 
 
-def mini_mock(exam: str, day: date) -> list[DrillItem | PyqRef]:
-    """Generate a 20-item mini-mock: PYQs for GATE, drills for govt exams."""
-    if "gate" in exam.lower():
-        rng = random.Random(f"{exam}:{day.toordinal()}")  # noqa: S311 - deterministic exam item selection, not cryptographic
-        years = [2019, 2020, 2021, 2022, 2023, 2024]
-        papers = ["CS", "DA"]
-        qtypes = ["MCQ", "MSQ", "NAT"]
-
-        items: list[DrillItem | PyqRef] = []
-        for _ in range(20):
-            yr = rng.choice(years)
-            paper = rng.choice(papers)
-            qnum = rng.randint(1, 65)
-            qtype = rng.choice(qtypes)
-            marks = float(rng.choice([1, 2]))
-            items.append(
-                PyqRef(
-                    exam=exam,
-                    year=yr,
-                    paper=paper,
-                    number=qnum,
-                    text=f"GATE {paper} {yr} Q{qnum}",
-                    qtype=qtype,
-                    marks=marks,
-                )
+async def load_pyq_refs(session: AsyncSession, exam: str) -> list[PyqRef]:
+    """The real past-paper questions in the bank for one exam (ids come from `pyq_questions`)."""
+    rows = (
+        (
+            await session.execute(
+                select(PyqQuestion)
+                .where(PyqQuestion.exam == exam)
+                .order_by(PyqQuestion.year, PyqQuestion.paper, PyqQuestion.number)
             )
-        return items
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        PyqRef(
+            exam=r.exam,
+            year=r.year,
+            paper=r.paper,
+            number=r.number,
+            text=r.text,
+            qtype=r.qtype,
+            marks=float(r.marks),
+        )
+        for r in rows
+    ]
 
-    # For govt exams, return 20 items (10 quant + 10 reasoning)
-    items = daily_set(day, n_quant=10, n_reasoning=10)
-    return list(items)
+
+def mini_mock(exam: str, day: date, pyqs: Sequence[PyqRef] = ()) -> list[DrillItem | PyqRef]:
+    """A 20-item mini-mock: bank questions for GATE (`pyqs`), code-made drills otherwise.
+
+    GATE items are picked from the questions given (the caller loads them with
+    `load_pyq_refs`), never invented; with fewer than 20 in the bank the mock is shorter.
+    The pick depends only on the exam and the day, so Telegram and the web agree.
+    """
+    if "gate" in exam.lower():
+        rng = random.Random(f"{exam}:{day.toordinal()}")  # noqa: S311 - deterministic pick, not crypto
+        pool = list(pyqs)
+        return list(rng.sample(pool, min(20, len(pool))))
+
+    # Government exams: 10 quant + 10 reasoning drills
+    return list(daily_set(day, n_quant=10, n_reasoning=10))
 
 
-def _slugify(text: str) -> str:
-    cleaned = re.sub(r"[^\w\s-]", "", text).strip().lower()
-    return re.sub(r"[-\s]+", "-", cleaned)
+FormulaSheetResult = Literal["written", "not_enough_sources", "needs_review"]
 
 
 async def write_formula_sheet(
     exam: str,
     subject: str,
-    deps: Any,
+    deps: RagDeps,
     vault_root: Path,
-) -> str:
-    """Generate and write a revision formula sheet to final30/<exam>/<subject-slug>.md."""
-    subject_slug = _slugify(subject)
-    dest_dir = vault_root / "final30" / exam
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    out_file = dest_dir / f"{subject_slug}.md"
+) -> FormulaSheetResult:
+    """Write `final30/<exam>/<subject-slug>.md` from the owner's own notes, or say why not.
 
-    # Check if retrieval deps provided
-    if deps is not None and hasattr(deps, "retrieve"):
-        hits = await deps.retrieve(f"{exam} {subject} formulas", k_final=5)
-        if len(hits) == 0:
-            return "not_enough_sources"
+    The text is a grounded answer with code-checked citations (`answer_question`): nothing is
+    written when the notes do not cover the subject ("not_enough_sources") or when the answer
+    failed a check ("needs_review"). The exam and subject become path parts only as slugs.
+    """
+    answer = await answer_question(
+        f"List the key formulas, identities and definitions of {subject} for {exam}, one per "
+        "line, each with its meaning.",
+        deps,
+    )
+    if answer.status == "not_found":
+        return "not_enough_sources"
+    if answer.status != "answered":
+        return "needs_review"
 
-    content = f"""# {exam}: {subject} Formula Sheet
-
-Prepared for final 30 days revision sprint.
-
-## Key Formulas & Identities
-- Fundamental definitions and theorems for {subject}.
-- Standard identities and shortcut derivations.
-
-## High-Yield Points & Pitfalls
-- Edge cases, boundary conditions, and sign conventions.
-- Common misinterpretations in previous years' papers.
-"""
-    out_file.write_text(content, encoding="utf-8")
+    front = yaml.safe_dump(
+        {
+            "kind": "formula_sheet",
+            "generated": True,
+            "exam": exam,
+            "subject": subject,
+            "citations": sorted({c.doc_path for c in answer.citations}),
+        },
+        sort_keys=False,
+        allow_unicode=True,
+    )
+    sources = "\n".join(f"- {c.title}" for c in answer.citations)
+    content = (
+        f"---\n{front}---\n\n# {exam}: {subject}, formula sheet\n\n{answer.text}\n\n"
+        f"## Sources\n{sources}\n"
+    )
+    rel = PurePosixPath("final30") / slugify(exam) / f"{slugify(subject)}.md"
+    write_note(vault_root, rel, content)
     return "written"
 
 

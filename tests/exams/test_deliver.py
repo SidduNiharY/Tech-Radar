@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.engine import make_engine
 from techradar.db.models import DrillAttempt
 from techradar.exams.deliver import record_drill, render_drill_summary
 from techradar.exams.drills import daily_set
-from techradar.settings import Settings
 
 
 def test_daily_set_is_deterministic():
@@ -44,27 +40,6 @@ def test_render_drill_summary():
 
 def test_render_drill_summary_empty():
     assert render_drill_summary([]) == "Aptitude: 0/0 · avg 0.0 s per question · slowest: none"
-
-
-@pytest.fixture
-def db_settings() -> Settings:
-    return Settings(
-        telegram_owner_chat_id=1,
-        db_host="127.0.0.1",
-        db_port=55432,
-        db_name="techradar",
-        secrets_dir=Path("secrets"),
-    )
-
-
-@pytest.fixture
-async def session(db_settings: Settings) -> AsyncGenerator[AsyncSession]:
-    engine = make_engine("app", db_settings)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-        await s.rollback()
-    await engine.dispose()
 
 
 @pytest.mark.db

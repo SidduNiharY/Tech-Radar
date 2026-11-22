@@ -76,8 +76,14 @@ def _build_item(
 
 
 def gen_percentage_of(rng: random.Random) -> DrillItem:
-    p = rng.choice([5, 10, 15, 20, 25, 30, 40, 50, 60, 75])
-    x = rng.choice([20, 40, 60, 80, 100, 120, 150, 200, 250, 300, 400, 500])
+    # Only pairs whose answer is a whole number, so the key is exactly p% of x.
+    pairs = [
+        (p, x)
+        for p in (5, 10, 15, 20, 25, 30, 40, 50, 60, 75)
+        for x in (20, 40, 60, 80, 100, 120, 150, 200, 250, 300, 400, 500)
+        if (p * x) % 100 == 0
+    ]
+    p, x = rng.choice(pairs)
     ans = (p * x) // 100
     q = f"What is {p}% of {x}?"
     distractors = [ans + 5, max(1, ans - 5), (p * x) // 10, ans + 10]
@@ -93,8 +99,14 @@ def gen_percentage_of(rng: random.Random) -> DrillItem:
 
 
 def gen_percent_change(rng: random.Random) -> DrillItem:
-    old = rng.choice([50, 80, 100, 120, 150, 200, 250])
-    pct = rng.choice([-30, -25, -20, -10, 10, 20, 25, 30, 50])
+    # Only pairs whose change is a whole number of units, so `pct` is exactly the change.
+    pairs = [
+        (old, pct)
+        for old in (50, 80, 100, 120, 150, 200, 250)
+        for pct in (-30, -25, -20, -10, 10, 20, 25, 30, 50)
+        if (old * pct) % 100 == 0
+    ]
+    old, pct = rng.choice(pairs)
     new = old + (old * pct) // 100
     q = f"What is the percentage change from {old} to {new}?"
     distractors = [pct + 5, pct - 5, -pct, pct + 10]
@@ -169,8 +181,14 @@ def gen_compound_interest(rng: random.Random) -> DrillItem:
 
 
 def gen_profit_loss_percent(rng: random.Random) -> DrillItem:
-    cp = rng.choice([50, 80, 100, 150, 200, 250, 400, 500])
-    pct = rng.choice([10, 15, 20, 25, 30])
+    # Only pairs whose profit is a whole number of rupees, so `pct` is exactly the profit %.
+    pairs = [
+        (cp, pct)
+        for cp in (50, 80, 100, 150, 200, 250, 400, 500)
+        for pct in (10, 15, 20, 25, 30)
+        if (cp * pct) % 100 == 0
+    ]
+    cp, pct = rng.choice(pairs)
     sp = cp + (cp * pct) // 100
     q = f"An article bought for Rs. {cp} is sold for Rs. {sp}. Find the profit percentage."
     distractors = [pct + 5, pct - 5, pct + 10, pct - 2]

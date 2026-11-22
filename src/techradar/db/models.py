@@ -1111,7 +1111,13 @@ class PyqQuestion(Base):
     """Past-year question with official answer keys."""
 
     __tablename__ = "pyq_questions"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        CheckConstraint("qtype IN ('MCQ','MSQ','NAT')", name="ck_pyq_questions_qtype"),
+        CheckConstraint(
+            "tag_status IN ('none','suggested','confirmed')", name="ck_pyq_questions_tag_status"
+        ),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     exam: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1200,6 +1206,12 @@ class TopicSource(Base):
     __tablename__ = "topic_sources"
     __table_args__ = (
         UniqueConstraint("topic_id", "kind", "ref_id", name="uq_topic_sources_topic_kind_ref"),
+        CheckConstraint(
+            "kind IN ('chapter','pyq','pack_item','note')", name="ck_topic_sources_kind"
+        ),
+        CheckConstraint(
+            "status IN ('suggested','confirmed','dismissed')", name="ck_topic_sources_status"
+        ),
         {"schema": "techradar"},
     )
 
