@@ -8,24 +8,15 @@ accepted; and /v1/ask took empty or unbounded questions.
 
 from __future__ import annotations
 
-from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
-from techradar.api.deps import set_test_credentials
 from techradar.api.main import create_app
 from techradar.settings import Settings
 
 OWNER = "siddu@tailnet.test"
-
-
-@pytest.fixture(autouse=True)
-def _no_test_credentials() -> Generator[None]:
-    set_test_credentials(None, None)
-    yield
-    set_test_credentials(None, None)
 
 
 def settings(tmp_path: Path, **kw: object) -> Settings:
