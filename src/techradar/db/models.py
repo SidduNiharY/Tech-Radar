@@ -848,6 +848,19 @@ class Plan(Base):
     )
 
 
+class JobAlert(Base):
+    """Last time a failure or health alert was raised per key (at most one per 6 hours).
+
+    Not `alerts`: that table belongs to the exam watcher.
+    """
+
+    __tablename__ = "job_alerts"
+    __table_args__ = {"schema": "techradar"}
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    last_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # --- Phase 6: voice ---
 
 

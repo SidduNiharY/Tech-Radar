@@ -17,6 +17,29 @@ def test_close_stale_sessions_job_declaration():
     assert job.queueing_lock  # a tick is skipped while one waits: no pile-up after downtime
 
 
+def test_health_job_declaration():
+    job = tasks.health_job
+    assert job.name == "health_job"
+    assert job.queueing_lock
+    periodic = [p for p in app.periodic_registry.periodic_tasks.values() if p.task is job]
+    assert [p.cron for p in periodic] == ["5 * * * *"]
+
+
+def test_existing_jobs_are_wrapped_with_failure_alerts():
+    # functools.wraps keeps the name; the wrapper is the one alert_on_failure made
+    for job in (
+        tasks.collect_and_process,
+        tasks.retention,
+        tasks.index_sync,
+        tasks.collect_bulk_results_job,
+        tasks.resume_bulk_job,
+        tasks.close_stale_sessions_job,
+        tasks.weekly_review_job,
+        tasks.health_job,
+    ):
+        assert hasattr(job.func, "__wrapped__"), job.name
+
+
 def test_weekly_review_job_declaration():
     job = tasks.weekly_review_job
     assert job.name == "weekly_review_job"

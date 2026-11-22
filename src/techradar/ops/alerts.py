@@ -1,113 +1,98 @@
+"""Failure alerts for jobs (Phase 5 Task 6). SEC-14, SEC-32.
+
+An alert names the job and the exception type only, never the message: an exception message
+can carry a URL, a path or a key. At most one alert per key every 6 hours, kept in Postgres
+so a restart or a catch-up run after downtime never sends the same alert twice.
+"""
+
 from __future__ import annotations
 
-import asyncio
 import functools
 import inspect
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from techradar.db.engine import make_session_factory
+from techradar.db.models import JobAlert
+from techradar.messaging.outbox import enqueue_message
+from techradar.settings import get_settings
+
+logger = logging.getLogger(__name__)
+
 ALERT_WINDOW: timedelta = timedelta(hours=6)
-
-
-class AlertStore:
-    """In-memory or stateful store for deduplicated alert history."""
-
-    def __init__(self) -> None:
-        self.history: dict[str, datetime] = {}
-        self.enqueued: list[dict[str, Any]] = []
-
-    def should_alert(self, key: str, now: datetime) -> bool:
-        last = self.history.get(key)
-        if last is None or (now - last) >= ALERT_WINDOW:
-            self.history[key] = now
-            return True
-        return False
-
-    def enqueue(self, owner_chat_id: int, key: str, text: str) -> None:
-        self.enqueued.append(
-            {
-                "owner_chat_id": owner_chat_id,
-                "key": key,
-                "text": text,
-            }
-        )
-
-
-_DEFAULT_ALERT_STORE = AlertStore()
+ALERT_PURPOSE = "alert"
 
 
 async def raise_alert(
-    store: AlertStore | None,
+    session: AsyncSession,
     owner_chat_id: int,
     key: str,
     text: str,
-    now: datetime | None = None,
+    now: datetime,
 ) -> bool:
-    """Enqueue alert if not deduplicated within ALERT_WINDOW."""
-    if store is None:
-        store = _DEFAULT_ALERT_STORE
-    current_time = now or datetime.now(UTC)
+    """Enqueue `text` to the owner unless `key` already alerted within ALERT_WINDOW.
 
-    if store.should_alert(key, current_time):
-        store.enqueue(owner_chat_id, key, text)
-        return True
-    return False
+    Returns whether a message was enqueued. The caller commits.
+    """
+    row = await session.get(JobAlert, key)
+    if row is not None and (now - row.last_at) < ALERT_WINDOW:
+        return False
+    if row is None:
+        session.add(JobAlert(key=key, last_at=now))
+    else:
+        row.last_at = now
+    await enqueue_message(session, chat_id=owner_chat_id, text=text, purpose=ALERT_PURPOSE)
+    await session.flush()
+    return True
+
+
+def failure_text(name: str, exc: BaseException) -> str:
+    """`⚠️ Job <name> failed: <ExceptionType>`: never the exception message."""
+    return f"⚠️ Job {name} failed: {type(exc).__name__}"
 
 
 def alert_on_failure(
     name: str,
-    store: AlertStore | None = None,
-    owner_chat_id: int = 0,
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    owner_chat_id: int | None = None,
     now_fn: Callable[[], datetime] | None = None,
-) -> Callable:
-    """Decorator to catch exceptions, raise sanitised alert, and re-raise.
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """Decorator for async jobs: on an exception raise a de-duplicated alert, then re-raise.
 
-    Ensures that raw exception messages (which may contain API keys or secrets)
-    are strictly omitted from the alert text.
+    The alert uses its own session, so a job that failed in the database still reports.
+    A failure to alert is logged (without the message) and never hides the job's exception.
     """
 
-    def decorator(fn: Callable) -> Callable:
-        if inspect.iscoroutinefunction(fn):
+    def decorator(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        if not inspect.iscoroutinefunction(fn):
+            raise TypeError("alert_on_failure wraps async jobs only")
 
-            @functools.wraps(fn)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+        @functools.wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await fn(*args, **kwargs)
+            except Exception as exc:
                 try:
-                    return await fn(*args, **kwargs)
-                except Exception as exc:
+                    settings = get_settings()
+                    factory = session_factory or make_session_factory("app", settings)
+                    owner = owner_chat_id or settings.telegram_owner_chat_id
                     now = now_fn() if now_fn else datetime.now(UTC)
-                    alert_text = f"⚠️ Job {name} failed: {type(exc).__name__}"
-                    await raise_alert(
-                        store,
-                        owner_chat_id,
-                        f"job:{name}",
-                        alert_text,
-                        now,
+                    async with factory() as session:
+                        await raise_alert(
+                            session, owner, f"job:{name}", failure_text(name, exc), now
+                        )
+                        await session.commit()
+                except Exception as alert_exc:
+                    logger.warning(
+                        "could not raise the alert for job %s: %s", name, type(alert_exc).__name__
                     )
-                    raise
+                raise
 
-            return async_wrapper
-        else:
-
-            @functools.wraps(fn)
-            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                try:
-                    return fn(*args, **kwargs)
-                except Exception as exc:
-                    now = now_fn() if now_fn else datetime.now(UTC)
-                    alert_text = f"⚠️ Job {name} failed: {type(exc).__name__}"
-                    # Run alert in event loop or schedule
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(
-                            raise_alert(store, owner_chat_id, f"job:{name}", alert_text, now)
-                        )
-                    except RuntimeError:
-                        asyncio.run(
-                            raise_alert(store, owner_chat_id, f"job:{name}", alert_text, now)
-                        )
-                    raise
-
-            return sync_wrapper
+        return wrapper
 
     return decorator
