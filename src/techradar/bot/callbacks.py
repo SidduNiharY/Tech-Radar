@@ -14,6 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
+from techradar.bot.planner_commands import handle_checkin_tap
 from techradar.library.quarantine import (
     ReleaseRequests,
     confirm_release,
@@ -61,6 +62,15 @@ async def handle_callback_query(
             await query.answer("Invalid request.")
         return
 
+    # --- Phase 5 --- one-tap check-in: sleep:<1-5>, energy:<1-5>, mood:<1-5>
+    if action in CHECKIN_ACTIONS:
+        message = query.message
+        if len(args) != 1 or message is None or message.chat.id != owner_id:
+            await query.answer("Invalid request.")
+            return
+        await query.answer(await handle_checkin_tap(action, args[0], context.application.bot_data))
+        return
+
     if action == "save_answer" and len(args) == 1:
         procrastinate_app = context.application.bot_data.get("procrastinate_app")
         if procrastinate_app:
@@ -88,6 +98,7 @@ async def _chapters_callback(query: Any, bot_data: Any, doc_id: int) -> None:
 
 
 QUARANTINE_ACTIONS = frozenset({"qrel", "qrel_ok", "qdel"})
+CHECKIN_ACTIONS = frozenset({"sleep", "energy", "mood"})  # Phase 5
 
 _RELEASE_ANSWERS = {
     "released": "Released. It will be processed as flagged.",

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import Checkin
-from techradar.messaging.outbox import Button
+from techradar.db.models import Checkin, Outbox
+from techradar.messaging.outbox import Button, enqueue_message
+from techradar.planner.sessions import local_date
 
 CHECKIN_TEXT = "How did you sleep, and how's your energy and mood today? (one tap each)"
 
@@ -62,3 +63,35 @@ async def get_checkin(session: AsyncSession, day: date) -> dict[str, Any] | None
         "energy": c.energy,
         "mood": c.mood,
     }
+
+
+CHECKIN_PURPOSE = "checkin"
+
+
+async def after_briefing(session: AsyncSession, owner_chat_id: int, now: datetime) -> bool:
+    """Send the one-tap check-in right after the briefing; once per India day.
+
+    WIRING(claude): the briefing job (Phase 3) calls this after `run_briefing` sent a briefing.
+    It is safe to call again (a catch-up run, a retry): the day is the dedupe key.
+    """
+    ref = int(local_date(now).strftime("%Y%m%d"))
+    already = await session.execute(
+        select(Outbox.id)
+        .where(
+            Outbox.purpose == CHECKIN_PURPOSE,
+            Outbox.ref_id == ref,
+            Outbox.chat_id == owner_chat_id,
+        )
+        .limit(1)
+    )
+    if already.scalar_one_or_none() is not None:
+        return False
+    await enqueue_message(
+        session,
+        chat_id=owner_chat_id,
+        text=CHECKIN_TEXT,
+        purpose=CHECKIN_PURPOSE,
+        buttons=checkin_keyboard(),
+        ref_id=ref,
+    )
+    return True
