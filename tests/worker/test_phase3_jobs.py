@@ -68,3 +68,19 @@ async def test_save_take_job_saves_and_confirms(monkeypatch: pytest.MonkeyPatch)
     assert send.await_args.kwargs["chat_id"] == 42
     session.commit.assert_awaited_once()
     assert app.tasks["save_take"] is tasks.save_take_job
+
+
+def test_make_mcqs_job_is_nightly_on_the_llm_queue():
+    job = tasks.make_mcqs_job
+    assert job.name == "make_mcqs_job" and job.queue == "llm" and job.queueing_lock
+    assert app.tasks["make_mcqs_job"] is job
+
+
+async def test_make_mcqs_job_runs_and_commits(monkeypatch: pytest.MonkeyPatch):
+    session = _patch(monkeypatch)
+    run = AsyncMock()
+    monkeypatch.setattr(tasks, "run_make_mcqs", run)
+    monkeypatch.setattr(tasks, "_completer", lambda: "completer")
+    await tasks.make_mcqs_job()
+    assert run.await_args.args[1] == "completer"
+    session.commit.assert_awaited_once()

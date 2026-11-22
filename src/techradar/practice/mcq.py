@@ -1,4 +1,3 @@
-# WIRING(claude): worker/tasks.py needs make_mcqs_job (nightly at 05:30, queue llm) calling run_make_mcqs.  # noqa: E501
 from __future__ import annotations
 
 import random
@@ -67,11 +66,6 @@ class ChunkRow(BaseModel):
     text: str
     page: int | None = None
     flagged: bool = False
-
-
-class MCQOption(BaseModel):
-    text: str
-    option_id: str
 
 
 class MCQDraft(BaseModel):
@@ -276,8 +270,9 @@ async def run_make_mcqs(
     *,
     now: datetime,
     limit: int = 20,
+    chapter_limit: int = 20,
 ) -> MakeMCQsResult:
-    """Job body for make_mcqs_job. Generates fact-based and chapter-based MCQs."""
+    """Job body for make_mcqs_job: up to `limit` fact MCQs and `chapter_limit` chapter MCQs."""
     fact_created = 0
     chapter_created = 0
 
@@ -285,14 +280,18 @@ async def run_make_mcqs(
     existing_fact_mcqs = select(MCQ.fact_id).where(MCQ.fact_id.is_not(None))
     fact_stmt = (
         select(Fact)
-        .where(Fact.status == "verified", ~Fact.id.in_(existing_fact_mcqs))
+        .where(
+            Fact.status == "verified",
+            Fact.superseded_by.is_(None),
+            ~Fact.id.in_(existing_fact_mcqs),
+        )
         .order_by(Fact.id.desc())
         .limit(limit)
     )
     fact_rows = (await session.execute(fact_stmt)).scalars().all()
 
     for f in fact_rows:
-        if fact_created + chapter_created >= limit:
+        if fact_created >= limit:
             break
         fact_row = FactRow(
             id=f.id,
@@ -319,8 +318,7 @@ async def run_make_mcqs(
             fact_created += 1
 
     # 2. Read chapters chunks without MCQs
-    remaining = limit - (fact_created + chapter_created)
-    if remaining > 0:
+    if chapter_limit > 0:
         read_chapters_stmt = (
             select(LibraryChapter)
             .where(LibraryChapter.read_at.is_not(None))
@@ -331,7 +329,7 @@ async def run_make_mcqs(
         existing_chunk_mcqs = select(MCQ.chunk_id).where(MCQ.chunk_id.is_not(None))
 
         for chap in read_chapters:
-            if fact_created + chapter_created >= limit:
+            if chapter_created >= chapter_limit:
                 break
             chapter_mcq_count = 0
             chunks_stmt = (
@@ -347,7 +345,7 @@ async def run_make_mcqs(
             chunk_rows = (await session.execute(chunks_stmt)).scalars().all()
 
             for c in chunk_rows:
-                if chapter_mcq_count >= 10 or fact_created + chapter_created >= limit:
+                if chapter_mcq_count >= 10 or chapter_created >= chapter_limit:
                     break
                 chunk_row = ChunkRow(
                     id=c.id,

@@ -29,6 +29,7 @@ from techradar.night.window import in_night_window, next_window_start, night_onl
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
+from techradar.practice.mcq import run_make_mcqs
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -527,4 +528,20 @@ async def save_take_job(briefing_id: int, text: str) -> None:
             purpose="take_saved",
             ref_id=briefing_id,
         )
+        await session.commit()
+
+
+def _completer() -> LiteLLMCompleter:
+    """The local models: worker and checker families come from infra/models/roles.yaml."""
+    roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
+    return LiteLLMCompleter(roles, "http://ollama:11434")
+
+
+@app.periodic(cron="0 0 * * *")  # 05:30 Asia/Kolkata
+@app.task(queue="llm", queueing_lock="make_mcqs_queued", name="make_mcqs_job")
+async def make_mcqs_job() -> None:
+    """Write tonight's MCQs from verified facts and from chapters marked as read."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_make_mcqs(session, _completer(), now=_local_now())
         await session.commit()
