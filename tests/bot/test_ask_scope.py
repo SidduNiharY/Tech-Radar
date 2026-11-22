@@ -69,6 +69,9 @@ def test_reply_message_id_accepts_only_real_ints() -> None:
 def _settings(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SimpleNamespace(telegram_owner_chat_id=OWNER, max_question_chars=500)
     monkeypatch.setattr(bot_main, "get_settings", lambda: settings)
+    # Phase 3: the reply-target lookup (briefing "My take") has its own tests; here a reply
+    # points at nothing special, so it stays an ordinary reply.
+    monkeypatch.setattr(bot_main, "find_reply_target", AsyncMock(return_value=None))
 
 
 def _update(chat_id: int, text: str, reply_to: int | None = None):

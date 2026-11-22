@@ -56,3 +56,15 @@ async def test_briefing_job_runs_and_commits(monkeypatch: pytest.MonkeyPatch):
     assert kwargs["grace_s"] == 21600
     assert kwargs["now"].utcoffset().total_seconds() == 19800  # local time, not UTC
     session.commit.assert_awaited_once()
+
+
+async def test_save_take_job_saves_and_confirms(monkeypatch: pytest.MonkeyPatch):
+    session = _patch(monkeypatch)
+    monkeypatch.setattr(tasks, "save_take", AsyncMock(return_value="saved"))
+    send = AsyncMock()
+    monkeypatch.setattr(tasks, "enqueue_message", send)
+    await tasks.save_take_job(briefing_id=3, text="Rates will fall")
+    assert send.await_args.kwargs["text"] == "Saved your take."
+    assert send.await_args.kwargs["chat_id"] == 42
+    session.commit.assert_awaited_once()
+    assert app.tasks["save_take"] is tasks.save_take_job

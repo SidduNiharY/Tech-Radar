@@ -14,6 +14,7 @@ from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
 from techradar.briefing.compose import run_briefing
+from techradar.briefing.takes import save_take
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
@@ -40,6 +41,7 @@ from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
+from techradar.worker.names import SAVE_TAKE
 
 logger = logging.getLogger(__name__)
 
@@ -506,5 +508,23 @@ async def briefing_job() -> None:
             official_domains=_read_domains(Path("infra/sources/official_domains.txt")),
             at_time=day_time.fromisoformat(settings.briefing_time),
             grace_s=settings.misfire_grace_s,
+        )
+        await session.commit()
+
+
+@app.task(queue="io", name=SAVE_TAKE)
+async def save_take_job(briefing_id: int, text: str) -> None:
+    """Store one "My take" (database and monthly vault file) and confirm through the outbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        outcome = await save_take(
+            session, settings.data_dir / "vault", briefing_id, text, _local_now()
+        )
+        await enqueue_message(
+            session,
+            chat_id=settings.telegram_owner_chat_id,
+            text="Saved your take." if outcome == "saved" else "Keep it under 500 characters.",
+            purpose="take_saved",
+            ref_id=briefing_id,
         )
         await session.commit()

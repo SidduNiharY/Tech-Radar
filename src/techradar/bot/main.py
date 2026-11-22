@@ -21,7 +21,9 @@ from telegram.ext import (
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
 from techradar.bot.render import START_TEXT, render_status
+from techradar.bot.reply_target import find_reply_target
 from techradar.bot.routing import route_update
+from techradar.bot.take_reply import handle_take
 from techradar.db.engine import make_session_factory
 from techradar.library.quarantine import quarantine_listing
 from techradar.logs import configure_logging
@@ -58,12 +60,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("Not available yet.")
             return
 
+    # --- Phase 3: what the reply points at; a sent briefing message makes it a "My take" ---
+    reply_purpose: str | None = None
+    reply_ref: int | None = None
+    if reply_id is not None and chat_id == settings.telegram_owner_chat_id and ready_doc is None:
+        try:
+            target = await find_reply_target(context.application.bot_data, chat_id, reply_id)
+        except Exception:
+            logger.exception("could not look up the replied-to message")
+            await update.message.reply_text("Not available yet.")
+            return
+        if target is not None:
+            reply_purpose, reply_ref = target
+
     routed = route_update(
         chat_id=chat_id,
         text=text,
         owner_id=settings.telegram_owner_chat_id,
         reply_to_message_id=reply_id,
         ready_message_ids=frozenset({reply_id}) if ready_doc and reply_id else frozenset(),
+        reply_to_purpose=reply_purpose,
+        reply_to_ref=reply_ref,
     )
 
     if routed.action == "ignore":
@@ -103,6 +120,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else None
         )
         await update.message.reply_text(text, reply_markup=markup)
+        return
+
+    if routed.action == "take" and reply_ref is not None:  # --- Phase 3 ---
+        await handle_take(update, context.application.bot_data, routed.arg, reply_ref)
         return
 
     if routed.action in ("ask", "ask_book"):
