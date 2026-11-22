@@ -23,6 +23,7 @@ from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import enqueue_message
+from techradar.night.deep_dive import run_deep_dive
 from techradar.night.window import in_night_window, next_window_start, night_only
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
@@ -468,3 +469,27 @@ async def summarize_chapters_job(doc_id: int) -> None:
         await _queue_summaries(
             doc_id, when=next_window_start(datetime.now(UTC).astimezone(zone), start)
         )
+
+
+# --- Phase 7: understanding and world -----------------------------------------------
+# Night jobs sit on the `night` queue and are `night_only`: outside 01:00 to 05:00 they put
+# themselves back for the next window. Periodic jobs take the `timestamp` procrastinate passes.
+
+
+@app.periodic(cron="30 21 * * 6")  # 21:30 UTC Saturday = 03:00 IST Sunday, inside the window
+@app.task(queue=NIGHT_QUEUE, name="deep_dive_job")
+@night_only(task_name="deep_dive_job")
+async def deep_dive_job(timestamp: int | None = None) -> None:
+    """Write this week's grounded deep dive (once per ISO week) and tell the owner."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_deep_dive(
+            session,
+            now=datetime.now(UTC),
+            deps=get_rag_deps(),
+            vault_root=settings.data_dir / "vault",
+            owner_chat_id=settings.telegram_owner_chat_id,
+        )
+        await session.commit()
+    logger.info("deep dive: %s", result.model_dump())

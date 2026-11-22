@@ -79,7 +79,12 @@ def upgrade() -> None:
         ),
         sa.Column("outcome", sa.Integer(), nullable=True),
         sa.Column("outcome_text", sa.Text(), nullable=True),
+        # Set when the reminder is sent, so each prediction is reminded once.
+        sa.Column("reminded_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        sa.CheckConstraint(
+            "outcome IS NULL OR outcome BETWEEN 1 AND 3", name="ck_predictions_outcome"
+        ),
         schema=SCHEMA,
     )
 
@@ -126,6 +131,20 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         schema=SCHEMA,
     )
+
+    # Permissions: the same as the other phases (tr_app reads and writes, tr_ro reads).
+    stmts = ["DO $$ BEGIN", "IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_app') THEN"]
+    stmts += [
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON {SCHEMA}.{t} TO tr_app;" for t in NEW_TABLES
+    ]
+    stmts += [
+        f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {SCHEMA} TO tr_app;",
+        "END IF;",
+        "IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_ro') THEN",
+    ]
+    stmts += [f"GRANT SELECT ON {SCHEMA}.{t} TO tr_ro;" for t in NEW_TABLES]
+    stmts += ["END IF;", "END $$;"]
+    op.execute("\n".join(stmts))
 
 
 def downgrade() -> None:

@@ -1038,7 +1038,12 @@ class Prediction(Base):
     """User forward-looking forecasts with resolution tracking."""
 
     __tablename__ = "predictions"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IS NULL OR outcome BETWEEN 1 AND 3", name="ck_predictions_outcome"
+        ),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     text: Mapped[str] = mapped_column(String(280), nullable=False)
@@ -1048,6 +1053,7 @@ class Prediction(Base):
     )
     outcome: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outcome_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class EconSeries(Base):
