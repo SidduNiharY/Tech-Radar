@@ -41,6 +41,16 @@ async def test_skill_updates_page_and_keeps_body(tmp_path: Path):
     assert "status: learning" in text and text.endswith("# FastAPI\nmy notes\n")
 
 
+async def test_skill_page_that_is_a_symlink_is_not_written(tmp_path: Path):
+    outside = tmp_path / "outside.md"
+    outside.write_text("---\nstatus: not_started\n---\nsecret\n")
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "skills" / "fastapi.md").symlink_to(outside)
+    reply = await handle_planner_command("skill", "FastAPI built", {"vault_root": tmp_path}, NOW)
+    assert reply == "No skill page called FastAPI."
+    assert "not_started" in outside.read_text()
+
+
 async def test_skill_path_traversal_is_slugged(tmp_path: Path):
     reply = await handle_planner_command(
         "skill", "../../etc/passwd learning", {"vault_root": tmp_path}, NOW
