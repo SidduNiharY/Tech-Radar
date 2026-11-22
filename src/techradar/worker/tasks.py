@@ -13,6 +13,7 @@ from procrastinate import RetryStrategy
 from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
+from techradar.briefing.compose import run_briefing
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
@@ -467,3 +468,43 @@ async def summarize_chapters_job(doc_id: int) -> None:
         await _queue_summaries(
             doc_id, when=next_window_start(datetime.now(UTC).astimezone(zone), start)
         )
+
+
+# --- Phase 3: briefing, practice, exam alerts -------------------------------------
+# Every job is a thin wrapper: open a session, call the `run_*` function with the local `now`,
+# commit. `procrastinate` cron runs in UTC; Asia/Kolkata is UTC+05:30 all year, so a local
+# time is written here as its UTC cron with the local time in the comment. Each periodic job
+# has its own `queueing_lock`, so a slow run is never joined by a pile of duplicates.
+
+
+def _local_now() -> datetime:
+    """Now in the owner's timezone (Asia/Kolkata by default)."""
+    return datetime.now(ZoneInfo(_get_settings().tz))
+
+
+def _read_domains(path: Path) -> frozenset[str]:
+    """One domain per line; `#` lines and blanks skipped; a leading dot dropped."""
+    if not path.exists():
+        return frozenset()
+    return frozenset(
+        line.strip().lstrip(".")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="io", queueing_lock="briefing_queued", name="briefing_job")
+async def briefing_job() -> None:
+    """Send today's briefing once, only inside its grace window (D17)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_briefing(
+            session,
+            now=_local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            official_domains=_read_domains(Path("infra/sources/official_domains.txt")),
+            at_time=day_time.fromisoformat(settings.briefing_time),
+            grace_s=settings.misfire_grace_s,
+        )
+        await session.commit()

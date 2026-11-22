@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     library_part_pages: int = 25
     max_video_s: int = 14_400
     pack_max_bytes: int = 200_000_000
+    daily_new_cards: int = 10
+    daily_reviews: int = 40
+    final30_reviews: int = 80
     night_start: str = "01:00"
     night_end: str = "05:00"
 
