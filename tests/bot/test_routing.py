@@ -89,3 +89,14 @@ def test_route_quarantine_owner_only() -> None:
     assert route_update(7, "/quarantine", 42) == Routed("ignore")
     # An approved study group may use other commands, never the quarantine.
     assert route_update(-100, "/quarantine", 42, group_ids=frozenset({-100})) == Routed("ignore")
+
+
+def test_route_phase5_commands_owner_only() -> None:
+    assert route_update(42, "/study gate os", 42) == Routed("study", "gate os")
+    assert route_update(42, "/stop", 42) == Routed("stop", "")
+    assert route_update(42, "/skill FastAPI learning", 42) == Routed("skill", "FastAPI learning")
+    assert route_update(42, "/study@bot gate os", 42) == Routed("study", "gate os")
+    # a study group is allowed to ask, but never to touch the owner's tracker
+    for text in ("/study gate os", "/stop", "/skill FastAPI learning"):
+        assert route_update(-100, text, 42, group_ids=frozenset({-100})) == Routed("ignore")
+        assert route_update(7, text, 42) == Routed("ignore")

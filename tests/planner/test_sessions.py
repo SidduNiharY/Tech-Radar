@@ -11,11 +11,14 @@ from techradar.planner.sessions import (
     close_stale_sessions,
     goal_for_doc,
     join_dates,
+    local_date,
     parse_study_command,
     revision_dates,
     schedule_chapter_revisions,
     start_session,
+    stop_reply,
     stop_session,
+    study_reply,
 )
 
 NOW = datetime(2026, 11, 8, 10, 0, tzinfo=UTC)
@@ -61,11 +64,14 @@ def test_goal_for_doc():
 @pytest.mark.asyncio
 async def test_chapter_revisions_include_90_for_exam_books(session):
     doc = LibraryDoc(
-        source_id=0,
-        slug="gate-cs-primer",
+        sha256="5" * 64,
         title="GATE CS Operating Systems",
-        doc_path="gate/os.pdf",
-        kind="book",
+        kind="pdf",
+        origin="library",
+        original_path="gate/os.pdf",
+        size_bytes=1000,
+        status="ready",
+        trust="my_own",
         exam_tags=["GATE"],
     )
     session.add(doc)
@@ -114,3 +120,24 @@ async def test_stale_session_auto_closed(session):
     s = (await session.execute(stmt)).scalar_one()
     assert s.auto_closed is True
     assert s.minutes == 240
+
+
+def test_local_date_is_india_day():
+    # 20:00 UTC is already the next day in Asia/Kolkata (+05:30)
+    assert local_date(datetime(2026, 11, 8, 20, 0, tzinfo=UTC)) == date(2026, 11, 9)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_study_and_stop_replies(session):
+    assert await study_reply(session, "cooking", NOW) == (
+        "Use /study <goal> <topic>, for example /study gate operating systems."
+    )
+    assert await stop_reply(session, NOW) == "No session running."
+    assert await study_reply(session, "gate os", NOW) == (
+        "Started GATE · os. Send /stop when you finish."
+    )
+    assert await study_reply(session, "dev x", NOW) == "Already studying GATE · os since 15:30."
+    assert await stop_reply(session, NOW + timedelta(minutes=45)) == (
+        "Stopped: 45 min of GATE · os. Revisions set for 9 Nov, 15 Nov, 8 Dec and 6 Feb."
+    )

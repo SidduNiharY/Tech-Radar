@@ -20,6 +20,7 @@ from telegram.ext import (
 
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
+from techradar.bot.planner_commands import handle_planner_command
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.routing import route_update
 from techradar.db.engine import make_session_factory
@@ -105,6 +106,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(text, reply_markup=markup)
         return
 
+    # --- Phase 5 ---
+    if routed.action in ("study", "stop", "skill"):  # the router allows the owner's chat only
+        try:
+            reply = await handle_planner_command(
+                routed.action, routed.arg, context.application.bot_data
+            )
+        except Exception:
+            logger.exception("planner command failed")
+            reply = "Not available yet."
+        await update.message.reply_text(reply)
+        return
+
     if routed.action in ("ask", "ask_book"):
         await handle_ask(
             update,
@@ -135,6 +148,8 @@ async def post_init(application: Application) -> None:
     application.bot_data["session_factory"] = session_factory
     application.bot_data["quarantine_dir"] = settings.data_dir / "quarantine"
     application.bot_data["library_dir"] = settings.data_dir / "library"
+    # --- Phase 5 --- (/skill edits skills/<name>.md; the vault must be writable in `bot`)
+    application.bot_data["vault_root"] = settings.data_dir / "vault"
 
     try:
         from procrastinate import App, PsycopgConnector

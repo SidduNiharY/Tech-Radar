@@ -27,6 +27,7 @@ from techradar.night.window import in_night_window, next_window_start, night_onl
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
+from techradar.planner.sessions import close_stale_sessions
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -467,3 +468,26 @@ async def summarize_chapters_job(doc_id: int) -> None:
         await _queue_summaries(
             doc_id, when=next_window_start(datetime.now(UTC).astimezone(zone), start)
         )
+
+
+# --- Phase 5 ---------------------------------------------------------------------
+# Planner, progress and reliability. Jobs never fall back to the Mac (D19): when the server
+# is off they wait, and the next tick catches up once. Every body below is idempotent.
+
+
+@app.periodic(cron="0 * * * *")
+@app.task(
+    queue="io",
+    lock="close_stale_sessions",
+    queueing_lock="close_stale_sessions_queued",
+    name="close_stale_sessions_job",
+)
+async def close_stale_sessions_job() -> None:
+    """Close study sessions left running for more than 4 hours (the owner forgot /stop)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        closed = await close_stale_sessions(session, datetime.now(UTC))
+        await session.commit()
+    if closed:
+        logger.info("auto-closed %d stale study sessions", closed)
