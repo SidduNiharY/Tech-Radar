@@ -527,17 +527,12 @@ def remove_original(library_dir: Path, original_path: str) -> FileOutcome:
 
 
 async def delete_item(
-    session: AsyncSession,
-    item_id: int,
-    *,
-    quarantine_dir: Path,
-    now: datetime,
-    library_dir: Path | None = None,
+    session: AsyncSession, item_id: int, *, quarantine_dir: Path, now: datetime
 ) -> DeleteOutcome:
     """`qdel:<id>`: delete the held file and mark the row deleted. Flushes only.
 
-    With `library_dir`, a held library doc (still `quarantined`) also loses its original in
-    `library/originals` (nothing of it stays to be read again).
+    Runs in the bot, which mounts only `data/quarantine`: a held library doc's original in
+    `library/originals` is removed later by worker-bulk (`purge_deleted_originals`).
     """
     item = (
         await session.execute(
@@ -552,12 +547,56 @@ async def delete_item(
         return "already"
     if remove_held_file(Path(item.path), quarantine_dir) == "refused":
         return "refused"
-    if library_dir is not None:
-        doc = await _library_doc(session, item)
-        if doc is not None and doc.status == "quarantined":
-            gone = remove_original(library_dir, doc.original_path)
-            if gone == "refused":
-                logger.warning("original of held doc %s was not deleted (refused)", doc.id)
     item.deleted_at = now
     await session.flush()
     return "deleted"
+
+
+async def purge_deleted_originals(session: AsyncSession, *, library_dir: Path) -> int:
+    """Delete the originals of held library docs whose every held copy is deleted.
+
+    Runs in worker-bulk (rw on /data/library), so the bot never needs write access to the
+    library. A doc qualifies only while it is still `quarantined`, has at least one deleted
+    (never released) held copy, and has no held copy left that the owner could still release
+    (a release re-reads the original). A copy is deleted by /quarantine Delete or when
+    retention expires it; either way nothing of the doc can be read again. The file is
+    removed by `remove_original` (only `originals/<sha256>.<ext>`, a regular file, no link
+    followed). Returns how many files were deleted; touches no rows.
+    """
+    docs = (
+        (
+            await session.execute(
+                select(LibraryDoc)
+                .where(
+                    LibraryDoc.status == "quarantined", LibraryDoc.origin.in_(("library", "pack"))
+                )
+                .order_by(LibraryDoc.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    deleted = 0
+    for doc in docs:
+        name = Path(doc.original_path).name
+        items = (
+            (
+                await session.execute(
+                    select(QuarantineItem).where(
+                        QuarantineItem.origin == doc.origin,
+                        QuarantineItem.path.endswith(f"/{name}", autoescape=True),
+                        QuarantineItem.released_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not items or any(i.deleted_at is None for i in items):
+            continue
+        outcome = remove_original(library_dir, doc.original_path)
+        if outcome == "deleted":
+            deleted += 1
+        elif outcome == "refused":
+            logger.warning("original of held doc %s was not deleted (refused)", doc.id)
+    return deleted

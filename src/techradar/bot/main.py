@@ -142,8 +142,9 @@ async def post_init(application: Application) -> None:
     # /quarantine and its buttons (bot/callbacks.py). No release gate: the bot never runs
     # the Intake Gateway; released library docs are re-gated in the parser sandbox.
     application.bot_data["session_factory"] = session_factory
+    # The bot mounts only data/quarantine (rw, to delete held copies); worker-bulk deletes
+    # the originals of deleted held library docs, so the bot never writes the library.
     application.bot_data["quarantine_dir"] = settings.data_dir / "quarantine"
-    application.bot_data["library_dir"] = settings.data_dir / "library"
 
     try:
         from procrastinate import App, PsycopgConnector

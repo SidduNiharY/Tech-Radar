@@ -1,6 +1,16 @@
-"""Retention policy cleaner: purges old raw files, results, and quarantine items."""
+"""Retention policy cleaner: purges old raw files, results, and quarantine items.
 
+The quarantine folder is written by the parser sandbox and the worker mounts it rw next to
+data/library, so deletes there never trust a path check: every folder is opened by
+descriptor with O_NOFOLLOW from the quarantine root, and only the entry itself is
+unlinked (a link is removed, never followed). A folder swapped for a link after any check
+can never lead a delete out of the quarantine folder.
+"""
+
+import contextlib
 import logging
+import os
+import stat
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -10,6 +20,78 @@ from techradar.db.models import Item, QuarantineItem, RawItem
 from techradar.pipeline.process import PipelineDeps
 
 logger = logging.getLogger(__name__)
+
+_DIR_NOFOLLOW = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def unlink_in_tree(root: Path, path: Path) -> bool:
+    """Delete one regular file at `path` under `root`; refuse anything else.
+
+    Containment is lexical (no resolve): a relative path, `..`, or a path outside `root`
+    is refused. Each folder below `root` is opened relative to its parent with O_NOFOLLOW,
+    so a link at any step is refused; the file is checked with lstat and unlinked through
+    its folder's descriptor. Its folder is removed too when that leaves it empty.
+    """
+    if not path.is_absolute():
+        return False
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    if not parts or any(p in ("", ".", "..") for p in parts):
+        return False
+    try:
+        fds = [os.open(root, os.O_RDONLY | os.O_DIRECTORY)]
+    except OSError:
+        return False
+    try:
+        for part in parts[:-1]:
+            fds.append(os.open(part, _DIR_NOFOLLOW, dir_fd=fds[-1]))
+        st = os.stat(parts[-1], dir_fd=fds[-1], follow_symlinks=False)
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        os.unlink(parts[-1], dir_fd=fds[-1])
+        if len(parts) > 1:
+            with contextlib.suppress(OSError):
+                os.rmdir(parts[-2], dir_fd=fds[-2])  # only when empty
+        return True
+    except OSError:
+        return False
+    finally:
+        for fd in fds:
+            os.close(fd)
+
+
+def sweep_tree(root: Path, cutoff: datetime, empty_cutoff: datetime) -> int:
+    """Delete entries under `root` last modified before `cutoff`; returns files removed.
+
+    Walks by descriptor and never follows a link (os.fwalk, follow_symlinks=False): a link
+    is an entry like any other (removed when old, never followed). A folder is removed when
+    it is empty and either lost an entry in this sweep or is older than `empty_cutoff`.
+    """
+    if not root.is_dir():
+        return 0
+    removed = 0
+    emptied: set[str] = set()
+    old_ts, empty_ts = cutoff.timestamp(), empty_cutoff.timestamp()
+    for dirpath, dirnames, filenames, dirfd in os.fwalk(root, topdown=False, follow_symlinks=False):
+        for name in [*filenames, *dirnames]:
+            try:
+                st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+            except OSError:
+                continue
+            try:
+                if stat.S_ISDIR(st.st_mode):
+                    if os.path.join(dirpath, name) in emptied or st.st_mtime < empty_ts:
+                        os.rmdir(name, dir_fd=dirfd)  # fails (kept) unless empty
+                        emptied.add(dirpath)
+                elif st.st_mtime < old_ts:
+                    os.unlink(name, dir_fd=dirfd)  # a link itself, never its target
+                    emptied.add(dirpath)
+                    removed += 1 if stat.S_ISREG(st.st_mode) else 0
+            except OSError:
+                continue
+    return removed
 
 
 def _safe_unlink(p: Path, allowed_roots: set[Path]) -> bool:
@@ -33,12 +115,13 @@ async def cleanup_retention(
     cutoff = now - timedelta(days=retention_days)
     orphan_cutoff = now - timedelta(days=1)
 
+    # The quarantine folder is not here: it has its own descriptor-based deletes below.
     allowed_roots = {
         deps.raw_dir.resolve(),
         deps.clean_dir.resolve(),
         deps.jobs_dir.resolve(),
-        (deps.settings.data_dir / "quarantine").resolve(),
     }
+    q_dir = deps.settings.data_dir / "quarantine"
 
     async with deps.session_factory() as session:
         # 1. Clean finished items raw / clean files older than retention_days
@@ -103,19 +186,12 @@ async def cleanup_retention(
             )
         )
         for q_item in q_res.scalars().all():
-            if q_item.path:
-                qp = Path(q_item.path)
-                if _safe_unlink(qp, allowed_roots):
-                    counts["quarantine"] += 1
+            if q_item.path and unlink_in_tree(q_dir, Path(q_item.path)):
+                counts["quarantine"] += 1
             q_item.deleted_at = now
 
-        # Also scan quarantine folder for physical files
-        q_dir = deps.settings.data_dir / "quarantine"
-        if q_dir.exists():
-            for qf in q_dir.rglob("*"):
-                mtime = datetime.fromtimestamp(qf.stat().st_mtime, tz=now.tzinfo)
-                if mtime < cutoff and _safe_unlink(qf, allowed_roots):
-                    counts["quarantine"] += 1
+        # Also sweep the quarantine folder for old files nothing points to any more.
+        counts["quarantine"] += sweep_tree(q_dir, cutoff, orphan_cutoff)
 
         await session.commit()
 

@@ -875,6 +875,12 @@ Expected: PASS
 git add src/techradar/library src/techradar/bot src/techradar/pipeline infra/backup tests && git commit -m "feat(library): quarantine notices, two-step release, library kept and backed up"
 ```
 
+**As built: the compose mounts (2026-11-22):**
+
+- Writers of `data/quarantine` are exactly the parser (the gateway's held copies), the worker (`process.py` lists held news copies; retention deletes expired ones) and the bot (`/quarantine` Delete). worker-bulk only records paths. `tests/security/test_compose_policy.py` checks this.
+- The bot mounts only `data/quarantine` (rw) and nothing of the library. `delete_item` removes the held copy only; worker-bulk's `purge_deleted_originals` (in `resume_bulk_job`, every 5 minutes) removes the original of a held doc once every unreleased held copy of it is deleted.
+- The worker mounts `data/quarantine` rw next to `data/library` rw, and the parser can write `data/quarantine`. So retention deletes there by descriptor only (`unlink_in_tree`, `sweep_tree`): every folder is opened with O_NOFOLLOW from the quarantine root, a link is removed but never followed, and no path is resolved first. A job folder swapped for a link after a check cannot lead a delete into the library.
+
 ### Task 11: Gate 2c
 
 **SEC:** SEC-15, SEC-20, SEC-43, SEC-44, SEC-54, SEC-57; re-check of all earlier controls

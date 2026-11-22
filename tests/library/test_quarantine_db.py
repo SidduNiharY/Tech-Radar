@@ -29,6 +29,7 @@ from techradar.library.quarantine import (
     doc_flagged,
     hold_library_doc,
     list_quarantine,
+    purge_deleted_originals,
     release,
     request_release,
 )
@@ -360,34 +361,86 @@ async def test_delete_item_removes_file_and_is_idempotent(
     assert await delete_item(session, -1, quarantine_dir=qdir, now=NOW) == "not_found"
 
 
-async def test_delete_of_a_held_library_doc_removes_its_original(
-    session: AsyncSession, tmp_path: Path
-) -> None:
+async def test_delete_never_touches_the_library(session: AsyncSession, tmp_path: Path) -> None:
+    # The bot runs delete_item and has no library mount: the original stays until
+    # worker-bulk's purge_deleted_originals removes it.
     qdir, lib = tmp_path / "q", tmp_path / "library"
     doc, item = await _held_doc(session, qdir)
+    original = _original(lib, doc)
+    assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
+    assert _exists(original) and not _exists(Path(item.path))
+
+
+def _original(lib: Path, doc: LibraryDoc, data: bytes = b"macro docx") -> Path:
     original = lib / doc.original_path
-    original.parent.mkdir(parents=True)
-    original.write_bytes(b"macro docx")
-    outcome = await delete_item(session, item.id, quarantine_dir=qdir, library_dir=lib, now=NOW)
-    assert outcome == "deleted"
-    assert not _exists(original) and not _exists(Path(item.path))
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_bytes(data)
+    return original
 
 
-async def test_delete_keeps_the_original_of_a_doc_that_is_not_held(
+async def test_purge_removes_the_original_of_a_deleted_held_doc(
     session: AsyncSession, tmp_path: Path
 ) -> None:
     qdir, lib = tmp_path / "q", tmp_path / "library"
     doc, item = await _held_doc(session, qdir)
+    original = _original(lib, doc)
+    assert await purge_deleted_originals(session, library_dir=lib) == 0  # still held
+    assert _exists(original)
+    assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
+    assert await purge_deleted_originals(session, library_dir=lib) == 1
+    assert not _exists(original)
+    assert await purge_deleted_originals(session, library_dir=lib) == 0  # gone: idempotent
+
+
+async def test_purge_keeps_the_original_of_a_doc_that_is_not_held(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    original = _original(lib, doc, b"book")
+    assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
     doc.status = "processing"  # e.g. another copy of it is being read
     await session.flush()
-    original = lib / doc.original_path
-    original.parent.mkdir(parents=True)
-    original.write_bytes(b"book")
-    assert (
-        await delete_item(session, item.id, quarantine_dir=qdir, library_dir=lib, now=NOW)
-        == "deleted"
-    )
+    assert await purge_deleted_originals(session, library_dir=lib) == 0
     assert _exists(original)
+
+
+async def test_purge_keeps_the_original_while_another_held_copy_is_live(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    # A second held copy (another job of the same doc) can still be released, and a release
+    # re-reads the original: it stays until every held copy is deleted.
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    original = _original(lib, doc)
+    job2 = os.urandom(16).hex()
+    held2 = qdir / job2 / Path(doc.original_path).name
+    held2.parent.mkdir(parents=True)
+    held2.write_bytes(b"copy")
+    item2 = await hold_library_doc(
+        session, doc, job_id=job2, quarantine_dir=qdir, reasons=["macros"], chat_id=None
+    )
+    assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
+    assert await purge_deleted_originals(session, library_dir=lib) == 0
+    assert _exists(original)
+    assert await delete_item(session, item2.id, quarantine_dir=qdir, now=NOW) == "deleted"
+    assert await purge_deleted_originals(session, library_dir=lib) == 1
+    assert not _exists(original)
+
+
+async def test_purge_never_follows_a_stored_path_outside_originals(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    book = lib / "text" / Path(doc.original_path).name
+    book.parent.mkdir(parents=True)
+    book.write_bytes(b"my book")
+    assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
+    doc.original_path = f"text/{Path(doc.original_path).name}"
+    await session.flush()
+    assert await purge_deleted_originals(session, library_dir=lib) == 0
+    assert book.read_bytes() == b"my book"
 
 
 async def test_delete_item_refuses_path_outside_quarantine(

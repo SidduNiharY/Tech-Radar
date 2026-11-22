@@ -19,6 +19,7 @@ from techradar.db.models import LibraryChapter
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
+from techradar.library.quarantine import purge_deleted_originals
 from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
@@ -355,7 +356,11 @@ async def collect_bulk_results_job() -> None:
     name="resume_bulk_job",
 )
 async def resume_bulk_job() -> None:
-    """Re-queue lost parse jobs of every stuck library doc (queued or processing)."""
+    """Re-queue lost parse jobs of every stuck library doc (queued or processing).
+
+    Also deletes the originals of held docs the owner deleted with /quarantine: the bot has
+    no library mount, so this worker (rw on /data/library) does it.
+    """
     settings = _get_settings()
     session_factory = make_session_factory("app", settings)
     async with session_factory() as session:
@@ -368,6 +373,9 @@ async def resume_bulk_job() -> None:
             owner_chat_id=settings.telegram_owner_chat_id,
             on_chapters_ready=_queue_index,
         )  # commits per doc
+        purged = await purge_deleted_originals(session, library_dir=settings.data_dir / "library")
+    if purged:
+        logger.info("deleted %d originals of deleted held library docs", purged)
     if any(resumed.values()):
         logger.info("bulk resume re-queued parts: %s", resumed)
 

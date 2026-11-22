@@ -160,6 +160,131 @@ async def test_retention_never_touches_library(deps: PipelineDeps):
     assert r["raw"] == 0 and r["clean"] == 0 and r["quarantine"] == 0
 
 
+# --- the quarantine folder (the parser writes it; the worker deletes there) ------------
+# The worker mounts data/quarantine rw next to data/library rw, and the parser can write
+# data/quarantine. A held job folder swapped for a link after a check must never lead a
+# delete into the library.
+
+
+def _with_held_rows(deps: PipelineDeps, rows: list) -> PipelineDeps:
+    """Deps whose session returns `rows` for the expired quarantine query (the third)."""
+    import dataclasses
+
+    session = AsyncMock()
+    session.add = MagicMock()
+
+    def result(values):
+        res = MagicMock()
+        res.scalars.return_value.all.return_value = values
+        return res
+
+    session.execute.side_effect = [result([]), result([]), result(rows)]
+
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    return dataclasses.replace(deps, session_factory=factory)
+
+
+def _held_row(path: Path):
+    from techradar.db.models import QuarantineItem
+
+    old = datetime.now(UTC) - timedelta(days=8)
+    return QuarantineItem(
+        job_id="c" * 32,
+        path=str(path),
+        origin="library",
+        reasons=["macros"],
+        created_at=old,
+        expires_at=old + timedelta(days=7),
+    )
+
+
+async def test_expired_held_file_is_deleted(retention_deps: PipelineDeps):
+    qdir = retention_deps.settings.data_dir / "quarantine"
+    held = qdir / ("c" * 32) / ("a" * 64 + ".pdf")
+    held.parent.mkdir()
+    held.write_bytes(b"held")
+    row = _held_row(held)
+    r = await cleanup_retention(_with_held_rows(retention_deps, [row]), datetime.now(UTC))
+    assert r["quarantine"] == 1 and not held.exists() and row.deleted_at is not None
+
+
+async def test_expired_held_file_behind_a_swapped_folder_never_reaches_the_library(
+    retention_deps: PipelineDeps, monkeypatch: pytest.MonkeyPatch
+):
+    # The race: the job folder is real when its path is checked, then the parser swaps it
+    # for a link to library/originals before the unlink.
+    import os
+
+    book = _library_with_old_book(retention_deps)
+    qdir = retention_deps.settings.data_dir / "quarantine"
+    job = qdir / ("c" * 32)
+    held = job / book.name
+    job.mkdir()
+    held.write_bytes(b"held copy")
+    real_resolve = Path.resolve
+    swapped: list[bool] = []
+
+    def resolve_then_swap(self: Path, strict: bool = False) -> Path:
+        out = real_resolve(self, strict=strict)
+        if self == held and not swapped:
+            swapped.append(True)
+            os.rename(job, qdir / "moved-away")
+            job.symlink_to(book.parent, target_is_directory=True)
+        return out
+
+    monkeypatch.setattr(Path, "resolve", resolve_then_swap)
+    row = _held_row(held)
+    await cleanup_retention(_with_held_rows(retention_deps, [row]), datetime.now(UTC))
+    monkeypatch.undo()
+    assert book.read_bytes() == b"%PDF-1.7 a book"
+
+
+async def test_held_row_pointing_through_a_linked_folder_is_refused(
+    retention_deps: PipelineDeps,
+):
+    book = _library_with_old_book(retention_deps)
+    qdir = retention_deps.settings.data_dir / "quarantine"
+    (qdir / ("c" * 32)).symlink_to(book.parent, target_is_directory=True)
+    row = _held_row(qdir / ("c" * 32) / book.name)
+    r = await cleanup_retention(_with_held_rows(retention_deps, [row]), datetime.now(UTC))
+    assert book.read_bytes() == b"%PDF-1.7 a book" and r["quarantine"] == 0
+    assert row.deleted_at is not None  # expired: never offered again
+
+
+async def test_sweep_removes_old_held_files_and_their_empty_folders(
+    retention_deps: PipelineDeps,
+):
+    qdir = retention_deps.settings.data_dir / "quarantine"
+    old = qdir / ("d" * 32) / ("b" * 64 + ".pdf")
+    fresh = qdir / ("e" * 32) / ("c" * 64 + ".pdf")
+    for f in (old, fresh):
+        f.parent.mkdir()
+        f.write_bytes(b"x")
+    _age(old, 30)
+    r = await cleanup_retention(retention_deps, datetime.now(UTC))
+    assert not old.exists() and not old.parent.exists()
+    assert fresh.exists() and r["quarantine"] == 1
+
+
+async def test_sweep_survives_a_dangling_link_and_never_follows_links(
+    retention_deps: PipelineDeps,
+):
+    book = _library_with_old_book(retention_deps)
+    qdir = retention_deps.settings.data_dir / "quarantine"
+    (qdir / "dangling").symlink_to(qdir / "nowhere")
+    (qdir / ("f" * 32)).symlink_to(book.parent, target_is_directory=True)
+    old = qdir / ("a" * 32) / ("d" * 64 + ".pdf")
+    old.parent.mkdir()
+    old.write_bytes(b"x")
+    _age(old, 30)
+    await cleanup_retention(retention_deps, datetime.now(UTC))
+    assert book.read_bytes() == b"%PDF-1.7 a book"
+    assert not old.exists()
+
+
 def test_safe_unlink_is_not_fooled_by_a_sibling_folder_with_the_same_prefix(tmp_path: Path):
     from techradar.pipeline.retention import _safe_unlink
 

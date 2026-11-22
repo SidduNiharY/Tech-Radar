@@ -89,3 +89,22 @@ async def test_queue_index_accepts_a_job_that_is_already_queued(monkeypatch: pyt
         tasks.index_library_chapters_job, "configure", MagicMock(return_value=deferrer)
     )
     await tasks._queue_index(9)  # no exception
+
+
+async def test_resume_bulk_job_purges_originals_of_deleted_held_docs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
+    # The bot deletes held copies but has no library mount; worker-bulk (rw on /data/library)
+    # removes the originals on its 5-minute tick.
+    session = MagicMock()
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(tasks, "make_session_factory", lambda *_a, **_k: factory)
+    settings = SimpleNamespace(data_dir=tmp_path, library_part_pages=25, telegram_owner_chat_id=1)
+    monkeypatch.setattr(tasks, "_get_settings", lambda: settings)
+    monkeypatch.setattr(tasks, "resume_all", AsyncMock(return_value={}))
+    purge = AsyncMock(return_value=1)
+    monkeypatch.setattr(tasks, "purge_deleted_originals", purge)
+    await tasks.resume_bulk_job()
+    purge.assert_awaited_once_with(session, library_dir=tmp_path / "library")

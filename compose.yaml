@@ -106,6 +106,10 @@ services:
       llm: {}
       egress_internal:
         ipv4_address: 10.250.10.10
+    volumes:
+      # /quarantine Delete unlinks held copies (rw). Nothing else under /data: originals of
+      # deleted held library docs are removed by worker-bulk (purge_deleted_originals).
+      - ./data/quarantine:/data/quarantine
     secrets:
       - tr_ro_password
       - telegram_bot_token
@@ -214,6 +218,8 @@ services:
       - ./data/library-inbox:/data/library-inbox
       - ./data/library-packs:/data/library-packs
       - ./data/library:/data/library
+      # Held news copies: process.py lists them, retention unlinks expired ones (rw).
+      - ./data/quarantine:/data/quarantine
       - ./infra/intake/limits.yaml:/infra/intake/limits.yaml:ro
       - ./infra/sources:/infra/sources:ro
       - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro

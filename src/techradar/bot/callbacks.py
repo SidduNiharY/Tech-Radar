@@ -146,14 +146,8 @@ async def _quarantine_callback(query: Any, bot_data: Any, action: str, item_id: 
         await query.answer("Not available yet.")
         return
     async with session_factory() as session:
-        library_dir = bot_data.get("library_dir")
-        deleted = await delete_item(
-            session,
-            item_id,
-            quarantine_dir=Path(quarantine_dir),
-            now=now,
-            library_dir=Path(library_dir) if library_dir is not None else None,
-        )
+        # Only the held copy: worker-bulk deletes a held doc's original (no library mount here).
+        deleted = await delete_item(session, item_id, quarantine_dir=Path(quarantine_dir), now=now)
         await session.commit()
     logger.info("quarantine delete %s: %s", item_id, deleted)
     await query.answer(_DELETE_ANSWERS.get(deleted, "Done."))

@@ -204,3 +204,57 @@ def test_parser_writes_only_media_and_its_own_folders(compose_data):
     }
     assert svc["network_mode"] == "none" and svc["read_only"] is True
     assert svc["cap_drop"] == ["ALL"] and svc["tmpfs"] == ["/tmp"]  # noqa: S108
+
+
+def _mounts(svc: dict) -> tuple[set[str], set[str]]:
+    """(rw, ro) container paths of a service's volumes."""
+    rw, ro = set(), set()
+    for v in svc.get("volumes", []):
+        parts = str(v).split(":")
+        (ro if len(parts) > 2 and "ro" in parts[2].split(",") else rw).add(parts[1])
+    return rw, ro
+
+
+def test_bot_mounts_only_the_quarantine_folder(compose_data):
+    # /quarantine Delete unlinks the held copy (remove_held_file), so the bot needs rw on
+    # data/quarantine and nothing else under /data. The originals of deleted held docs are
+    # removed by worker-bulk (purge_deleted_originals), never by the bot.
+    svc = compose_data["services"]["bot"]
+    rw, ro = _mounts(svc)
+    assert rw == {"/data/quarantine"}
+    assert ro == set()
+    assert "./data/quarantine:/data/quarantine" in svc["volumes"]
+    assert svc["user"] == "1000:1000" and svc["read_only"] is True
+    assert svc["cap_drop"] == ["ALL"] and svc["tmpfs"] == ["/tmp"]  # noqa: S108
+
+
+def test_bot_has_no_access_to_library_files(compose_data):
+    svc = compose_data["services"]["bot"]
+    rw, ro = _mounts(svc)
+    sources = {str(v).split(":")[0].rstrip("/") for v in svc.get("volumes", [])}
+    for path in rw | ro:
+        assert not path.startswith(("/data/library", "/data/clean", "/data/raw")), path
+    for src in sources:
+        assert not src.startswith(("./data/library", "./data/clean", "./data/raw")), src
+        assert src not in {".", "./data"}, src
+
+
+def test_worker_can_read_and_sweep_the_quarantine_folder(compose_data):
+    # pipeline/process.py lists quarantine/<job_id>/ (held_file); retention unlinks expired
+    # held files there, so rw. Exactly one mount: the folder, not /data.
+    svc = compose_data["services"]["worker"]
+    rw, _ro = _mounts(svc)
+    assert "/data/quarantine" in rw
+    assert "./data/quarantine:/data/quarantine" in svc["volumes"]
+    assert "/data" not in rw
+
+
+def test_quarantine_mounts_are_only_where_the_code_uses_them(compose_data):
+    # Writers: the parser (gateway.quarantine_file), the worker (retention) and the bot
+    # (/quarantine Delete). worker-bulk only records paths (hold_library_doc), no mount.
+    holders = {
+        name
+        for name, svc in compose_data["services"].items()
+        if any(str(v).split(":")[1] == "/data/quarantine" for v in svc.get("volumes", []))
+    }
+    assert holders == {"parser", "worker", "bot"}

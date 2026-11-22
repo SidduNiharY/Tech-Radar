@@ -181,7 +181,7 @@ async def test_owner_delete_commits(monkeypatch) -> None:
     await handle_callback_query(update, context)
     assert dele.await_args.args[1] == 5
     assert dele.await_args.kwargs["quarantine_dir"] == Path("/data/quarantine")
-    assert dele.await_args.kwargs["library_dir"] is None  # not wired: originals stay
+    assert "library_dir" not in dele.await_args.kwargs  # worker-bulk removes originals
     opened[0].commit.assert_awaited_once()
     query.answer.assert_called_once_with("Deleted.")
 

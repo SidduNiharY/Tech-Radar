@@ -114,6 +114,7 @@ async def test_post_init_wires_the_quarantine_dependencies(
     await bot_main.post_init(application)  # type: ignore[arg-type]
     assert application.bot_data["session_factory"] is factory
     assert application.bot_data["quarantine_dir"] == tmp_path / "quarantine"
-    assert application.bot_data["library_dir"] == tmp_path / "library"
+    # The bot has no library mount: worker-bulk removes originals of deleted held docs.
+    assert "library_dir" not in application.bot_data
     assert application.bot_data["owner_id"] == OWNER
     assert "release_gate" not in application.bot_data  # the bot never gates files itself
