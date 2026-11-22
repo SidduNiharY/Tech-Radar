@@ -1,17 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import date, timedelta
+import re
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, timedelta
 from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import Checkin, Flashcard, QuizAttempt, StudySession
+from techradar.db.models import Checkin, Flashcard, Outbox, QuizAttempt, StudySession
 from techradar.messaging.outbox import enqueue_message
 from techradar.pipeline.writer import write_note
-from techradar.planner.sessions import Goal
+from techradar.planner.plan import DEFAULT_WEEKLY_TARGETS
+from techradar.planner.sessions import IST, Goal, local_date, local_day_bounds, minutes_by_goal
+
+WEEK_ID = re.compile(r"^(\d{4})-W(\d{2})$")
+PATTERN_WINDOW_DAYS = 60
+WEEKLY_REVIEW_PURPOSE = "weekly_review"
 
 
 def week_bounds(any_day: date) -> tuple[date, date]:
@@ -19,6 +25,23 @@ def week_bounds(any_day: date) -> tuple[date, date]:
     start = any_day - timedelta(days=any_day.weekday())
     end = start + timedelta(days=6)
     return start, end
+
+
+def week_id(week_start: date) -> str:
+    """`2026-W45` for the ISO week that starts on `week_start`."""
+    year, week, _ = week_start.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def parse_week_id(value: str) -> date | None:
+    """Monday of `YYYY-Www` (for `GET /v1/progress?week=`), or None when it is not a week."""
+    m = WEEK_ID.match(value)
+    if m is None:
+        return None
+    try:
+        return date.fromisocalendar(int(m.group(1)), int(m.group(2)), 1)
+    except ValueError:
+        return None
 
 
 class DayStat(BaseModel):
@@ -39,7 +62,10 @@ class Pattern(BaseModel):
 
 
 def sleep_accuracy_pattern(days: Sequence[DayStat]) -> Pattern | None:
-    """Computes sleep vs quiz accuracy correlation pattern."""
+    """Computes sleep vs quiz accuracy correlation pattern.
+
+    Worded as a pattern, never as a cause; needs 7 days with a quiz in each group.
+    """
     low_group = [
         d
         for d in days
@@ -75,6 +101,16 @@ def sleep_accuracy_pattern(days: Sequence[DayStat]) -> Pattern | None:
     )
 
 
+def streak_from_days(active: set[date], as_of: date) -> int:
+    """Consecutive study days ending `as_of` (or the day before, while `as_of` is still open)."""
+    day = as_of if as_of in active else as_of - timedelta(days=1)
+    streak = 0
+    while day in active:
+        streak += 1
+        day -= timedelta(days=1)
+    return streak
+
+
 class WeekProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -86,89 +122,102 @@ class WeekProgress(BaseModel):
     pattern: Pattern | None = None
 
 
-async def week_progress(session: AsyncSession, week_start: date) -> WeekProgress:
-    """Calculate progress stats for a given week."""
+async def week_progress(
+    session: AsyncSession,
+    week_start: date,
+    *,
+    targets: Mapping[Goal, int] | None = None,
+) -> WeekProgress:
+    """Calculate progress stats for the week that starts on `week_start` (an India Monday).
+
+    WIRING(claude): `GET /v1/progress?week=YYYY-Www` (the API agent) turns the query with
+    `parse_week_id` (None means 422; no week means this week's Monday) and returns this model.
+    """
     week_end = week_start + timedelta(days=6)
+    start_ts, end_ts = local_day_bounds(week_start, week_end)
 
-    # 1. Study minutes by goal
-    stmt = (
-        select(StudySession.goal, func.coalesce(func.sum(StudySession.minutes), 0))
-        .where(
-            func.date(StudySession.started_at) >= week_start,
-            func.date(StudySession.started_at) <= week_end,
+    minutes = await minutes_by_goal(session, week_start, week_end)
+
+    # Quiz accuracy of the week
+    total_quiz, correct_quiz = (
+        await session.execute(
+            select(
+                func.count(QuizAttempt.id),
+                func.coalesce(func.sum(cast(QuizAttempt.correct, Integer)), 0),
+            ).where(QuizAttempt.date >= week_start, QuizAttempt.date <= week_end)
         )
-        .group_by(StudySession.goal)
-    )
-    res = await session.execute(stmt)
-    minutes_by_goal = {r[0]: int(r[1]) for r in res.all()}
-
-    # 2. Quiz accuracy
-    quiz_stmt = select(
-        func.count(QuizAttempt.id),
-        func.coalesce(func.sum(func.cast(QuizAttempt.correct, func.integer)), 0),
-    ).where(
-        QuizAttempt.date >= week_start,
-        QuizAttempt.date <= week_end,
-    )
-    quiz_res = await session.execute(quiz_stmt)
-    total_quiz, correct_quiz = quiz_res.one()
+    ).one()
     quiz_accuracy = (float(correct_quiz) / total_quiz) if total_quiz > 0 else None
 
-    # 3. Cards reviewed
-    cards_stmt = select(func.count(Flashcard.id)).where(
-        Flashcard.first_shown_at.is_not(None),
-        func.date(Flashcard.first_shown_at) >= week_start,
-        func.date(Flashcard.first_shown_at) <= week_end,
+    # Cards first shown this week (there is no per-review log; this is the nearest proxy)
+    cards_reviewed = int(
+        (
+            await session.execute(
+                select(func.count(Flashcard.id)).where(
+                    Flashcard.first_shown_at >= start_ts, Flashcard.first_shown_at < end_ts
+                )
+            )
+        ).scalar()
+        or 0
     )
-    cards_res = await session.execute(cards_stmt)
-    cards_reviewed = int(cards_res.scalar() or 0)
 
-    # 4. DayStat list for pattern analysis
-    day_stats: list[DayStat] = []
-    # Pull recent checkins
-    checkin_stmt = select(Checkin).order_by(Checkin.date.desc()).limit(60)
-    checkins = {c.date: c for c in (await session.execute(checkin_stmt)).scalars().all()}
-    for d, c in checkins.items():
-        day_stats.append(
-            DayStat(
-                date=d,
-                sleep_band=c.sleep_band,
-                quiz_accuracy=quiz_accuracy,  # Fallback proxy for day accuracy
+    # Streak: India days with a study session, up to the end of this week (or today)
+    as_of = min(week_end, local_date(datetime.now(IST)))
+    since_ts, _ = local_day_bounds(as_of - timedelta(days=PATTERN_WINDOW_DAYS), as_of)
+    started = (
+        (
+            await session.execute(
+                select(StudySession.started_at).where(StudySession.started_at >= since_ts)
             )
         )
+        .scalars()
+        .all()
+    )
+    streak = streak_from_days({local_date(s) for s in started}, as_of)
 
-    pattern = sleep_accuracy_pattern(day_stats)
-
-    targets = {
-        Goal.DEV.value: 600,
-        Goal.GATE.value: 300,
-        Goal.GOV.value: 420,
-        Goal.CURRENT.value: 105,
-        Goal.ENGLISH.value: 140,
+    # Pattern: each check-in day with that day's own quiz accuracy
+    first = as_of - timedelta(days=PATTERN_WINDOW_DAYS)
+    per_day = {
+        d: (int(n), int(ok))
+        for d, n, ok in (
+            await session.execute(
+                select(
+                    QuizAttempt.date,
+                    func.count(QuizAttempt.id),
+                    func.coalesce(func.sum(cast(QuizAttempt.correct, Integer)), 0),
+                )
+                .where(QuizAttempt.date >= first, QuizAttempt.date <= as_of)
+                .group_by(QuizAttempt.date)
+            )
+        ).all()
     }
+    checkins = (
+        (await session.execute(select(Checkin).where(Checkin.date >= first, Checkin.date <= as_of)))
+        .scalars()
+        .all()
+    )
+    day_stats = [
+        DayStat(
+            date=c.date,
+            sleep_band=c.sleep_band,
+            quiz_accuracy=(per_day[c.date][1] / per_day[c.date][0]) if c.date in per_day else None,
+        )
+        for c in checkins
+    ]
 
+    goal_targets = targets or DEFAULT_WEEKLY_TARGETS
     return WeekProgress(
-        minutes_by_goal=minutes_by_goal,
-        targets=targets,
-        streak_days=len(minutes_by_goal),
+        minutes_by_goal={g.value: m for g, m in minutes.items()},
+        targets={g.value: t for g, t in goal_targets.items()},
+        streak_days=streak,
         quiz_accuracy=quiz_accuracy,
         cards_reviewed=cards_reviewed,
-        pattern=pattern,
+        pattern=sleep_accuracy_pattern(day_stats),
     )
 
 
-async def run_weekly_review(
-    session: AsyncSession,
-    week_end: date,
-    vault_root: Path | None = None,
-) -> str:
-    """Generate weekly review note, write to vault, and enqueue summary message."""
-    week_start, _ = week_bounds(week_end)
-    wp = await week_progress(session, week_start)
-
-    year, week_num, _ = week_start.isocalendar()
-    week_slug = f"{year}-W{week_num:02d}"
-
+def render_review(week_slug: str, wp: WeekProgress) -> str:
+    """The vault page for one week (`generated: true`)."""
     lines = [
         "---",
         "kind: review",
@@ -177,8 +226,8 @@ async def run_weekly_review(
         "---",
         f"# Weekly Review · {week_slug}",
         "",
-        f"- **Streak:** {wp.streak_days} days active",
-        f"- **Flashcards reviewed:** {wp.cards_reviewed}",
+        f"- **Streak:** {wp.streak_days} days",
+        f"- **Flashcards shown:** {wp.cards_reviewed}",
     ]
     if wp.quiz_accuracy is not None:
         lines.append(f"- **Quiz accuracy:** {int(wp.quiz_accuracy * 100)}%")
@@ -187,17 +236,57 @@ async def run_weekly_review(
 
     lines.append("")
     lines.append("## Study Time by Goal")
-    for goal, mins in wp.minutes_by_goal.items():
-        tgt = wp.targets.get(goal, 0)
-        lines.append(f"- **{goal.upper()}:** {mins} / {tgt} min")
+    for goal, target in wp.targets.items():
+        lines.append(f"- **{goal.upper()}:** {wp.minutes_by_goal.get(goal, 0)} / {target} min")
+    return "\n".join(lines).strip() + "\n"
 
-    content = "\n".join(lines).strip() + "\n"
+
+async def run_weekly_review(
+    session: AsyncSession,
+    week_end: date,
+    *,
+    owner_chat_id: int,
+    vault_root: Path | None = None,
+    targets: Mapping[Goal, int] | None = None,
+) -> str | None:
+    """Write the review page and enqueue the summary; once per week.
+
+    Returns the page text, or None when this week was already reviewed (a retry, or a
+    catch-up run after downtime, sends nothing twice).
+    """
+    week_start, _ = week_bounds(week_end)
+    week_slug = week_id(week_start)
+    year, week, _ = week_start.isocalendar()
+    ref = year * 100 + week
+
+    already = await session.execute(
+        select(Outbox.id)
+        .where(
+            Outbox.purpose == WEEKLY_REVIEW_PURPOSE,
+            Outbox.ref_id == ref,
+            Outbox.chat_id == owner_chat_id,
+        )
+        .limit(1)
+    )
+    if already.scalar_one_or_none() is not None:
+        return None
+
+    wp = await week_progress(session, week_start, targets=targets)
+    content = render_review(week_slug, wp)
 
     if vault_root:
-        rel = PurePosixPath("reviews") / f"{week_slug}.md"
-        write_note(vault_root, rel, content)
+        write_note(vault_root, PurePosixPath("reviews") / f"{week_slug}.md", content)
 
-    outbox_msg = f"Your weekly review for {week_slug} is ready: reviews/{week_slug}.md"
-    await enqueue_message(session, outbox_msg)
-
+    summary = [f"Your weekly review for {week_slug} is ready: reviews/{week_slug}.md"]
+    done = sum(wp.minutes_by_goal.values())
+    summary.append(f"{done} min studied, {wp.streak_days}-day streak.")
+    if wp.pattern:
+        summary.append(wp.pattern.text)
+    await enqueue_message(
+        session,
+        chat_id=owner_chat_id,
+        text="\n".join(summary),
+        purpose=WEEKLY_REVIEW_PURPOSE,
+        ref_id=ref,
+    )
     return content

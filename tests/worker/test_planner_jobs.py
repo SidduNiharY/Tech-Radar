@@ -17,6 +17,16 @@ def test_close_stale_sessions_job_declaration():
     assert job.queueing_lock  # a tick is skipped while one waits: no pile-up after downtime
 
 
+def test_weekly_review_job_declaration():
+    job = tasks.weekly_review_job
+    assert job.name == "weekly_review_job"
+    assert job.queue == "io"
+    assert job.queueing_lock
+    # Sundays 19:00 India time is 13:30 UTC (procrastinate reads cron in UTC)
+    periodic = [p for p in app.periodic_registry.periodic_tasks.values() if p.task is job]
+    assert [p.cron for p in periodic] == ["30 13 * * 0"]
+
+
 async def test_close_stale_sessions_job_commits(monkeypatch):
     calls: list[str] = []
 

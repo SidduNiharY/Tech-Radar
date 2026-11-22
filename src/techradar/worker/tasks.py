@@ -27,7 +27,8 @@ from techradar.night.window import in_night_window, next_window_start, night_onl
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
-from techradar.planner.sessions import close_stale_sessions
+from techradar.planner.progress import run_weekly_review
+from techradar.planner.sessions import close_stale_sessions, local_date
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -491,3 +492,26 @@ async def close_stale_sessions_job() -> None:
         await session.commit()
     if closed:
         logger.info("auto-closed %d stale study sessions", closed)
+
+
+# Sundays at 19:00 India time. Procrastinate reads cron in UTC: 13:30 UTC is 19:00 IST.
+# A missed Sunday is not repeated later (one review per week, see `run_weekly_review`).
+@app.periodic(cron="30 13 * * 0")
+@app.task(
+    queue="io",
+    lock="weekly_review",
+    queueing_lock="weekly_review_queued",
+    name="weekly_review_job",
+)
+async def weekly_review_job() -> None:
+    """Write this week's review page into the vault and send the owner a summary."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        await run_weekly_review(
+            session,
+            local_date(datetime.now(UTC)),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
