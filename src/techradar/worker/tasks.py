@@ -16,6 +16,7 @@ from sqlalchemy import select
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
+from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
@@ -489,3 +490,50 @@ async def syllabus_sync_job(timestamp: int | None = None) -> None:
         topics = await sync_syllabus(session, settings.data_dir / "vault")
         await session.commit()
     logger.info("syllabus sync: %d topics", topics)
+
+
+def _exam_models() -> tuple[LiteLLMCompleter, LiteLLMEmbedder]:
+    """The local worker/checker models and the embedder (never a cloud model)."""
+    roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
+    return LiteLLMCompleter(roles, "http://ollama:11434"), LiteLLMEmbedder(
+        roles, "http://ollama:11434"
+    )
+
+
+# Nightly at 20:00 UTC = 01:30 in Asia/Kolkata, inside the night window (01:00-05:00); outside
+# it `night_only` queues the job for the next window start instead of running it.
+@app.periodic(cron="0 20 * * *")
+@app.task(queue="llm", queueing_lock="suggest_sources_queued", name="suggest_topic_sources_job")
+@night_only(task_name="suggest_topic_sources_job")
+async def suggest_topic_sources_job(timestamp: int | None = None) -> None:
+    """Nightly: pick syllabus topics for unlinked library chapters (Task 2b).
+
+    A past-paper tag the owner already confirmed links at once; a model's chapter pick stays
+    `suggested` until the owner presses Keep in the Sunday digest (`srcok:<id>`).
+    """
+    settings = _get_settings()
+    completer, embedder = _exam_models()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        created = await run_suggest_topic_sources(
+            session,
+            embedder,
+            completer,
+            now=datetime.now(UTC),
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+    logger.info("topic sources: %d new", created)
+
+
+# Sundays 12:45 UTC = 18:15 in Asia/Kolkata.
+@app.periodic(cron="45 12 * * 0")
+@app.task(queue="io", queueing_lock="sources_digest_queued", name="sources_digest_job")
+async def sources_digest_job(timestamp: int | None = None) -> None:
+    """Sundays 18:15: ask the owner to confirm up to 10 suggested sources (Task 2b)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        sent = await enqueue_sources_digest(session, settings.telegram_owner_chat_id)
+        await session.commit()
+    logger.info("sources digest: %d suggestions queued", sent)

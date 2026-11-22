@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import LibraryChapter, LibraryDoc, PyqQuestion, SyllabusTopic
+from techradar.exams import sources
 from techradar.exams.sources import (
     SourceSuggestion,
     candidate_topics,
@@ -115,6 +117,41 @@ def test_read_key_ideas_strips_citations_and_stays_inside_the_vault(tmp_path: Pa
 def test_render_source_suggestion():
     s = SourceSuggestion(id=3, topic="Deadlocks", label="Galvin · 8. Deadlocks · p. 318–352")
     assert render_source_suggestion(s) == "Deadlocks ← Galvin · 8. Deadlocks · p. 318–352"
+
+
+async def test_digest_is_a_count_then_one_message_per_suggestion(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    items = [SourceSuggestion(id=i, topic="Deadlocks", label=f"Book {i}") for i in (4, 9)]
+    monkeypatch.setattr(sources, "sources_to_confirm", AsyncMock(return_value=(12, items)))
+    sent: list[dict] = []
+
+    async def fake_enqueue(session, chat_id, text, **kw):
+        sent.append({"chat_id": chat_id, "text": text, **kw})
+        return len(sent)
+
+    monkeypatch.setattr(sources, "enqueue_message", fake_enqueue)
+
+    assert await sources.enqueue_sources_digest(MagicMock(), 77) == 2
+
+    assert [m["text"] for m in sent] == [
+        "Sources to confirm: 12",
+        "Deadlocks ← Book 4",
+        "Deadlocks ← Book 9",
+    ]
+    assert all(m["chat_id"] == 77 for m in sent)
+    keep, no = sent[1]["buttons"][0]
+    assert (keep.text, keep.data) == ("Keep", "srcok:4")
+    assert (no.text, no.data) == ("Not this", "srcno:4")
+    assert sent[1]["ref_id"] == 4
+
+
+async def test_digest_sends_nothing_when_nothing_waits(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sources, "sources_to_confirm", AsyncMock(return_value=(0, [])))
+    enqueue = AsyncMock()
+    monkeypatch.setattr(sources, "enqueue_message", enqueue)
+    assert await sources.enqueue_sources_digest(MagicMock(), 77) == 0
+    enqueue.assert_not_called()
 
 
 @pytest.mark.db

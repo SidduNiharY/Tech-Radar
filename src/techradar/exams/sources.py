@@ -21,6 +21,7 @@ from techradar.db.models import (
 )
 from techradar.llm.client import Completer, Embedder, complete_json
 from techradar.llm.roles import Role
+from techradar.messaging.outbox import Button, enqueue_message
 from techradar.security.text import sanitize_text
 from techradar.security.untrusted import wrap_untrusted
 
@@ -360,6 +361,34 @@ async def sources_to_confirm(
 def render_source_suggestion(s: SourceSuggestion) -> str:
     """`<topic> ← <label>`: one weekly-digest message."""
     return f"{s.topic} ← {s.label}"
+
+
+async def enqueue_sources_digest(session: AsyncSession, chat_id: int, limit: int = 10) -> int:
+    """Queue the weekly digest: `Sources to confirm: <n>`, then one message per suggestion
+    with `Keep` (`srcok:<id>`) and `Not this` (`srcno:<id>`) buttons. At most `limit`.
+
+    Sends nothing when no suggestion waits. Returns the number of suggestion messages.
+    """
+    total, items = await sources_to_confirm(session, limit)
+    if not items:
+        return 0
+    await enqueue_message(session, chat_id, f"Sources to confirm: {total}", purpose="sources")
+    for item in items:
+        buttons = [
+            [
+                Button(text="Keep", data=f"srcok:{item.id}"),
+                Button(text="Not this", data=f"srcno:{item.id}"),
+            ]
+        ]
+        await enqueue_message(
+            session,
+            chat_id,
+            render_source_suggestion(item),
+            purpose="sources",
+            buttons=buttons,
+            ref_id=item.id,
+        )
+    return len(items)
 
 
 async def run_sources_digest(session: AsyncSession, limit: int = 10) -> str:
