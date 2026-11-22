@@ -20,7 +20,7 @@ from techradar.parser.main import build_gate, serve_once
 from techradar.schemas.pipeline import CleanDoc, ParseJob, ParseResult
 
 LIMITS = yaml.safe_load(Path("infra/intake/limits.yaml").read_text())
-TODAY = date(2026, 11, 13)
+TODAY = date.today()  # the gateway refuses AV databases older than a few days
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not installed")
 
