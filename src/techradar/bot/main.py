@@ -20,7 +20,7 @@ from telegram.ext import (
 
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
-from techradar.bot.practice_commands import COMMAND_JOBS, handle_practice_command
+from techradar.bot.practice_commands import COMMAND_JOBS, handle_inbox, handle_practice_command
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.reply_target import find_reply_target
 from techradar.bot.routing import route_update
@@ -121,6 +121,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else None
         )
         await update.message.reply_text(text, reply_markup=markup)
+        return
+
+    if routed.action == "inbox":  # --- Phase 3: the review inbox (owner's chat only) ---
+        await handle_inbox(update, context.application.bot_data)
         return
 
     if routed.action in COMMAND_JOBS:  # --- Phase 3: /quiz and /cards queue a job by name ---

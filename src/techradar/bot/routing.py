@@ -81,14 +81,10 @@ def route_update(
     if cmd == "/ask":
         arg = cleaned[len(words[0]) :].strip()
         return Routed("ask", arg)
-    if cmd == "/quiz":
-        return Routed("quiz")
-    if cmd == "/cards":
-        return Routed("cards")
-    if cmd == "/grammar":
-        return Routed("grammar")
-    if cmd == "/inbox":
-        return Routed("inbox")
+    if cmd in ("/quiz", "/cards", "/grammar", "/inbox"):
+        # Their messages go to the owner's chat, and the review inbox shows the owner's own
+        # items: never from a study group.
+        return Routed(cmd[1:]) if chat_id == owner_id else Routed("ignore")  # type: ignore[arg-type]
     if cmd == "/plan":
         return Routed("plan")
     if cmd == "/quarantine":

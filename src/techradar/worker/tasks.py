@@ -14,6 +14,7 @@ from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
 from techradar.alerts.watcher import ChangeEvent, run_exam_poll
+from techradar.briefing.capsule import month_start, run_capsule
 from techradar.briefing.compose import run_briefing
 from techradar.briefing.takes import save_take
 from techradar.db.engine import make_session_factory
@@ -670,5 +671,22 @@ async def exam_poll_job() -> None:
     async with make_session_factory("app", settings)() as session:
         await run_exam_poll(
             session, now=now, events=events, owner_chat_id=settings.telegram_owner_chat_id
+        )
+        await session.commit()
+
+
+@app.periodic(cron="30 1 1 * *")  # 07:00 Asia/Kolkata on the 1st
+@app.task(queue="io", queueing_lock="capsule_queued", name="capsule_job")
+async def capsule_job() -> None:
+    """Write last month's capsule into the vault and tell the owner."""
+    settings = _get_settings()
+    now = _local_now()
+    async with make_session_factory("app", settings)() as session:
+        await run_capsule(
+            session,
+            settings.data_dir / "vault",
+            month_start(now.date()),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            now=now,
         )
         await session.commit()

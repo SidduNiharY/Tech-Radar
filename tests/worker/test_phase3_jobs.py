@@ -162,3 +162,17 @@ async def test_exam_poll_job_alerts_only_when_events_arrive(monkeypatch: pytest.
     assert run.await_args.kwargs["events"] == [event]
     assert run.await_args.kwargs["owner_chat_id"] == 42
     session.commit.assert_awaited_once()
+
+
+async def test_capsule_job_writes_last_months_capsule(monkeypatch: pytest.MonkeyPatch):
+    from datetime import date
+
+    session = _patch(monkeypatch)
+    run = AsyncMock()
+    monkeypatch.setattr(tasks, "run_capsule", run)
+    monkeypatch.setattr(tasks, "month_start", lambda _d: date(2026, 11, 1))
+    await tasks.capsule_job()
+    assert run.await_args.args[2] == date(2026, 11, 1)
+    assert run.await_args.kwargs["owner_chat_id"] == 42
+    assert tasks.capsule_job.queueing_lock
+    session.commit.assert_awaited_once()

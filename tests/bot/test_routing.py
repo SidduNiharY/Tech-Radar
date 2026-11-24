@@ -80,3 +80,10 @@ def test_route_quarantine_owner_only() -> None:
     assert route_update(7, "/quarantine", 42) == Routed("ignore")
     # An approved study group may use other commands, never the quarantine.
     assert route_update(-100, "/quarantine", 42, group_ids=frozenset({-100})) == Routed("ignore")
+
+
+def test_practice_commands_are_the_owners_alone() -> None:
+    group = frozenset({-100})
+    for cmd in ("/quiz", "/cards", "/grammar", "/inbox"):
+        assert route_update(42, cmd, 42).action == cmd[1:]
+        assert route_update(-100, cmd, 42, group_ids=group) == Routed("ignore")

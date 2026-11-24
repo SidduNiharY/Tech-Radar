@@ -177,3 +177,54 @@ async def test_gram_button_answers_in_chat(monkeypatch: pytest.MonkeyPatch):
     update, query, context, session = _query("gram:9:7")
     await handle_callback_query(update, context)
     query.answer.assert_awaited_once_with("Invalid request.")
+
+
+@pytest.mark.parametrize(("data", "keep"), [("keep:8", True), ("drop:8", False)])
+async def test_keep_and_drop_decide_then_show_the_next_item(data, keep, monkeypatch):
+    update, query, context, session = _query(data)
+    decide = AsyncMock(return_value=True)
+    monkeypatch.setattr(pc, "decide", decide)
+    nxt = AsyncMock()
+    monkeypatch.setattr(pc, "send_next_review", nxt)
+    await handle_callback_query(update, context)
+    assert decide.await_args.args[1:] == (8, keep)
+    session.commit.assert_awaited_once()
+    nxt.assert_awaited_once()
+
+
+async def test_second_tap_on_a_review_button_does_nothing_more(monkeypatch):
+    update, query, context, session = _query("keep:8")
+    monkeypatch.setattr(pc, "decide", AsyncMock(return_value=False))
+    nxt = AsyncMock()
+    monkeypatch.setattr(pc, "send_next_review", nxt)
+    await handle_callback_query(update, context)
+    query.answer.assert_awaited_once_with("Already decided.")
+    nxt.assert_not_awaited()
+
+
+async def test_review_buttons_ignore_a_stranger(monkeypatch):
+    update, query, context, session = _query("keep:8", from_id=999)
+    decide = AsyncMock()
+    monkeypatch.setattr(pc, "decide", decide)
+    await handle_callback_query(update, context)
+    decide.assert_not_awaited()
+
+
+async def test_inbox_shows_the_next_item_without_link_previews(monkeypatch):
+    from techradar.bot.practice_commands import handle_inbox
+    from techradar.pipeline.review import ReviewItem
+
+    update, query, context, session = _query("keep:1")
+    update.message.reply_text = AsyncMock()
+    monkeypatch.setattr(
+        pc,
+        "next_review_item",
+        AsyncMock(return_value=ReviewItem(id=4, title="T", domain="d.example")),
+    )
+    await handle_inbox(update, context.application.bot_data)
+    kwargs = update.message.reply_text.await_args.kwargs
+    assert kwargs["link_preview_options"].is_disabled is True
+    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "keep:4"
+    monkeypatch.setattr(pc, "next_review_item", AsyncMock(return_value=None))
+    await handle_inbox(update, context.application.bot_data)
+    assert update.message.reply_text.await_args.args == ("Nothing to review.",)

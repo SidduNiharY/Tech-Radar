@@ -17,10 +17,11 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 from techradar.db.models import MCQ, LibraryChapter, LibraryDoc
 from techradar.messaging.outbox import Button
+from techradar.pipeline.review import decide, next_review_item, render_review
 from techradar.practice.chapter_cards import render_chapter_list
 from techradar.practice.flashcards import rate_card, reveal_card, source_text
 from techradar.practice.grammar import answer_grammar
@@ -29,7 +30,7 @@ from techradar.worker.names import MAKE_CHAPTER_CARDS
 
 logger = logging.getLogger(__name__)
 
-PRACTICE_ACTIONS = frozenset({"ans", "rate", "card_show", "src", "read", "gram"})
+PRACTICE_ACTIONS = frozenset({"ans", "rate", "card_show", "src", "read", "gram", "keep", "drop"})
 
 
 def markup(buttons: list[list[Button]]) -> InlineKeyboardMarkup:
@@ -70,6 +71,8 @@ async def handle_practice_callback(
         await _answer(query, message, session_factory, args[0], args[1], now)
     elif action == "rate":
         await _rate(query, session_factory, args[0], args[1], now)
+    elif action in ("keep", "drop"):
+        await _review(query, message, session_factory, args[0], keep=action == "keep")
     elif action == "gram":
         await _grammar(query, message, session_factory, args[0], args[1], now)
     elif action == "read":
@@ -171,3 +174,31 @@ async def _grammar(
         return
     await message.reply_text(feedback)
     await query.answer()
+
+
+async def send_next_review(message: Any, session_factory: Any) -> None:
+    """Show the oldest item waiting for the owner (no link previews: its title is from a page)."""
+    async with session_factory() as session:
+        item = await next_review_item(session)
+    if item is None:
+        await message.reply_text("Nothing to review.")
+        return
+    text, buttons = render_review(item)
+    await message.reply_text(
+        text,
+        reply_markup=markup(buttons),
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+
+
+async def _review(
+    query: Any, message: Any, session_factory: Any, item_id: int, *, keep: bool
+) -> None:
+    async with session_factory() as session:
+        changed = await decide(session, item_id, keep)
+        await session.commit()
+    if not changed:
+        await query.answer("Already decided.")
+        return
+    await query.answer("Kept." if keep else "Discarded.")
+    await send_next_review(message, session_factory)

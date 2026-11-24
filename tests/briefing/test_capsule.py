@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
-from techradar.briefing.capsule import compose_capsule
+from techradar.briefing.capsule import compose_capsule, month_start, run_capsule
 
 
 def test_capsule_includes_only_verified_facts_of_month():
@@ -71,3 +71,50 @@ def test_capsule_groups_by_section_order():
     assert econ_pos != -1
     # Tech comes before Economy in SECTION_ORDER
     assert tech_pos < econ_pos
+
+
+def test_fact_with_no_date_is_not_in_any_capsule():
+    f = SimpleNamespace(statement="Undated.", section="tech", status="verified", as_of=None)
+    assert "Undated" not in compose_capsule(date(2026, 11, 1), [f])
+
+
+def test_capsule_escapes_markdown_in_facts():
+    f = SimpleNamespace(
+        statement="GDP [grew](x) 7%", section="economy", status="verified", as_of=date(2026, 11, 2)
+    )
+    assert "[grew](x)" not in compose_capsule(date(2026, 11, 1), [f])
+
+
+def test_month_start_is_the_previous_month():
+    assert month_start(date(2026, 12, 1)) == date(2026, 11, 1)
+    assert month_start(date(2027, 1, 1)) == date(2026, 12, 1)
+
+
+async def test_run_capsule_writes_the_note_and_tells_the_owner(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from techradar.briefing import capsule
+
+    fact = SimpleNamespace(
+        statement="Repo rate 5.25%.", section="economy", status="verified", as_of=date(2026, 11, 3)
+    )
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [fact]
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    send = AsyncMock()
+    monkeypatch.setattr(capsule, "enqueue_message", send)
+    await run_capsule(
+        session,
+        tmp_path,
+        date(2026, 11, 1),
+        owner_chat_id=42,
+        now=datetime(2026, 12, 1, tzinfo=UTC),
+    )
+    assert "Repo rate 5.25%." in (tmp_path / "capsules/2026-11.md").read_text(encoding="utf-8")
+    assert send.await_args.kwargs["chat_id"] == 42
+    assert (
+        send.await_args.kwargs["text"]
+        == "Your November capsule is in the vault: capsules/2026-11.md"
+    )
