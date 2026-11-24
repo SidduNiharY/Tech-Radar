@@ -87,4 +87,4 @@ CMD ["python", "-m", "techradar.parser.main"]
 FROM runtime AS worker
 COPY --from=worker-build /app /app
 ENV HF_HUB_OFFLINE=1
-CMD ["procrastinate", "--app=techradar.worker.app.app", "worker", "--queues=llm,io", "--concurrency=1"]
+CMD ["procrastinate", "--app=techradar.worker.app.app", "worker", "--queues=llm,io,night", "--concurrency=1"]

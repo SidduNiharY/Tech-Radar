@@ -7,14 +7,13 @@ from techradar.night.window import (
     night_only,
 )
 
-NIGHT_JOB_NAMES: list[str] = [
-    "summarize_chapters_job",
-]
-
 
 def night_jobs() -> list[str]:
-    """Return names of Procrastinate tasks designated to run in the night window."""
-    return list(NIGHT_JOB_NAMES)
+    """Names of the jobs registered on the `night` queue (they must all be `night_only`)."""
+    from techradar.worker.names import NIGHT_QUEUE
+    from techradar.worker.tasks import app
+
+    return sorted(name for name, task in app.tasks.items() if task.queue == NIGHT_QUEUE)
 
 
 __all__ = [

@@ -2,24 +2,58 @@ from __future__ import annotations
 
 from datetime import date
 
-from techradar.night.timelines import timeline_entries
+from techradar.night.timelines import (
+    ClusterRow,
+    render_timeline,
+    timeline_entities,
+    timeline_entries,
+    timeline_rel_path,
+)
 
 
-class FakeCluster:
-    def __init__(self, date_val: date, title: str, entities: list[str], note_path: str) -> None:
-        self.date = date_val
-        self.title = title
-        self.entities = entities
-        self.note_path = note_path
+def row(n: int, d: date, entities: list[str], title: str = "Story") -> ClusterRow:
+    return ClusterRow(
+        cluster_id=n,
+        date=d,
+        title=f"{title} {n}",
+        note_path=f"wiki/news/2026/11/s{n}.md",
+        entities=entities,
+    )
+
+
+CLUSTERS = [
+    row(1, date(2026, 11, 5), ["RBI"]),
+    row(2, date(2026, 11, 1), ["rbi", "SEBI"]),
+    row(3, date(2026, 11, 3), ["Rbi"]),
+    row(4, date(2026, 11, 2), ["SEBI"]),
+]
 
 
 def test_timeline_sorted_by_date() -> None:
-    c1 = FakeCluster(date(2026, 11, 5), "RBI MPC Meeting", ["RBI", "Govt"], "notes/rbi1.md")
-    c2 = FakeCluster(date(2026, 10, 1), "RBI Repo Hike", ["rbi"], "notes/rbi0.md")
-    c3 = FakeCluster(date(2026, 11, 2), "Tech Stocks Fall", ["NASDAQ"], "notes/tech.md")
+    entries = timeline_entries(CLUSTERS, "RBI")
+    assert [e.date for e in entries] == [date(2026, 11, 1), date(2026, 11, 3), date(2026, 11, 5)]
+    assert timeline_entries(CLUSTERS, "nobody") == []
 
-    entries = timeline_entries([c1, c2, c3], "RBI")
-    assert len(entries) == 2
-    assert entries[0].date == date(2026, 10, 1)
-    assert entries[1].date == date(2026, 11, 5)
-    assert entries[0].title == "RBI Repo Hike"
+
+def test_entities_need_enough_stories() -> None:
+    assert timeline_entities(CLUSTERS) == ["RBI"]
+    assert timeline_entities(CLUSTERS, min_stories=2) == ["RBI", "SEBI"]
+
+
+def test_render_links_notes_and_cleans_titles() -> None:
+    entries = timeline_entries([row(1, date(2026, 11, 5), ["RBI"], title="Evil]] [[x|y")], "RBI")
+    text = render_timeline("RBI", entries)
+    assert "- **2026-11-05**: [[wiki/news/2026/11/s1|Evil x y 1]]" in text
+    assert text.count("[[") == 1 and "generated: true" in text
+
+
+def test_bad_note_path_is_shown_unlinked() -> None:
+    bad = ClusterRow(
+        cluster_id=1, date=date(2026, 11, 5), title="T", note_path="../../etc/x", entities=["A"]
+    )
+    assert "[[" not in render_timeline("A", timeline_entries([bad], "A"))
+
+
+def test_hindi_entity_has_a_distinct_page() -> None:
+    assert timeline_rel_path("भारतीय रिज़र्व बैंक").startswith("timelines/note-")
+    assert "# Timeline: भारतीय रिज़र्व बैंक" in render_timeline("भारतीय रिज़र्व बैंक", [])

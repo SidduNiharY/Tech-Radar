@@ -31,6 +31,10 @@ from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import enqueue_message
+from techradar.night.chains import run_chains
+from techradar.night.deep_dive import run_deep_dive
+from techradar.night.glossary import run_glossary
+from techradar.night.timelines import run_timelines
 from techradar.night.window import in_night_window, next_window_start, night_only
 from techradar.ops.alerts import alert_on_failure
 from techradar.ops.health import read_backup_status, run_health_checks
@@ -65,9 +69,13 @@ from techradar.worker.names import (
     GRAMMAR_SET,
     MAKE_CHAPTER_CARDS,
     MISTAKES_PAGE,
+    NIGHT_QUEUE,
+    PREDICTIONS_SYNC,
     QUIZ,
     SAVE_TAKE,
 )
+from techradar.world.econ import collect_official, load_official_domains
+from techradar.world.predictions import run_prediction_reminder, sync_predictions_vault
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +273,7 @@ async def _defer_ask_night(question: str, doc_id: int | None) -> None:
     await ask_night.configure(**options).defer_async(question=question, doc_id=doc_id)
 
 
-@app.task(queue="llm", lock="ask", name="ask_night")
+@app.task(queue=NIGHT_QUEUE, lock="ask", name="ask_night")
 @night_only(task_name="ask_night")
 async def ask_night(question: str, doc_id: int | None = None) -> None:
     """Answer a deferred hard question with the night model and send it to the owner chat."""
@@ -477,7 +485,7 @@ async def _defer_summaries(when: datetime, kwargs: dict[str, Any]) -> None:
     await _queue_summaries(int(kwargs["doc_id"]), when=when)
 
 
-@app.task(queue="llm", name="summarize_chapters_job")
+@app.task(queue=NIGHT_QUEUE, name="summarize_chapters_job")
 @night_only(task_name="summarize_chapters_job", defer=_defer_summaries)
 async def summarize_chapters_job(doc_id: int) -> None:
     """Summarise a doc's chapters into the vault, then make it ready (night window only)."""
@@ -623,7 +631,9 @@ def _exam_models() -> tuple[LiteLLMCompleter, LiteLLMEmbedder]:
 # Nightly at 20:00 UTC = 01:30 in Asia/Kolkata, inside the night window (01:00-05:00); outside
 # it `night_only` queues the job for the next window start instead of running it.
 @app.periodic(cron="0 20 * * *")
-@app.task(queue="llm", queueing_lock="suggest_sources_queued", name="suggest_topic_sources_job")
+@app.task(
+    queue=NIGHT_QUEUE, queueing_lock="suggest_sources_queued", name="suggest_topic_sources_job"
+)
 @night_only(task_name="suggest_topic_sources_job")
 async def suggest_topic_sources_job(timestamp: int | None = None) -> None:
     """Nightly: pick syllabus topics for unlinked library chapters (Task 2b).
@@ -661,7 +671,7 @@ async def sources_digest_job(timestamp: int | None = None) -> None:
 
 # Nightly at 20:30 UTC = 02:00 in Asia/Kolkata, inside the night window.
 @app.periodic(cron="30 20 * * *")
-@app.task(queue="llm", queueing_lock="formula_sheets_queued", name="formula_sheets_job")
+@app.task(queue=NIGHT_QUEUE, queueing_lock="formula_sheets_queued", name="formula_sheets_job")
 @night_only(task_name="formula_sheets_job")
 async def formula_sheets_job(timestamp: int | None = None) -> None:
     """Night: in the final 30 days of an exam, write a cited formula sheet per syllabus
@@ -894,3 +904,124 @@ async def fact_changes_job(timestamp: int | None = None) -> None:
             now=_local_now(),
         )
         await session.commit()
+
+
+# --- Phase 7: understanding and world -----------------------------------------------
+# Night jobs sit on the `night` queue and are `night_only`: outside 01:00 to 05:00 they put
+# themselves back for the next window. Periodic jobs take the `timestamp` procrastinate passes.
+
+
+@app.periodic(cron="30 21 * * 6")  # 21:30 UTC Saturday = 03:00 IST Sunday, inside the window
+@app.task(queue=NIGHT_QUEUE, name="deep_dive_job")
+@night_only(task_name="deep_dive_job")
+async def deep_dive_job(timestamp: int | None = None) -> None:
+    """Write this week's grounded deep dive (once per ISO week) and tell the owner."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_deep_dive(
+            session,
+            now=datetime.now(UTC),
+            deps=get_rag_deps(),
+            vault_root=settings.data_dir / "vault",
+            owner_chat_id=settings.telegram_owner_chat_id,
+        )
+        await session.commit()
+    logger.info("deep dive: %s", result.model_dump())
+
+
+@app.periodic(cron="0 20 * * *")  # 01:30 IST
+@app.task(queue=NIGHT_QUEUE, name="glossary_job")
+@night_only(task_name="glossary_job")
+async def glossary_job(timestamp: int | None = None) -> None:
+    """Write up to five missing glossary entries from the terms the news keeps naming."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_glossary(
+            session,
+            now=datetime.now(UTC),
+            deps=get_rag_deps(),
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+    logger.info("glossary: %s", result.model_dump())
+
+
+@app.periodic(cron="30 20 * * *")  # 02:00 IST
+@app.task(queue=NIGHT_QUEUE, name="timelines_job")
+@night_only(task_name="timelines_job")
+async def timelines_job(timestamp: int | None = None) -> None:
+    """Regenerate the story timeline of every entity with enough stories (code only)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_timelines(
+            session, tz=settings.tz, vault_root=settings.data_dir / "vault"
+        )
+        await session.commit()
+    logger.info("timelines: %s", result.model_dump())
+
+
+@app.periodic(cron="0 21 * * *")  # 02:30 IST
+@app.task(queue=NIGHT_QUEUE, name="chains_job")
+@night_only(task_name="chains_job")
+async def chains_job(timestamp: int | None = None) -> None:
+    """Add a cause-and-effect diagram to each recent deep dive that has none."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_chains(
+            session,
+            now=datetime.now(UTC),
+            deps=get_rag_deps(),
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+    logger.info("chains: %s", result.model_dump())
+
+
+@app.periodic(cron="30 2 * * *")  # 02:30 UTC = 08:00 IST
+@app.task(queue="io", name="prediction_reminder_job")
+async def prediction_reminder_job(timestamp: int | None = None) -> None:
+    """Ask the owner about each prediction that has come due (once each), then refresh the page."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        sent = await run_prediction_reminder(
+            session,
+            now=datetime.now(UTC),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            tz=settings.tz,
+        )
+        await session.commit()
+    logger.info("prediction reminders sent: %d", sent)
+    try:
+        await predictions_sync_job.defer_async()
+    except procrastinate_exceptions.AlreadyEnqueued:
+        pass  # a refresh is already waiting
+
+
+@app.task(queue="io", name=PREDICTIONS_SYNC, queueing_lock=PREDICTIONS_SYNC)
+async def predictions_sync_job() -> None:
+    """Regenerate context/predictions.md from the database (the bot has no vault)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        await sync_predictions_vault(session, settings.data_dir / "vault", settings.tz)
+
+
+@app.periodic(cron="0 3 * * *")  # daily, 08:30 IST
+@app.task(queue="io", name="econ_collect_job")
+async def econ_collect_job(timestamp: int | None = None) -> None:
+    """Store the numbers of verified official facts (repo rate, CPI, GDP) in the economy series.
+
+    Reads facts the pipeline already stored; it fetches nothing.
+    """
+    settings = _get_settings()
+    official = load_official_domains(Path("infra/sources/official_domains.txt"))
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        stored = await collect_official(session, official)
+        await session.commit()
+    logger.info("economy series updated from official facts: %d", stored)

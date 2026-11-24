@@ -21,7 +21,9 @@
 
 {{ how_it_affects_me }}
 
-## Facts
+{% if opinions %}{{ opinions }}
+
+{% endif %}## Facts
 {% if is_flagged %}
 ⚠️ Flagged by the Intake Gateway: read with care.
 {% endif %}

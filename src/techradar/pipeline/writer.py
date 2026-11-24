@@ -12,6 +12,7 @@ import jinja2
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from techradar.pipeline.politics import PoliticsView, render_opinion_sections
 from techradar.schemas.pipeline import ExamTag, FourQuestions, Section
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "vault" / "templates"
@@ -53,6 +54,7 @@ class StoryNote(BaseModel):
     sources: list[StorySource]
     verified_headline: bool
     is_flagged: bool = False
+    politics: PoliticsView | None = None
 
 
 _ESCAPE_REPLACEMENTS = [
@@ -143,6 +145,7 @@ def render_story(note: StoryNote) -> str:
         facts=escaped_facts,
         sources=note.sources,
         is_flagged=note.is_flagged,
+        opinions=render_opinion_sections(note.politics, md_escape) if note.politics else "",
     )
 
 

@@ -23,6 +23,10 @@ Action = Literal[
     "take",
     "quarantine",
     "packs",
+    # --- Phase 7 ---
+    "predict",
+    "prediction_reply",
+    "econ",
     "ignore",
     # --- Phase 5 ---
     "study",
@@ -49,6 +53,7 @@ def route_update(
     ready_message_ids: Set[int] = frozenset(),
     reply_to_purpose: str | None = None,
     reply_to_ref: int | None = None,
+    prediction_message_ids: Set[int] = frozenset(),
 ) -> Routed:
     """Route an incoming Telegram message.
 
@@ -67,6 +72,10 @@ def route_update(
         Routed("take", text) for a plain reply from the owner's own chat to a sent briefing
             message: the caller looked up the target outbox row and passes its `purpose` and
             `ref_id` (the briefing id) as `reply_to_purpose` and `reply_to_ref`
+        Routed("econ", arg) for /econ from the owner's own chat only (Phase 7)
+        Routed("predict", arg) for /predict from the owner's own chat only (Phase 7)
+        Routed("prediction_reply", text) for a plain-text reply from the owner's own chat to
+            one of `prediction_message_ids` (the caller looked the reminders up)
         Routed("ignore") for unauthorized chats or unknown/empty messages
     """
     if not is_allowed(chat_id, owner_id, group_ids):
@@ -76,6 +85,15 @@ def route_update(
         return Routed("ignore")
 
     cleaned = text.strip()
+
+    # --- Phase 7: predictions log (the owner's own chat only, never a study group) ---
+    if (
+        chat_id == owner_id
+        and reply_to_message_id is not None
+        and reply_to_message_id in prediction_message_ids
+        and not cleaned.startswith("/")
+    ):
+        return Routed("prediction_reply", cleaned)
 
     words = cleaned.split()
     cmd = words[0].split("@")[0].lower()
@@ -98,6 +116,14 @@ def route_update(
         # Timed drills are the owner's own practice, not a study group's.
         return Routed("drill") if chat_id == owner_id else Routed("ignore")
     # --- end Phase 8 ---
+    if cmd == "/econ":  # --- Phase 7: the owner keeps the numbers ---
+        if chat_id != owner_id:
+            return Routed("ignore")
+        return Routed("econ", cleaned[len(words[0]) :].strip())
+    if cmd == "/predict":  # --- Phase 7 ---
+        if chat_id != owner_id:
+            return Routed("ignore")
+        return Routed("predict", cleaned[len(words[0]) :].strip())
     if cmd == "/quarantine":
         # Releasing held files is the owner's alone, never a study group's (SEC-14).
         return Routed("quarantine") if chat_id == owner_id else Routed("ignore")

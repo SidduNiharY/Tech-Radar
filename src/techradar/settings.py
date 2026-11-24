@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     rag_min_score: float = 0.30
     rag_k_candidates: int = 30
     rag_k_final: int = 6
+    deep_dive_k: int = 10  # excerpts for the weekly deep dive (Phase 7)
     max_question_chars: int = 500
     reranker_path: Path = Path("/opt/models/reranker")
     reranker_device: Literal["cpu", "cuda"] = "cpu"

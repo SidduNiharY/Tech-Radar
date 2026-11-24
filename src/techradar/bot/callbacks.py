@@ -22,6 +22,7 @@ from techradar.bot.practice_callbacks import (
     handle_practice_callback,
     markup,
 )
+from techradar.bot.predict import handle_outcome_button
 from techradar.db.models import TopicSource
 from techradar.exams.sources import decide_source
 from techradar.library.quarantine import (
@@ -98,6 +99,18 @@ async def handle_callback_query(
             await query.answer("Invalid request.")
         return
     # --- end Phase 8 ---
+
+    # --- Phase 7: prediction outcome buttons, `pred:<id>:<1-3>` ---
+    if action == "pred":
+        if len(args) == 2 and valid_id(args[0]):
+            message = query.message
+            if message is None or message.chat.id != owner_id:
+                await query.answer("Not available.")
+            else:
+                await handle_outcome_button(query, context.application.bot_data, args[0], args[1])
+        else:
+            await query.answer("Invalid request.")
+        return
 
     if action == "save_answer" and len(args) == 1:
         procrastinate_app = context.application.bot_data.get("procrastinate_app")

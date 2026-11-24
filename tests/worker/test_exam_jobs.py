@@ -39,7 +39,7 @@ def test_syllabus_sync_job_declaration():
 def test_suggest_topic_sources_job_declaration():
     job = tasks.suggest_topic_sources_job
     assert job.name == "suggest_topic_sources_job"
-    assert job.queue == "llm"  # it needs the models on ollama
+    assert job.queue == "night"  # night-only jobs live on the night queue (Phase 7 Task 1)
     assert job.queueing_lock
     assert app.tasks["suggest_topic_sources_job"] is job
     assert ("suggest_topic_sources_job", "") in app.periodic_registry.periodic_tasks  # nightly
@@ -99,7 +99,7 @@ async def test_sources_digest_job_goes_to_the_owner_only(
 def test_formula_sheets_job_declaration():
     job = tasks.formula_sheets_job
     assert job.name == "formula_sheets_job"
-    assert job.queue == "llm"  # it asks the model through the RAG answer
+    assert job.queue == "night"  # night-only, like every night_only job
     assert job.queueing_lock
     assert ("formula_sheets_job", "") in app.periodic_registry.periodic_tasks
     assert 'task_name="formula_sheets_job"' in inspect.getsource(tasks)
