@@ -128,5 +128,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # IF EXISTS: `job_alerts` was added to this unreleased migration in place (2026-11-24), so a
+    # database upgraded before that has every other table but not this one.
     for table in reversed(NEW_TABLES):
-        op.drop_table(table, schema=SCHEMA)
+        op.execute(f'DROP TABLE IF EXISTS {SCHEMA}."{table}"')
