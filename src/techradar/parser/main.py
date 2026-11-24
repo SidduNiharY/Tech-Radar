@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 from techradar.intake.av import AvScanner, ClamdScanner, IntakeWait
-from techradar.intake.gateway import gate_job
+from techradar.intake.gateway import FileCheckCache, gate_job
 from techradar.intake.guard import TransformersGuard, run_guard_with_limits
 from techradar.intake.rules import load_rules
 from techradar.parser.limits import address_space_for, run_with_limits
@@ -68,7 +68,11 @@ def build_gate(
 
     `owner_released` (the owner's two-step release of a held file) comes only from the
     validated ParseJob (extra fields are forbidden), never from file content or env.
+
+    One FileCheckCache serves every job: the segment jobs of a video reuse its type,
+    ffprobe, AV and YARA checks instead of repeating them per segment.
     """
+    file_checks = FileCheckCache()
 
     def gate(job: ParseJob) -> ParseResult:
         library = job.purpose == "library" and library_dir is not None
@@ -108,6 +112,7 @@ def build_gate(
             ),
             guard_score=guard_score,
             owner_released=getattr(job, "owner_released", False) is True,
+            file_checks=file_checks,
         )
 
     return gate

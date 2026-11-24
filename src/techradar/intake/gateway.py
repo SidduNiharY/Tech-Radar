@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import stat
+import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from techradar.intake.av import AvScanner, check_av
+from techradar.intake.av import AvResult, AvScanner, check_av
 from techradar.intake.filetype import check_size, check_source, check_type, detect_file_mime
 from techradar.intake.links import check_links, extract_links
 from techradar.intake.media import media_steps
@@ -44,14 +48,146 @@ def release_steps(steps: Sequence[IntakeStep]) -> list[IntakeStep]:
     ]
 
 
+# Raw and library files are named after their content: `<sha256>.<ext>`.
+_CONTENT_NAME = re.compile(r"[0-9a-f]{64}\.[a-z0-9]{1,5}")
+_DIR_NOFOLLOW = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _held_copy(raw_path: Path, quarantine_dir: Path, job_id: str) -> Path | None:
+    """An earlier held copy of the same file (`quarantine/<other job>/<same name>`).
+
+    Only content-addressed names qualify (the name is the bytes' sha256), and only a
+    regular, read-only file of the same size inside a real folder: links are never used.
+    """
+    name = raw_path.name
+    if _CONTENT_NAME.fullmatch(name) is None:
+        return None
+    try:
+        size = os.stat(raw_path).st_size
+        root = os.open(quarantine_dir, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return None
+    try:
+        for entry in sorted(os.scandir(root), key=lambda e: e.name):
+            if entry.name == job_id or not entry.is_dir(follow_symlinks=False):
+                continue
+            try:
+                fd = os.open(entry.name, _DIR_NOFOLLOW, dir_fd=root)
+            except OSError:
+                continue
+            try:
+                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            except OSError:
+                continue
+            finally:
+                os.close(fd)
+            if stat.S_ISREG(st.st_mode) and st.st_size == size and st.st_mode & 0o777 == 0o400:
+                return quarantine_dir / entry.name / name
+    finally:
+        os.close(root)
+    return None
+
+
 def quarantine_file(raw_path: Path, quarantine_dir: Path, job_id: str) -> Path:
-    """Safely isolate a quarantined raw file with read-only permissions (0o400)."""
+    """Safely isolate a quarantined raw file with read-only permissions (0o400).
+
+    Held once per file: when another job of the same file (a video's segments) is already
+    held, its copy is hard-linked here instead of copying the whole file again. A new copy
+    gets the time it was held as its mtime (retention ages held copies from it).
+    """
     target_dir = quarantine_dir / job_id
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / raw_path.name
-    shutil.copy2(raw_path, target_path)
+    held = _held_copy(raw_path, quarantine_dir, job_id)
+    if held is not None:
+        try:
+            os.link(held, target_path, follow_symlinks=False)
+            return target_path
+        except FileExistsError:
+            return target_path
+        except OSError:
+            pass  # gone meanwhile (deleted or expired): copy it after all
+    shutil.copyfile(raw_path, target_path)
     os.chmod(target_path, 0o400)
     return target_path
+
+
+@dataclass(frozen=True)
+class _FileChecks:
+    at: float
+    steps: tuple[IntakeStep, ...]  # type and structure
+    av: AvResult
+    rules: IntakeStep
+
+
+class FileCheckCache:
+    """The file-level checks of a media original, done once per file (SEC-15).
+
+    A video becomes one probe job and many segment jobs over the same read-only original.
+    Type, structure (ffprobe), the AV scan and YARA depend only on the file's bytes, so
+    the first job runs them and later jobs of the same file reuse them while the file is
+    unchanged (same device, inode, size, mtime and ctime, read without following a link)
+    and the entry is younger than `max_age_s`. Source and size still run per job and the
+    AV result is judged again each time (its database age). An AV error is never kept.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_age_s: float = 4 * 3600,
+        max_entries: int = 4,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.max_age_s = max_age_s
+        self.max_entries = max_entries
+        self._clock = clock
+        self._entries: dict[tuple[object, ...], _FileChecks] = {}
+
+    @staticmethod
+    def key(job: ParseJob, raw_path: Path, max_media_s: int) -> tuple[object, ...] | None:
+        try:
+            st = os.stat(raw_path, follow_symlinks=False)
+        except OSError:
+            return None
+        if not stat.S_ISREG(st.st_mode):
+            return None  # a link (or anything else) is checked every time
+        return (
+            str(raw_path),
+            job.kind,
+            job.origin,
+            max_media_s,
+            st.st_dev,
+            st.st_ino,
+            st.st_size,
+            st.st_mtime_ns,
+            st.st_ctime_ns,
+        )
+
+    def get(self, key: tuple[object, ...] | None) -> _FileChecks | None:
+        if key is None:
+            return None
+        hit = self._entries.get(key)
+        if hit is None:
+            return None
+        if self._clock() - hit.at > self.max_age_s:
+            del self._entries[key]
+            return None
+        return hit
+
+    def put(
+        self,
+        key: tuple[object, ...] | None,
+        steps: Sequence[IntakeStep],
+        av: AvResult,
+        rules: IntakeStep,
+    ) -> None:
+        if key is None:
+            return
+        now = self._clock()
+        self._entries = {k: v for k, v in self._entries.items() if now - v.at <= self.max_age_s}
+        while len(self._entries) >= self.max_entries:
+            del self._entries[min(self._entries, key=lambda k: self._entries[k].at)]
+        self._entries[key] = _FileChecks(at=now, steps=tuple(steps), av=av, rules=rules)
 
 
 MEDIA_KINDS = frozenset({"video", "audio"})
@@ -103,6 +239,7 @@ def gate_job(
     today: date | None = None,
     max_media_s: int = 14_400,
     owner_released: bool = False,
+    file_checks: FileCheckCache | None = None,
 ) -> ParseResult:
     """Run full Intake Gateway pipeline across raw verification, sandboxed parse,
 
@@ -113,6 +250,9 @@ def gate_job(
     outcome then becomes a flag (searchable, never used for facts, cards or questions,
     a PDF's text from pixels); a reject stays a reject. The file is already held, so it
     is not copied into quarantine again.
+
+    `file_checks` (the parser keeps one) reuses a media file's type, structure, AV and
+    YARA checks across the jobs of that file; see FileCheckCache.
     """
     check_date = today or date.today()
     raw_path = raw_dir / job.raw_name
@@ -144,28 +284,45 @@ def gate_job(
             intake=IntakeVerdict(verdict="reject", steps=steps, reasons=reasons),
         )
 
-    # Media (up to 4 GB) is never loaded whole: the byte checks below see its
-    # first MEDIA_SCAN_BYTES; ffprobe checks the container in the structure step.
-    if job.kind in MEDIA_KINDS:
-        with raw_path.open("rb") as fh:
-            data = fh.read(MEDIA_SCAN_BYTES)
+    # Steps 3 to 6 of a media file run once per file (FileCheckCache): the AV scan of a
+    # 4 GB video and its ffprobe are not repeated for every segment job.
+    cache_key = (
+        FileCheckCache.key(job, raw_path, max_media_s)
+        if file_checks is not None and job.kind in MEDIA_KINDS
+        else None
+    )
+    cached = file_checks.get(cache_key) if file_checks is not None else None
+    if cached is not None:
+        steps.extend(cached.steps)
+        steps.append(check_av(cached.av, job.origin, check_date))
+        steps.append(cached.rules)
     else:
-        data = raw_path.read_bytes()
+        # Media (up to 4 GB) is never loaded whole: the byte checks below see its
+        # first MEDIA_SCAN_BYTES; ffprobe checks the container in the structure step.
+        if job.kind in MEDIA_KINDS:
+            with raw_path.open("rb") as fh:
+                data = fh.read(MEDIA_SCAN_BYTES)
+        else:
+            data = raw_path.read_bytes()
 
-    # 3. Type check
-    mime = detect_file_mime(raw_path)
-    steps.append(check_type(job, mime, data[:1024]))
+        # 3. Type check
+        mime = detect_file_mime(raw_path)
+        file_steps = [check_type(job, mime, data[:1024])]
 
-    # 4. Structure check, per kind. A kind with no check here is refused
-    # (fail closed), so a new kind can never skip this step by accident.
-    steps.extend(structure_steps(job, raw_path, data, mime, max_media_s))
+        # 4. Structure check, per kind. A kind with no check here is refused
+        # (fail closed), so a new kind can never skip this step by accident.
+        file_steps.extend(structure_steps(job, raw_path, data, mime, max_media_s))
+        steps.extend(file_steps)
 
-    # 5. Antivirus check
-    av_res = av.scan(raw_path)
-    steps.append(check_av(av_res, job.origin, check_date))
+        # 5. Antivirus check (an error raises IntakeWait: nothing is kept)
+        av_res = av.scan(raw_path)
+        steps.append(check_av(av_res, job.origin, check_date))
 
-    # 6. YARA rules check
-    steps.append(check_rules(rules, data))
+        # 6. YARA rules check
+        rules_step = check_rules(rules, data)
+        steps.append(rules_step)
+        if file_checks is not None:
+            file_checks.put(cache_key, file_steps, av_res, rules_step)
 
     # Early stop on reject or quarantine
     if owner_released:
