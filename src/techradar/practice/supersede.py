@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import and_, or_, select
@@ -16,6 +16,9 @@ async def apply_fact_change(
     session: AsyncSession,
     change_id: int,
     labels: Mapping[str, str],
+    *,
+    owner_chat_id: int,
+    now: datetime,
 ) -> tuple[int, int]:
     """Retires MCQs and flashcards tied to an outdated fact and enqueues update notice."""
     stmt = select(FactChange).where(FactChange.id == change_id)
@@ -56,10 +59,12 @@ async def apply_fact_change(
     # 3. Format and enqueue notification message
     label = labels.get(change.subject_key, change.subject_key)
     msg = render_fact_change(change, label)
-    await enqueue_message(session, msg)
+    await enqueue_message(
+        session, chat_id=owner_chat_id, text=msg, purpose="fact_change", ref_id=change.id
+    )
 
     # 4. Mark notified
-    change.notified_at = datetime.now(UTC)
+    change.notified_at = now
     await session.flush()
 
     return (mcqs_retired, cards_retired)
@@ -68,8 +73,11 @@ async def apply_fact_change(
 async def run_fact_changes(
     session: AsyncSession,
     labels: Mapping[str, str] | Path | None = None,
+    *,
+    owner_chat_id: int,
+    now: datetime,
 ) -> list[tuple[int, int]]:
-    """Process all un-notified fact changes."""
+    """Process all un-notified fact changes (the body of `fact_changes_job`)."""
     resolved_labels: Mapping[str, str] = {}
     if isinstance(labels, Path):
         resolved_labels = load_labels(labels)
@@ -83,14 +91,8 @@ async def run_fact_changes(
 
     results: list[tuple[int, int]] = []
     for cid in change_ids:
-        res = await apply_fact_change(session, cid, resolved_labels)
+        res = await apply_fact_change(
+            session, cid, resolved_labels, owner_chat_id=owner_chat_id, now=now
+        )
         results.append(res)
     return results
-
-
-async def fact_changes_job(
-    session: AsyncSession,
-    labels: Mapping[str, str] | Path | None = None,
-) -> list[tuple[int, int]]:
-    """Worker task wrapper for periodic fact changes processing."""
-    return await run_fact_changes(session, labels)

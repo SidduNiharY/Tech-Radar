@@ -176,3 +176,14 @@ async def test_capsule_job_writes_last_months_capsule(monkeypatch: pytest.Monkey
     assert run.await_args.kwargs["owner_chat_id"] == 42
     assert tasks.capsule_job.queueing_lock
     session.commit.assert_awaited_once()
+
+
+async def test_fact_changes_job_passes_labels_and_owner(monkeypatch: pytest.MonkeyPatch):
+    session = _patch(monkeypatch)
+    run = AsyncMock()
+    monkeypatch.setattr(tasks, "run_fact_changes", run)
+    await tasks.fact_changes_job()
+    assert str(run.await_args.args[1]) == "infra/facts/subjects.yaml"
+    assert run.await_args.kwargs["owner_chat_id"] == 42
+    assert tasks.fact_changes_job.queue == "io" and tasks.fact_changes_job.queueing_lock
+    session.commit.assert_awaited_once()

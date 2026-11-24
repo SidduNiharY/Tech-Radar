@@ -37,6 +37,7 @@ from techradar.practice.grammar import run_grammar, run_grammar_set
 from techradar.practice.mcq import run_make_mcqs
 from techradar.practice.mistakes import run_mistakes_page
 from techradar.practice.quiz import run_quiz
+from techradar.practice.supersede import run_fact_changes
 from techradar.practice.vocab import run_vocab
 from techradar.rag.indexer import (
     IndexDeps,
@@ -688,5 +689,20 @@ async def capsule_job() -> None:
             month_start(now.date()),
             owner_chat_id=settings.telegram_owner_chat_id,
             now=now,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="io", queueing_lock="fact_changes_queued", name="fact_changes_job")
+async def fact_changes_job() -> None:
+    """Retire the MCQs and cards of outdated facts, and say what changed (D40)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_fact_changes(
+            session,
+            Path("infra/facts/subjects.yaml"),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            now=_local_now(),
         )
         await session.commit()
