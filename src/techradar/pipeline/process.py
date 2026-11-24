@@ -441,6 +441,7 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
 
         write_note(deps.vault_root, rel_path, rendered_content)
 
+        item.reader_json = output.model_dump(mode="json")  # the briefing reads it (Phase 3)
         item.status = "written"
         await session.commit()
         return "written"

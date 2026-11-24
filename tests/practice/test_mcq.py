@@ -16,7 +16,6 @@ from techradar.practice.mcq import (
     ChunkRow,
     FactRow,
     MCQDraft,
-    MCQOption,
     make_chapter_mcq,
     make_mcq,
     run_make_mcqs,
@@ -53,12 +52,6 @@ SAMPLE_DRAFT = MCQDraft(
     answer_index=0,
     explanation="The policy repo rate is currently 5.5%.",
 )
-
-
-def test_mcq_option_valid():
-    opt = MCQOption(text="New Delhi", option_id="opt_1")
-    assert opt.text == "New Delhi"
-    assert opt.option_id == "opt_1"
 
 
 def test_mcq_draft_valid():
@@ -380,3 +373,34 @@ def test_render_review_markdown():
     assert "## 1. MCQ #1 (Fact #10)" in md
     assert "**Question:** What is the capital of India?" in md
     assert "- [ ] **B.** New Delhi (Key)" in md
+
+
+@pytest.mark.db
+async def test_run_make_mcqs_skips_superseded_facts(session):
+    from techradar.db.models import Fact
+
+    new = Fact(
+        fact_key="k-new",
+        statement="Repo rate is 5.25%.",
+        subject="repo rate",
+        value="5.25%",
+        section="economy",
+        status="verified",
+    )
+    session.add(new)
+    await session.flush()
+    old = Fact(
+        fact_key="k-old",
+        statement="Repo rate is 5.5%.",
+        subject="repo rate",
+        value="5.5%",
+        section="economy",
+        status="verified",
+        superseded_by=new.id,
+    )
+    session.add(old)
+    await session.flush()
+    draft = SAMPLE_DRAFT.model_copy(update={"options": ["5.25%", "5.0%", "6.0%", "6.5%"]})
+    fc = FakeCompleter([draft.model_dump_json(), '{"answer_index": 0}'])
+    result = await run_make_mcqs(session, fc, now=datetime(2026, 11, 15, tzinfo=UTC))
+    assert result.fact_mcqs_created == 1 and len(fc.calls) == 2  # only the current fact

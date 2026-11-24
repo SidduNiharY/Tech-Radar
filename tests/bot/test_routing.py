@@ -51,36 +51,27 @@ def test_route_interactive_commands_unauthorized() -> None:
     assert route_update(7, "/plan", 42) == Routed("ignore")
 
 
-def test_route_briefing_take() -> None:
-    res = route_update(
-        42,
-        "My take on the market",
-        42,
-        reply_to_message_id=101,
-        active_briefing_message_ids={101, 102},
+def test_take_only_for_known_briefing_message() -> None:
+    assert route_update(
+        42, "Rates will fall", 42, reply_to_purpose="briefing", reply_to_ref=3
+    ) == Routed("take", "Rates will fall")
+    assert (
+        route_update(42, "Rates will fall", 42, reply_to_purpose="answer", reply_to_ref=9).action
+        == "ignore"
     )
-    assert res == Routed("take", "My take on the market")
+    assert route_update(42, "Rates will fall", 42).action == "ignore"
+    # a briefing target without its id is not a known briefing
+    assert route_update(42, "x", 42, reply_to_purpose="briefing").action == "ignore"
 
-    res_flag = route_update(42, "Another take", 42, is_briefing_reply=True)
-    assert res_flag == Routed("take", "Another take")
 
-    res_unrelated = route_update(
-        42,
-        "Random reply",
-        42,
-        reply_to_message_id=999,
-        active_briefing_message_ids={101, 102},
+def test_take_never_for_strangers_or_groups_or_commands() -> None:
+    kw = {"reply_to_purpose": "briefing", "reply_to_ref": 3}
+    assert route_update(7, "Stranger take", 42, **kw) == Routed("ignore")
+    assert route_update(-100, "Group take", 42, group_ids=frozenset({-100}), **kw) == Routed(
+        "ignore"
     )
-    assert res_unrelated == Routed("ignore")
-
-    res_unauth = route_update(
-        7,
-        "Stranger take",
-        42,
-        reply_to_message_id=101,
-        active_briefing_message_ids={101, 102},
-    )
-    assert res_unauth == Routed("ignore")
+    # a command written as a reply stays a command
+    assert route_update(42, "/quiz", 42, **kw) == Routed("quiz")
 
 
 def test_route_quarantine_owner_only() -> None:
@@ -100,3 +91,10 @@ def test_route_phase5_commands_owner_only() -> None:
     for text in ("/study gate os", "/stop", "/skill FastAPI learning"):
         assert route_update(-100, text, 42, group_ids=frozenset({-100})) == Routed("ignore")
         assert route_update(7, text, 42) == Routed("ignore")
+
+
+def test_practice_commands_are_the_owners_alone() -> None:
+    group = frozenset({-100})
+    for cmd in ("/quiz", "/cards", "/grammar", "/inbox"):
+        assert route_update(42, cmd, 42).action == cmd[1:]
+        assert route_update(-100, cmd, 42, group_ids=group) == Routed("ignore")

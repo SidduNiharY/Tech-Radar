@@ -118,4 +118,5 @@ async def test_post_init_wires_the_quarantine_dependencies(
     assert "library_dir" not in application.bot_data
     assert application.bot_data["tz"] == "Asia/Kolkata"
     assert application.bot_data["owner_id"] == OWNER
+    assert application.bot_data["tz"] == "Asia/Kolkata"
     assert "release_gate" not in application.bot_data  # the bot never gates files itself

@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from sqlalchemy import select
 
-from techradar.db.models import MCQ, Fact, FactChange, Flashcard
-from techradar.practice.supersede import apply_fact_change, fact_changes_job
+from techradar.db.models import MCQ, Fact, FactChange, Flashcard, Outbox
+from techradar.messaging import outbox as outbox_mod
+from techradar.practice import supersede
+from techradar.practice.supersede import apply_fact_change, run_fact_changes
 
 
 @pytest.mark.asyncio
@@ -18,7 +20,7 @@ async def test_apply_fact_change_nonexistent():
     mock_res.scalar_one_or_none.return_value = None
     session.execute.return_value = mock_res
 
-    res = await apply_fact_change(session, 99999, {})
+    res = await apply_fact_change(session, 99999, {}, owner_chat_id=1, now=datetime.now(UTC))
     assert res == (0, 0)
 
 
@@ -30,7 +32,7 @@ async def test_apply_fact_change_already_notified():
     mock_res.scalar_one_or_none.return_value = change
     session.execute.return_value = mock_res
 
-    res = await apply_fact_change(session, 1, {})
+    res = await apply_fact_change(session, 1, {}, owner_chat_id=1, now=datetime.now(UTC))
     assert res == (0, 0)
 
 
@@ -107,8 +109,10 @@ async def test_superseded_fact_retires_mcqs_and_cards(session):
     await session.flush()
 
     mcqs_retired, cards_retired = await apply_fact_change(
-        session, change.id, {"rbi.repo_rate": "Repo rate"}
+        session, change.id, {"rbi.repo_rate": "Repo rate"}, owner_chat_id=42, now=now
     )
+    sent = (await session.execute(select(Outbox).where(Outbox.purpose == "fact_change"))).scalars()
+    assert [m.text for m in sent] == ["Repo rate changed: 5.5% → 5.25%. Old cards updated."]
     assert mcqs_retired == 1
     assert cards_retired == 2
 
@@ -131,8 +135,80 @@ async def test_superseded_fact_retires_mcqs_and_cards(session):
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_change_notified_once(session):
-    # Running fact_changes_job twice does not double-notify
-    await fact_changes_job(session)
-    res2 = await fact_changes_job(session)
-    # The second run should process 0 changes
-    assert len(res2) == 0
+    now = datetime.now(UTC)
+    old = Fact(
+        fact_key="k-o",
+        statement="Repo 5.5%.",
+        subject="RBI",
+        value="5.5%",
+        section="economy",
+        status="superseded",
+        subject_key="rbi.repo_rate",
+    )
+    new = Fact(
+        fact_key="k-n",
+        statement="Repo 5.25%.",
+        subject="RBI",
+        value="5.25%",
+        section="economy",
+        status="verified",
+        subject_key="rbi.repo_rate",
+    )
+    session.add_all([old, new])
+    await session.flush()
+    session.add(
+        FactChange(
+            subject_key="rbi.repo_rate",
+            old_fact_id=old.id,
+            new_fact_id=new.id,
+            old_value="5.5%",
+            new_value="5.25%",
+        )
+    )
+    await session.flush()
+    first = await run_fact_changes(
+        session, {"rbi.repo_rate": "Repo rate"}, owner_chat_id=42, now=now
+    )
+    second = await run_fact_changes(
+        session, {"rbi.repo_rate": "Repo rate"}, owner_chat_id=42, now=now
+    )
+    assert len(first) >= 1 and second == []
+    texts = (
+        (await session.execute(select(Outbox.text).where(Outbox.purpose == "fact_change")))
+        .scalars()
+        .all()
+    )
+    assert texts.count("Repo rate changed: 5.5% → 5.25%. Old cards updated.") == 1
+
+
+async def test_notice_goes_through_the_real_enqueue_signature(monkeypatch):
+    """The first run called enqueue_message(session, msg): autospec rejects a wrong call."""
+    spy = create_autospec(outbox_mod.enqueue_message, return_value=1)
+    monkeypatch.setattr(supersede, "enqueue_message", spy)
+    change = SimpleNamespace(
+        id=7,
+        notified_at=None,
+        old_fact_id=1,
+        subject_key="rbi.repo_rate",
+        old_value="5.5%",
+        new_value="5.25%",
+    )
+    empty = MagicMock()
+    empty.scalars.return_value.all.return_value = []
+    first = MagicMock()
+    first.scalar_one_or_none.return_value = change
+    session = AsyncMock()
+    session.execute.side_effect = [first, empty, empty]
+    now = datetime(2026, 11, 22, tzinfo=UTC)
+    res = await apply_fact_change(
+        session, 7, {"rbi.repo_rate": "Repo rate"}, owner_chat_id=42, now=now
+    )
+    assert res == (0, 0)
+    spy.assert_awaited_once_with(
+        session,
+        chat_id=42,
+        text="Repo rate changed: 5.5% → 5.25%. Old cards updated.",
+        purpose="fact_change",
+        ref_id=7,
+    )
+    assert change.notified_at == now

@@ -1,4 +1,3 @@
-# WIRING(claude): worker/tasks.py needs exam_poll_job (queue io, every 30m) calling run_exam_poll.
 from __future__ import annotations
 
 import html
@@ -159,28 +158,23 @@ async def run_exam_poll(
 ) -> PollResult:
     """Process incoming change events, deduplicate, record alerts, and enqueue to outbox.
 
-    Title and URL used in the alert message come strictly from the configured exam_watches row.
+    Title and URL used in the alert message come strictly from the configured exam_watches row;
+    an event whose watch_uuid is not a configured watch is skipped.
     """
     alerts_sent = 0
     alerts_skipped = 0
     alert_ids: list[int] = []
 
     for event in events:
-        stmt = select(ExamWatch).where(
-            (ExamWatch.watch_uuid == event.watch_uuid) | (ExamWatch.url == event.url)
+        # Only a watch the owner configured can alert (matched by its stored watch_uuid): an
+        # event for any other uuid is dropped, so page-supplied text never becomes a watch.
+        result = await session.execute(
+            select(ExamWatch).where(ExamWatch.watch_uuid == event.watch_uuid)
         )
-        result = await session.execute(stmt)
         watch = result.scalar_one_or_none()
-
         if watch is None:
-            clean_title = clean_exam_notice_title(event.title)
-            watch = ExamWatch(
-                title=clean_title,
-                url=event.url,
-                watch_uuid=event.watch_uuid,
-            )
-            session.add(watch)
-            await session.flush()
+            alerts_skipped += 1
+            continue
 
         # Title and URL come strictly from exam_watches row
         configured_event = ChangeEvent(

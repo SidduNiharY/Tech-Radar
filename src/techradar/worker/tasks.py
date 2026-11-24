@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from datetime import time as day_time
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,10 @@ from procrastinate import RetryStrategy
 from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
+from techradar.alerts.watcher import ChangeEvent, run_exam_poll
+from techradar.briefing.capsule import month_start, run_capsule
+from techradar.briefing.compose import run_briefing
+from techradar.briefing.takes import save_take
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
@@ -36,6 +40,14 @@ from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
 from techradar.planner.progress import run_weekly_review
 from techradar.planner.sessions import close_stale_sessions, local_date
+from techradar.practice.chapter_cards import run_make_chapter_cards
+from techradar.practice.flashcards import run_cards
+from techradar.practice.grammar import run_grammar, run_grammar_set
+from techradar.practice.mcq import run_make_mcqs
+from techradar.practice.mistakes import run_mistakes_page
+from techradar.practice.quiz import run_quiz
+from techradar.practice.supersede import run_fact_changes
+from techradar.practice.vocab import run_vocab
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -48,6 +60,14 @@ from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
+from techradar.worker.names import (
+    CARDS,
+    GRAMMAR_SET,
+    MAKE_CHAPTER_CARDS,
+    MISTAKES_PAGE,
+    QUIZ,
+    SAVE_TAKE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -655,3 +675,222 @@ async def formula_sheets_job(timestamp: int | None = None) -> None:
             session, get_rag_deps(), settings.data_dir / "vault", today
         )
     logger.info("formula sheets: %s", counts)
+
+
+# --- Phase 3: briefing, practice, exam alerts -------------------------------------
+# Every job is a thin wrapper: open a session, call the `run_*` function with the local `now`,
+# commit. `procrastinate` cron runs in UTC; Asia/Kolkata is UTC+05:30 all year, so a local
+# time is written here as its UTC cron with the local time in the comment. Each periodic job
+# has its own `queueing_lock`, so a slow run is never joined by a pile of duplicates.
+
+
+def _local_now() -> datetime:
+    """Now in the owner's timezone (Asia/Kolkata by default)."""
+    return datetime.now(ZoneInfo(_get_settings().tz))
+
+
+def _read_domains(path: Path) -> frozenset[str]:
+    """One domain per line; `#` lines and blanks skipped; a leading dot dropped."""
+    if not path.exists():
+        return frozenset()
+    return frozenset(
+        line.strip().lstrip(".")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="io", queueing_lock="briefing_queued", name="briefing_job")
+async def briefing_job(timestamp: int | None = None) -> None:
+    """Send today's briefing once, only inside its grace window (D17)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_briefing(
+            session,
+            now=_local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            official_domains=_read_domains(Path("infra/sources/official_domains.txt")),
+            at_time=day_time.fromisoformat(settings.briefing_time),
+            grace_s=settings.misfire_grace_s,
+        )
+        await session.commit()
+
+
+@app.task(queue="io", name=SAVE_TAKE)
+async def save_take_job(briefing_id: int, text: str) -> None:
+    """Store one "My take" (database and monthly vault file) and confirm through the outbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        outcome = await save_take(
+            session, settings.data_dir / "vault", briefing_id, text, _local_now()
+        )
+        await enqueue_message(
+            session,
+            chat_id=settings.telegram_owner_chat_id,
+            text="Saved your take." if outcome == "saved" else "Keep it under 500 characters.",
+            purpose="take_saved",
+            ref_id=briefing_id,
+        )
+        await session.commit()
+
+
+def _completer() -> LiteLLMCompleter:
+    """The local models: worker and checker families come from infra/models/roles.yaml."""
+    roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
+    return LiteLLMCompleter(roles, "http://ollama:11434")
+
+
+@app.periodic(cron="0 0 * * *")  # 05:30 Asia/Kolkata
+@app.task(queue="llm", queueing_lock="make_mcqs_queued", name="make_mcqs_job")
+async def make_mcqs_job(timestamp: int | None = None) -> None:
+    """Write tonight's MCQs from verified facts and from chapters marked as read."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_make_mcqs(session, _completer(), now=_local_now())
+        await session.commit()
+
+
+@app.task(queue="io", name=QUIZ)
+async def quiz_job() -> None:
+    """/quiz: today's 10 MCQs, each with its A-D buttons, into the outbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_quiz(
+            session, now=_local_now(), owner_chat_id=settings.telegram_owner_chat_id, limit=10
+        )
+        await session.commit()
+
+
+@app.task(queue="io", name=CARDS)
+async def cards_job() -> None:
+    """/cards: the flashcards due, within the daily new and review limits (D39)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_cards(
+            session,
+            now=_local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            new_limit=settings.daily_new_cards,
+            review_limit=settings.daily_reviews,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="30 12 * * 0")  # Sunday 18:00 Asia/Kolkata
+@app.task(queue="io", queueing_lock="mistakes_page_queued", name=MISTAKES_PAGE)
+async def mistakes_page_job(timestamp: int | None = None) -> None:
+    """Rewrite the mistakes notebook page practice/mistakes.md in the vault."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_mistakes_page(session, now=_local_now(), vault_dir=settings.data_dir / "vault")
+
+
+@app.task(queue="llm", name=MAKE_CHAPTER_CARDS)
+async def make_chapter_cards_job(chapter_id: int) -> None:
+    """Mark a chapter as read, make its quote-checked cards, tell the owner."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_make_chapter_cards(
+            session,
+            _completer(),
+            chapter_id,
+            _local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="15 0 * * *")  # 05:45 Asia/Kolkata
+@app.task(queue="llm", queueing_lock="grammar_queued", name="grammar_job")
+async def grammar_job(timestamp: int | None = None) -> None:
+    """Make today's 10 grammar items; each is kept only when the checker model agrees."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_grammar(session, _completer(), now=_local_now(), limit=10)
+        await session.commit()
+
+
+@app.periodic(cron="15 0 * * *")  # 05:45 Asia/Kolkata
+@app.task(queue="llm", queueing_lock="vocab_queued", name="vocab_job")
+async def vocab_job(timestamp: int | None = None) -> None:
+    """Pick 5 new words from the last day's English text and make their cards.
+
+    The default analyzer is pure Python; spaCy and wordfreq are not approved yet.
+    """
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_vocab(session, _completer(), now=_local_now(), limit=5)
+        await session.commit()
+
+
+@app.task(queue="io", name=GRAMMAR_SET)
+async def grammar_set_job() -> None:
+    """/grammar: today's grammar set with its answer buttons, into the outbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_grammar_set(
+            session,
+            now=_local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            limit=10,
+        )
+        await session.commit()
+
+
+async def _exam_change_events(since: datetime) -> list[ChangeEvent]:
+    """Pages that changed after `since`, from the changedetection service.
+
+    Owner: the service, its image and the exam hosts on the Squid allowlist are not set up, so
+    there is no API client yet and this returns nothing. The job below is wired and safe: an
+    event is only alerted when its watch_uuid is a configured exam_watches row.
+    """
+    return []
+
+
+@app.periodic(cron="*/30 * * * *")
+@app.task(queue="io", queueing_lock="exam_poll_queued", name="exam_poll_job")
+async def exam_poll_job(timestamp: int | None = None) -> None:
+    """Alert the owner when an official exam page changed (title and URL are the owner's own)."""
+    settings = _get_settings()
+    now = _local_now()
+    events = await _exam_change_events(now - timedelta(hours=2))
+    if not events:
+        return
+    async with make_session_factory("app", settings)() as session:
+        await run_exam_poll(
+            session, now=now, events=events, owner_chat_id=settings.telegram_owner_chat_id
+        )
+        await session.commit()
+
+
+@app.periodic(cron="30 1 1 * *")  # 07:00 Asia/Kolkata on the 1st
+@app.task(queue="io", queueing_lock="capsule_queued", name="capsule_job")
+async def capsule_job(timestamp: int | None = None) -> None:
+    """Write last month's capsule into the vault and tell the owner."""
+    settings = _get_settings()
+    now = _local_now()
+    async with make_session_factory("app", settings)() as session:
+        await run_capsule(
+            session,
+            settings.data_dir / "vault",
+            month_start(now.date()),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            now=now,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="io", queueing_lock="fact_changes_queued", name="fact_changes_job")
+async def fact_changes_job(timestamp: int | None = None) -> None:
+    """Retire the MCQs and cards of outdated facts, and say what changed (D40)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_fact_changes(
+            session,
+            Path("infra/facts/subjects.yaml"),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            now=_local_now(),
+        )
+        await session.commit()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
@@ -9,6 +9,7 @@ from techradar.briefing.compose import (
     Briefing,
     StoryCandidate,
     briefing_due,
+    load_candidates,
     render_briefing,
     run_briefing,
     select_items,
@@ -52,7 +53,7 @@ def test_select_items_politics_needs_three_domains():
         [cand_2_domains, cand_3_domains, cand_official, cand_politics_2_domains],
         official,
     )
-    assert cand_2_domains not in items
+    assert cand_2_domains in items  # only politics needs 3 domains (D7)
     assert cand_politics_2_domains not in items
     assert cand_3_domains in items
     assert cand_official in items
@@ -193,7 +194,7 @@ def test_briefing_due_cases(hhmm: str, last: str | None, due: bool):
     hour, minute = map(int, hhmm.split(":"))
     now_local = datetime(2026, 11, 8, hour, minute)
     last_sent = now_local.date() if last == "today" else None
-    assert briefing_due(now_local, last_sent, at_time=time(6, 30)) == due
+    assert briefing_due(now_local, last_sent, time(6, 30)) == due
 
 
 def test_render_briefing_indian_languages_pass_through():
@@ -267,3 +268,75 @@ async def test_run_briefing_due_enqueues():
     assert res.messages_sent >= 1
     assert res.items_count == 1
     assert any(hasattr(a, "chat_id") and a.chat_id == 123 for a in session.added)
+
+
+def test_select_items_politics_official_domain_counts():
+    # headline_ok: politics needs 3 domains; an official one is not enough for politics
+    cand = StoryCandidate(
+        cluster_id="p",
+        title="Official politics",
+        section=Section.POLITICS,
+        domains={"pib.gov.in"},
+    )
+    assert select_items([cand], frozenset({"pib.gov.in"})) == []
+
+
+@pytest.mark.db
+async def test_load_candidates_reads_written_clusters(session):
+    from techradar.db.models import Item, Note, RawItem, Source
+
+    src = Source(
+        name="t-brief",
+        url="https://t.example/feed",
+        host="t.example",
+        section="tech",
+        trust_tier="news",
+    )
+    session.add(src)
+    await session.flush()
+    raw = RawItem(source_id=src.id, url="https://t.example/a", url_hash="h" * 64, kind="feed")
+    session.add(raw)
+    await session.flush()
+    reader = {
+        "summary": "s",
+        "section": "tech",
+        "exam_tags": ["gate"],
+        "facts": [],
+        "four_questions": {
+            "what_happened": "a",
+            "why": "because",
+            "what_changes": "c",
+            "how_it_affects_me": "me",
+        },
+        "entities": [],
+    }
+    session.add(
+        Item(
+            raw_item_id=raw.id,
+            title="T",
+            url="https://t.example/a",
+            domain="t.example",
+            lang="en",
+            content_hash="c" * 64,
+            status="written",
+            cluster_id=7,
+            relevance=0.8,
+            reader_json=reader,
+        )
+    )
+    now = datetime(2026, 11, 8, 7, 0, tzinfo=UTC)
+    session.add(
+        Note(
+            vault_path="news/t.md",
+            kind="news",
+            title="T",
+            cluster_id=7,
+            content_hash="d" * 64,
+            written_at=now - timedelta(hours=2),
+        )
+    )
+    await session.flush()
+    cands = await load_candidates(session, frozenset(), now)
+    assert [(c.cluster_id, c.why, c.exam_tags) for c in cands] == [("7", "because", ["gate"])]
+    # a note older than 24 hours is not in today's briefing
+    assert await load_candidates(session, frozenset(), now + timedelta(days=2)) == []

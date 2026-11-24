@@ -69,6 +69,9 @@ def test_reply_message_id_accepts_only_real_ints() -> None:
 def _settings(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SimpleNamespace(telegram_owner_chat_id=OWNER, max_question_chars=500)
     monkeypatch.setattr(bot_main, "get_settings", lambda: settings)
+    # Phase 3: the reply-target lookup (briefing "My take") has its own tests; here a reply
+    # points at nothing special, so it stays an ordinary reply.
+    monkeypatch.setattr(bot_main, "find_reply_target", AsyncMock(return_value=None))
 
 
 def _update(chat_id: int, text: str, reply_to: int | None = None):
@@ -227,11 +230,27 @@ async def test_owner_chapters_button_lists_the_chapters(monkeypatch) -> None:
 
     listing = AsyncMock(return_value="Book · 2 chapters\n1. Money (pp. 1-9)")
     monkeypatch.setattr(callbacks, "chapters_listing", listing)
+    monkeypatch.setattr(callbacks, "chapter_buttons", AsyncMock(return_value=None))
     update, context, query, session = _chap_query("chap:7")
     await callbacks.handle_callback_query(update, context)
     listing.assert_awaited_once_with(session, 7)
     query.message.reply_text.assert_awaited_once_with("Book · 2 chapters\n1. Money (pp. 1-9)")
     query.answer.assert_awaited_once_with()
+
+
+async def test_chapters_button_also_sends_the_mark_as_read_buttons(monkeypatch) -> None:
+    from techradar.bot import callbacks
+    from techradar.messaging.outbox import Button
+
+    monkeypatch.setattr(callbacks, "chapters_listing", AsyncMock(return_value="Book"))
+    shown = ("Book · 1 chapters", [[Button(text="01. Money", data="read:11")]])
+    monkeypatch.setattr(callbacks, "chapter_buttons", AsyncMock(return_value=shown))
+    update, context, query, _session = _chap_query("chap:7")
+    await callbacks.handle_callback_query(update, context)
+    assert query.message.reply_text.await_count == 2
+    second = query.message.reply_text.await_args_list[1]
+    assert second.args == ("Book · 1 chapters",)
+    assert second.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "read:11"
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,3 @@
-# WIRING(claude): bot/routing.py needs action take; bot/main.py must pass reply target.
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -45,7 +43,7 @@ async def save_take(
     - If length > MAX_TAKE_CHARS, returns 'too_long' without persisting.
     - If vault_root is provided, appends the take line to context/takes/<YYYY-MM>.md.
     """
-    sanitized = sanitize_text(text)
+    sanitized = sanitize_text(text)  # also collapses newlines: one take is one bullet
     if len(sanitized) > MAX_TAKE_CHARS:
         return "too_long"
 

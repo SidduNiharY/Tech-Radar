@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.engine import make_engine
 from techradar.db.models import Flashcard
 from techradar.practice.flashcards import (
     CardRow,
     due_cards,
     new_card_state,
+    rate_card,
     render_card_back,
+    reveal_card,
     review_card,
     run_cards,
 )
 from techradar.practice.fsrs import State
-from techradar.settings import Settings
 
 NOW = datetime(2026, 11, 8, 10, 0, tzinfo=UTC)
 
@@ -155,6 +153,9 @@ class FakeFlashcardSession:
         if isinstance(obj, Flashcard):
             self.cards.append(obj)
 
+    async def scalar(self, stmt: Any) -> Any:
+        return 0  # nothing used up of today's budget
+
     async def flush(self) -> None:
         self.flushed = True
 
@@ -234,27 +235,6 @@ async def test_run_cards_unit() -> None:
 
 
 @pytest.fixture
-def db_settings() -> Settings:
-    return Settings(
-        telegram_owner_chat_id=1,
-        db_host="127.0.0.1",
-        db_port=55432,
-        db_name="techradar",
-        secrets_dir=Path("secrets"),
-    )
-
-
-@pytest.fixture
-async def session(db_settings: Settings) -> AsyncGenerator[AsyncSession]:
-    engine = make_engine("app", db_settings)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-        await s.rollback()
-    await engine.dispose()
-
-
-@pytest.fixture
 def cards_150_due_30_new(session: AsyncSession) -> list[Flashcard]:
     cards = []
     # 150 review cards
@@ -320,3 +300,54 @@ async def test_retired_cards_never_due(
 
     cards = await due_cards(session, NOW, new_limit=10, review_limit=40)
     assert retired_card.id not in {c.id for c in cards}
+
+
+async def test_rate_card_schedules_once_and_a_second_tap_is_ignored() -> None:
+    card = Flashcard(
+        id=9,
+        front="f",
+        back="b",
+        source_kind="chapter",
+        due=NOW,
+        first_shown_at=NOW,
+        fsrs_card=new_card_state(NOW)[0],
+        retired=False,
+    )
+    session = FakeFlashcardSession(cards=[card])
+    assert await rate_card(session, 9, 3, NOW) == "rated"
+    assert card.due > NOW and card.fsrs_card["reps"] == 1
+    first_due = card.due
+    assert await rate_card(session, 9, 1, NOW) == "already_rated"
+    assert card.due == first_due and card.fsrs_card["reps"] == 1
+
+
+async def test_rate_card_unknown_or_retired() -> None:
+    gone = Flashcard(id=3, front="f", back="b", source_kind="fact", due=NOW, retired=True)
+    session = FakeFlashcardSession(cards=[gone])
+    assert await rate_card(session, 3, 3, NOW) == "not_found"
+    assert await rate_card(session, 404, 3, NOW) == "not_found"
+    assert await reveal_card(session, 3) is None
+
+
+async def test_reveal_card_has_rating_buttons() -> None:
+    card = Flashcard(id=4, front="f", back="the answer", source_kind="manual", due=NOW)
+    text, buttons = await reveal_card(FakeFlashcardSession(cards=[card]), 4)
+    assert text == "the answer"
+    assert [b.data for b in buttons[0]] == [f"rate:4:{i}" for i in (1, 2, 3, 4)]
+
+
+@pytest.mark.db
+async def test_cards_shown_today_use_up_the_daily_new_limit(session: AsyncSession) -> None:
+    for i in range(12):
+        session.add(
+            Flashcard(
+                front=f"shown {i}",
+                back="b",
+                source_kind="manual",
+                due=NOW,
+                first_shown_at=NOW - timedelta(hours=1) if i < 7 else None,
+            )
+        )
+    await session.flush()
+    cards = await due_cards(session, NOW, new_limit=10, review_limit=40)
+    assert len([c for c in cards if c.is_new]) == 3  # 10 - 7 shown earlier today

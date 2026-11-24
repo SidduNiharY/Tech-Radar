@@ -9,12 +9,10 @@ from sqlalchemy import func, select
 
 from techradar.db.models import Chunk, Flashcard, LibraryChapter, LibraryDoc
 from techradar.practice.chapter_cards import (
-    ChapterCardsGenerator,
     make_chapter_cards,
     mark_chapter_read,
     render_chapter_list,
 )
-from techradar.practice.fsrs import Card, State
 from tests.fakes import FakeCompleter
 
 
@@ -100,11 +98,14 @@ async def test_mark_read_twice_creates_cards_once(session):
     now = datetime.now(UTC)
     # Check or create ready chapter in DB
     doc = LibraryDoc(
-        source_id=0,
-        slug="economy-test-doc",
+        sha256="e" * 64,
         title="Indian Economy Primer",
-        doc_path="economy/primer.md",
-        kind="book",
+        kind="pdf",
+        origin="library",
+        original_path="economy/primer.pdf",
+        size_bytes=1000,
+        status="ready",
+        trust="my_own",
     )
     session.add(doc)
     await session.flush()
@@ -120,7 +121,7 @@ async def test_mark_read_twice_creates_cards_once(session):
 
     chunk = Chunk(
         doc_path="economy/primer.md",
-        doc_kind="book",
+        doc_kind="pdf",
         title="Monetary Policy",
         ordinal=1,
         text="The Cash Reserve Ratio is 4% set by RBI.",
@@ -151,67 +152,46 @@ async def test_mark_read_twice_creates_cards_once(session):
 # --- Legacy tests preserved ---
 
 
-def test_mark_read_twice_creates_cards_once_legacy():
-    generator = ChapterCardsGenerator()
-    slug = "neural-networks-intro"
-    chunks = [
-        "Neural networks are composed of layers of nodes. Each node performs a weighted sum.",
-        "Activation functions introduce non-linearity into neural network models.",
-        "Backpropagation uses gradient descent to optimize network weights.",
-        "Loss functions quantify the difference between predictions and actual labels.",
-    ]
-
-    cards_first = generator.generate_cards(chapter_slug=slug, chunks=chunks)
-    assert 10 <= len(cards_first) <= 20
-
-    existing_card_keys = {card.card_key for card in cards_first}
-    cards_second = generator.generate_cards(
-        chapter_slug=slug,
-        chunks=chunks,
-        existing_card_keys=existing_card_keys,
+@pytest.mark.db
+async def test_chapter_without_indexed_chunks_is_not_ready(session):
+    doc = LibraryDoc(
+        sha256="f" * 64,
+        title="Empty",
+        kind="pdf",
+        origin="library",
+        original_path="e.pdf",
+        size_bytes=1,
+        status="ready",
+        trust="my_own",
     )
-    assert len(cards_second) == 0
+    session.add(doc)
+    await session.flush()
+    chapter = LibraryChapter(doc_id=doc.id, ordinal=1, title="Unindexed", text_path="e/ch01.txt")
+    session.add(chapter)
+    await session.flush()
+    fc = FakeCompleter([])
+    assert await mark_chapter_read(session, fc, chapter.id, datetime.now(UTC)) == "not_ready"
+    assert fc.calls == []
+    await session.refresh(chapter)
+    assert chapter.read_at is None  # a later tap still works
 
 
-def test_chapter_cards_count_range():
-    generator = ChapterCardsGenerator()
-    slug = "compiler-design-gate"
+async def test_cards_come_back_in_chapter_order_and_capped():
     chunks = [
-        "Lexical analysis produces tokens from raw source characters.",
-        "Syntax analysis builds an abstract syntax tree using context-free grammars.",
-        "Semantic analysis enforces type consistency and scope rules.",
-        "Intermediate code generation produces three-address code representation.",
-        "Code optimization improves runtime performance and reduces memory footprint.",
-        "Target code generation translates intermediate representations into machine code.",
+        SimpleNamespace(id=1, text="Alpha beta gamma delta epsilon fact one.", flagged=False),
+        SimpleNamespace(id=2, text="Zeta eta theta iota kappa fact two.", flagged=False),
     ]
-
-    cards = generator.generate_cards(chapter_slug=slug, chunks=chunks)
-    assert 10 <= len(cards) <= 20
-
-    for card_item in cards:
-        assert isinstance(card_item, Card)
-        assert card_item.state == State.NEW
-        assert card_item.stability == 0.0
-        assert card_item.difficulty == 0.0
-        assert card_item.reps == 0
-        assert card_item.lapses == 0
-
-
-def test_flagged_chunks_excluded():
-    generator = ChapterCardsGenerator()
-    slug = "security-chapter"
-    chunks = [
-        "[FLAGGED] Malicious payload pretending to be a textbook chunk.",
-        "Legitimate operating systems concept chunk on virtual memory and paging.",
-    ]
-
-    cards = generator.generate_cards(chapter_slug=slug, chunks=chunks)
-    assert len(cards) >= 10
-    for card_item in cards:
-        assert "Malicious" not in card_item.front
-        assert "Malicious" not in card_item.back
-
-
-def test_empty_chunks_returns_empty():
-    generator = ChapterCardsGenerator()
-    assert generator.generate_cards("empty-chapter", []) == []
+    c2 = card(
+        quote="Zeta eta theta iota kappa",
+        chunk_id=2,
+        front="What is fact two here?",
+        back="Zeta eta theta iota kappa fact",
+    )
+    c1 = card(
+        quote="Alpha beta gamma delta epsilon",
+        chunk_id=1,
+        front="What is fact one here?",
+        back="Alpha beta gamma delta epsilon fact",
+    )
+    res = await make_chapter_cards(FakeCompleter([cards_json([c2, c1])]), chunks)
+    assert [c.chunk_id for c in res] == [1, 2]

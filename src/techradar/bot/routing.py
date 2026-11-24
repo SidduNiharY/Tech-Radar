@@ -45,11 +45,10 @@ def route_update(
     owner_id: int,
     group_ids: Set[int] = frozenset(),
     reply_to_message_id: int | None = None,
-    active_briefing_message_ids: Set[int] = frozenset(),
     *,
-    is_briefing_reply: bool = False,
-    briefing_message_ids: Set[int] | None = None,
     ready_message_ids: Set[int] = frozenset(),
+    reply_to_purpose: str | None = None,
+    reply_to_ref: int | None = None,
 ) -> Routed:
     """Route an incoming Telegram message.
 
@@ -65,7 +64,9 @@ def route_update(
         Routed("quarantine") for /quarantine from the owner's own chat only
         Routed("ask_book", text) for a plain-text reply (no command) from the owner's own chat
             to one of `ready_message_ids` (the caller looked the Ready messages up)
-        Routed("take", reply_text) for replies to active briefing messages
+        Routed("take", text) for a plain reply from the owner's own chat to a sent briefing
+            message: the caller looked up the target outbox row and passes its `purpose` and
+            `ref_id` (the briefing id) as `reply_to_purpose` and `reply_to_ref`
         Routed("ignore") for unauthorized chats or unknown/empty messages
     """
     if not is_allowed(chat_id, owner_id, group_ids):
@@ -75,15 +76,6 @@ def route_update(
         return Routed("ignore")
 
     cleaned = text.strip()
-
-    valid_briefings = set(active_briefing_message_ids)
-    if briefing_message_ids:
-        valid_briefings.update(briefing_message_ids)
-
-    if is_briefing_reply or (
-        reply_to_message_id is not None and reply_to_message_id in valid_briefings
-    ):
-        return Routed("take", cleaned)
 
     words = cleaned.split()
     cmd = words[0].split("@")[0].lower()
@@ -95,14 +87,10 @@ def route_update(
     if cmd == "/ask":
         arg = cleaned[len(words[0]) :].strip()
         return Routed("ask", arg)
-    if cmd == "/quiz":
-        return Routed("quiz")
-    if cmd == "/cards":
-        return Routed("cards")
-    if cmd == "/grammar":
-        return Routed("grammar")
-    if cmd == "/inbox":
-        return Routed("inbox")
+    if cmd in ("/quiz", "/cards", "/grammar", "/inbox"):
+        # Their messages go to the owner's chat, and the review inbox shows the owner's own
+        # items: never from a study group.
+        return Routed(cmd[1:]) if chat_id == owner_id else Routed("ignore")  # type: ignore[arg-type]
     if cmd == "/plan":
         return Routed("plan")
     # --- Phase 8 ---
@@ -122,6 +110,15 @@ def route_update(
         if chat_id != owner_id:
             return Routed("ignore")
         return Routed(cmd[1:], cleaned[len(words[0]) :].strip())  # type: ignore[arg-type]
+
+    if (
+        not cmd.startswith("/")
+        and chat_id == owner_id
+        and reply_to_purpose == "briefing"
+        and reply_to_ref is not None
+    ):
+        # "My take": one line in reply to a briefing message. Owner's own chat only.
+        return Routed("take", cleaned)
 
     if (
         not cmd.startswith("/")

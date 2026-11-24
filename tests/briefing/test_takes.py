@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import select
 
 from techradar.briefing.takes import (
     MAX_TAKE_CHARS,
@@ -16,10 +15,8 @@ from techradar.briefing.takes import (
     take_note_entry,
     take_rel_path,
 )
-from techradar.db.engine import make_engine
 from techradar.db.models import Briefing as BriefingModel
 from techradar.db.models import Take
-from techradar.settings import Settings
 
 
 class FakeAsyncSession:
@@ -72,7 +69,7 @@ async def test_save_take_length_limit(fake_session: FakeAsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_save_take_appends_monthly_file(fake_session: FakeAsyncSession, tmp_path: Path):
+async def test_save_take_appends_monthly_file_unit(fake_session: FakeAsyncSession, tmp_path: Path):
     now1 = datetime(2026, 11, 8, 7, 0)
     res1 = await save_take(fake_session, tmp_path, 3, "Rates will fall", now1)
     assert res1 == "saved"
@@ -177,45 +174,20 @@ def test_take_helpers():
 
 
 @pytest.mark.db
-class TestSaveTakeDB:
-    """Integration tests against real Postgres.
+async def test_save_take_appends_monthly_file(session, tmp_path: Path):
+    now = datetime(2026, 11, 8, 7, 0)
+    briefing = BriefingModel(date=now.date(), sent_at=now)
+    session.add(briefing)
+    await session.flush()
 
-    Marked with pytestmark = pytest.mark.db so they are skipped during unit test
-    runs and run only when Postgres is available with `pytest -m db`.
-    """
+    assert await save_take(session, tmp_path, briefing.id, "Rates will fall", now) == "saved"
+    assert "Rates will fall" in (tmp_path / "context/takes/2026-11.md").read_text(encoding="utf-8")
+    rows = (await session.execute(select(Take).where(Take.briefing_id == briefing.id))).scalars()
+    assert [t.text for t in rows] == ["Rates will fall"]
 
-    pytestmark = pytest.mark.db
 
-    @pytest.fixture
-    async def session(self) -> AsyncGenerator[AsyncSession]:
-        settings = Settings(
-            telegram_owner_chat_id=1234,
-            db_host="127.0.0.1",
-            db_port=55432,
-            db_name="techradar",
-            secrets_dir=Path("secrets"),
-        )
-        engine = make_engine("app", settings)
-        async with async_sessionmaker(engine, expire_on_commit=False)() as s:
-            yield s
-            await s.rollback()
-        await engine.dispose()
-
-    @pytest.mark.asyncio
-    async def test_save_take_appends_monthly_file_db(self, session: AsyncSession, tmp_path: Path):
-        now = datetime(2026, 11, 8, 7, 0)
-        # Create briefing row first to satisfy ForeignKey
-        briefing = BriefingModel(date=now.date(), sent_at=now)
-        session.add(briefing)
-        await session.flush()
-
-        res = await save_take(session, tmp_path, briefing.id, "Rates will fall", now)
-        assert res == "saved"
-        vault_file = tmp_path / "context" / "takes" / "2026-11.md"
-        assert "Rates will fall" in vault_file.read_text(encoding="utf-8")
-
-    @pytest.mark.asyncio
-    async def test_save_take_too_long_db(self, session: AsyncSession, tmp_path: Path):
-        now = datetime(2026, 11, 8, 7, 0)
-        res = await save_take(session, tmp_path, 1, "x" * (MAX_TAKE_CHARS + 1), now)
-        assert res == "too_long"
+@pytest.mark.db
+async def test_save_take_too_long_db(session, tmp_path: Path):
+    now = datetime(2026, 11, 8, 7, 0)
+    assert await save_take(session, tmp_path, 3, "x" * (MAX_TAKE_CHARS + 1), now) == "too_long"
+    assert not (tmp_path / "context").exists()

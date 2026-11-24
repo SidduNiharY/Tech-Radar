@@ -9,10 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Briefing as BriefingModel
+from techradar.db.models import Item, Note
 from techradar.messaging.outbox import enqueue_message
-from techradar.schemas.pipeline import Section
-
-# WIRING(claude): worker/tasks.py needs briefing_job (queue io, 15m) calling run_briefing.
+from techradar.pipeline.verify import headline_ok
+from techradar.schemas.pipeline import ReaderOutput, Section
 
 SECTION_ORDER = [
     Section.TECH,
@@ -38,25 +38,22 @@ class StoryCandidate(BaseModel):
 
 def select_items(
     cands: Sequence[StoryCandidate],
-    official_domains: frozenset[str],
+    official: frozenset[str],
     *,
     per_section: int = 3,
     max_items: int = 15,
 ) -> list[StoryCandidate]:
     """Selects and caps stories for the daily briefing.
 
-    - For Section.INDIA / politics: requires 3 or more distinct domains
-      unless from official domains.
+    - Drops a politics story unless `headline_ok` (3 or more domains, D7).
     - Sorts by (verified_headline desc, relevance desc).
     - Caps at per_section per section, and at most max_items total.
     """
-    valid: list[StoryCandidate] = []
-    for c in cands:
-        if c.section in (Section.INDIA, Section.POLITICS, "india", "politics"):
-            has_official = bool(c.domains & official_domains)
-            if not (has_official or len(c.domains) >= 3):
-                continue
-        valid.append(c)
+    valid = [
+        c
+        for c in cands
+        if c.section is not Section.POLITICS or headline_ok(c.domains, c.section, official)
+    ]
 
     sorted_cands = sorted(
         valid,
@@ -185,18 +182,14 @@ def render_briefing(b: Briefing) -> list[str]:
 def briefing_due(
     now_local: datetime,
     last_sent: date | None,
-    at_time: time | None = None,
+    at: time = time(6, 30),
     grace_s: int = 21600,
-    *,
-    at: time | None = None,
 ) -> bool:
-    """Returns True if not sent today AND now_local >= at_time AND within grace_s."""
+    """True when today's briefing is unsent and `at <= now_local <= at + grace_s`."""
     if last_sent is not None and last_sent == now_local.date():
         return False
-    target_time = at_time if at_time is not None else (at if at is not None else time(6, 30))
-    scheduled_dt = datetime.combine(now_local.date(), target_time, tzinfo=now_local.tzinfo)
-    deadline_dt = scheduled_dt + timedelta(seconds=grace_s)
-    return scheduled_dt <= now_local <= deadline_dt
+    scheduled_dt = datetime.combine(now_local.date(), at, tzinfo=now_local.tzinfo)
+    return scheduled_dt <= now_local <= scheduled_dt + timedelta(seconds=grace_s)
 
 
 class BriefingResult(BaseModel):
@@ -206,6 +199,59 @@ class BriefingResult(BaseModel):
     skipped_reason: str | None = None
 
 
+async def load_candidates(
+    session: AsyncSession,
+    official: frozenset[str],
+    now: datetime,
+    *,
+    window_h: int = 24,
+) -> list[StoryCandidate]:
+    """Stories written in the last `window_h` hours: one candidate per cluster."""
+    notes = (
+        await session.execute(
+            select(Note)
+            .where(Note.cluster_id.is_not(None), Note.written_at >= now - timedelta(hours=window_h))
+            .order_by(Note.id.desc())
+        )
+    ).scalars()
+    cands: list[StoryCandidate] = []
+    for note in notes:
+        items = (
+            (
+                await session.execute(
+                    select(Item)
+                    .where(Item.cluster_id == note.cluster_id, Item.status == "written")
+                    .order_by(Item.id.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        reader = next((it.reader_json for it in items if it.reader_json), None)
+        if reader is None:
+            continue
+        try:
+            out = ReaderOutput.model_validate(reader)
+        except ValueError:
+            continue
+        domains = {it.domain for it in items}
+        relevance = max((it.relevance for it in items if it.relevance is not None), default=0.5)
+        cands.append(
+            StoryCandidate(
+                cluster_id=str(note.cluster_id),
+                title=note.title,
+                section=out.section,
+                exam_tags=[str(t.value) for t in out.exam_tags],
+                why=out.four_questions.why,
+                how_it_affects_me=out.four_questions.how_it_affects_me,
+                domains=domains,
+                verified_headline=headline_ok(domains, out.section, official),
+                relevance=relevance,
+            )
+        )
+    return cands
+
+
 async def run_briefing(
     session: AsyncSession,
     *,
@@ -213,27 +259,25 @@ async def run_briefing(
     owner_chat_id: int,
     candidates: Sequence[StoryCandidate] | None = None,
     official_domains: frozenset[str] = frozenset(),
-    at_time: time | None = None,
+    at_time: time = time(6, 30),
     grace_s: int = 21600,
     plan_lines: list[str] | None = None,
 ) -> BriefingResult:
-    """Body of briefing_job. Checks due, composes, enqueues to outbox, and logs to briefings."""
-    res = await session.execute(
-        select(BriefingModel.date).order_by(BriefingModel.date.desc()).limit(1)
-    )
-    last_sent = res.scalar_one_or_none()
+    """Body of briefing_job. `now` is local time. Checks due, composes, enqueues, records."""
+    last_sent = (
+        await session.execute(
+            select(BriefingModel.date).order_by(BriefingModel.date.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
 
-    if not briefing_due(now, last_sent, at_time=at_time, grace_s=grace_s):
+    if not briefing_due(now, last_sent, at_time, grace_s):
         return BriefingResult(skipped_reason="not_due")
 
-    cands_list = list(candidates or [])
-    selected = select_items(cands_list, official_domains)
+    if candidates is None:
+        candidates = await load_candidates(session, official_domains, now)
+    selected = select_items(list(candidates), official_domains)
 
-    briefing_obj = Briefing(
-        date=now.date(),
-        items=selected,
-        plan_lines=plan_lines or [],
-    )
+    briefing_obj = Briefing(date=now.date(), items=selected, plan_lines=plan_lines or [])
 
     briefing_row = BriefingModel(date=now.date(), sent_at=now)
     session.add(briefing_row)
