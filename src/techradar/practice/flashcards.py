@@ -1,6 +1,5 @@
-# WIRING(claude): routing quiz, cards; callbacks ans, rate
-# WIRING(claude): jobs quiz_job, cards_job, mistakes_page_job
-# WIRING(claude): needs fsrs (not approved) behind CardScheduler Protocol
+# The scheduler is pure Python behind the CardScheduler Protocol: `fsrs` (py-fsrs) is not an
+# approved dependency, so a server that approves it can inject its scheduler with set_scheduler.
 from __future__ import annotations
 
 from datetime import datetime
@@ -8,10 +7,10 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import DateTime, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import Flashcard
+from techradar.db.models import Chunk, Flashcard
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.practice.fsrs import Card, Rating, schedule_card
 
@@ -98,6 +97,25 @@ async def due_cards(
     - up to new_limit new cards (first_shown_at is None, not yet shown)
     - retired cards never
     """
+    # What today already used: new cards first shown today, and cards reviewed today (their
+    # FSRS state keeps `last_review`); the rest of today's budget is what is left.
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    new_today = await session.scalar(
+        select(func.count())
+        .select_from(Flashcard)
+        .where(Flashcard.first_shown_at >= day_start, Flashcard.first_shown_at <= now)
+    )
+    reviewed_today = await session.scalar(
+        select(func.count())
+        .select_from(Flashcard)
+        .where(
+            Flashcard.first_shown_at < day_start,
+            cast(Flashcard.fsrs_card["last_review"].astext, DateTime(timezone=True)) >= day_start,
+        )
+    )
+    new_limit = max(0, new_limit - int(new_today or 0))
+    review_limit = max(0, review_limit - int(reviewed_today or 0))
+
     # 1. Review cards (shown previously)
     review_stmt = (
         select(Flashcard)
@@ -198,6 +216,63 @@ def render_card_back(
         buttons.append([Button(text="Show source", data=f"src:{c.id}")])
 
     return text, buttons
+
+
+async def rate_card(
+    session: AsyncSession,
+    card_id: int,
+    rating: Literal[1, 2, 3, 4],
+    now: datetime,
+) -> Literal["rated", "already_rated", "not_found"]:
+    """Apply a rating once. A second tap on an old button finds the card no longer due."""
+    card = await session.get(Flashcard, card_id)
+    if card is None or card.retired:
+        return "not_found"
+    if card.due > now and card.first_shown_at is not None and card.fsrs_card.get("last_review"):
+        return "already_rated"
+    state, due = review_card(dict(card.fsrs_card or {}), rating, now)
+    card.fsrs_card = state
+    card.due = due
+    if card.first_shown_at is None:
+        card.first_shown_at = now
+    await session.flush()
+    return "rated"
+
+
+async def reveal_card(session: AsyncSession, card_id: int) -> tuple[str, list[list[Button]]] | None:
+    """The back of a card with its source line and the rating buttons; None if gone."""
+    card = await session.get(Flashcard, card_id)
+    if card is None or card.retired:
+        return None
+    title: str | None = None
+    if card.chunk_id is not None:
+        title = await session.scalar(select(Chunk.title).where(Chunk.id == card.chunk_id))
+    row = CardRow(
+        id=card.id,
+        front=card.front,
+        back=card.back,
+        source_kind=card.source_kind,
+        due=card.due,
+        doc_path=card.doc_path,
+        page=card.page,
+        ts_start=card.ts_start,
+    )
+    return render_card_back(row, title)
+
+
+SOURCE_CHARS = 1500
+
+
+async def source_text(session: AsyncSession, card_id: int) -> str | None:
+    """`From <title>, p. <n>:` and the cited chunk's text (cut to 1,500 characters)."""
+    card = await session.get(Flashcard, card_id)
+    if card is None or card.chunk_id is None:
+        return None
+    chunk = await session.get(Chunk, card.chunk_id)
+    if chunk is None:
+        return None
+    where = f", p. {chunk.page}" if chunk.page is not None else ""
+    return f"From {chunk.title}{where}:\n{chunk.text[:SOURCE_CHARS]}"
 
 
 class CardsResult(BaseModel):

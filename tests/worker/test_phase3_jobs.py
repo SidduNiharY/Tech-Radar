@@ -84,3 +84,36 @@ async def test_make_mcqs_job_runs_and_commits(monkeypatch: pytest.MonkeyPatch):
     await tasks.make_mcqs_job()
     assert run.await_args.args[1] == "completer"
     session.commit.assert_awaited_once()
+
+
+def test_quiz_cards_and_mistakes_jobs_are_declared():
+    assert tasks.quiz_job.name == "quiz" and tasks.quiz_job.queue == "io"
+    assert tasks.cards_job.name == "cards" and tasks.cards_job.queue == "io"
+    page = tasks.mistakes_page_job
+    assert page.name == "mistakes_page" and page.queueing_lock
+    for name in ("quiz", "cards", "mistakes_page"):
+        assert name in app.tasks
+
+
+async def test_quiz_and_cards_jobs_pass_the_daily_limits(monkeypatch: pytest.MonkeyPatch):
+    session = _patch(monkeypatch)
+    monkeypatch.setattr(
+        tasks,
+        "_get_settings",
+        lambda: SimpleNamespace(
+            tz="Asia/Kolkata",
+            telegram_owner_chat_id=42,
+            daily_new_cards=10,
+            daily_reviews=40,
+        ),
+    )
+    quiz, cards = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(tasks, "run_quiz", quiz)
+    monkeypatch.setattr(tasks, "run_cards", cards)
+    await tasks.quiz_job()
+    await tasks.cards_job()
+    assert quiz.await_args.kwargs["limit"] == 10 and quiz.await_args.kwargs["owner_chat_id"] == 42
+    assert (
+        cards.await_args.kwargs["new_limit"] == 10 and cards.await_args.kwargs["review_limit"] == 40
+    )
+    assert session.commit.await_count == 2

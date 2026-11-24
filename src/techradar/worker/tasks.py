@@ -29,7 +29,10 @@ from techradar.night.window import in_night_window, next_window_start, night_onl
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
+from techradar.practice.flashcards import run_cards
 from techradar.practice.mcq import run_make_mcqs
+from techradar.practice.mistakes import run_mistakes_page
+from techradar.practice.quiz import run_quiz
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -42,7 +45,7 @@ from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
-from techradar.worker.names import SAVE_TAKE
+from techradar.worker.names import CARDS, MISTAKES_PAGE, QUIZ, SAVE_TAKE
 
 logger = logging.getLogger(__name__)
 
@@ -545,3 +548,38 @@ async def make_mcqs_job() -> None:
     async with make_session_factory("app", settings)() as session:
         await run_make_mcqs(session, _completer(), now=_local_now())
         await session.commit()
+
+
+@app.task(queue="io", name=QUIZ)
+async def quiz_job() -> None:
+    """/quiz: today's 10 MCQs, each with its A-D buttons, into the outbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_quiz(
+            session, now=_local_now(), owner_chat_id=settings.telegram_owner_chat_id, limit=10
+        )
+        await session.commit()
+
+
+@app.task(queue="io", name=CARDS)
+async def cards_job() -> None:
+    """/cards: the flashcards due, within the daily new and review limits (D39)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_cards(
+            session,
+            now=_local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            new_limit=settings.daily_new_cards,
+            review_limit=settings.daily_reviews,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="30 12 * * 0")  # Sunday 18:00 Asia/Kolkata
+@app.task(queue="io", queueing_lock="mistakes_page_queued", name=MISTAKES_PAGE)
+async def mistakes_page_job() -> None:
+    """Rewrite the mistakes notebook page practice/mistakes.md in the vault."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_mistakes_page(session, now=_local_now(), vault_dir=settings.data_dir / "vault")

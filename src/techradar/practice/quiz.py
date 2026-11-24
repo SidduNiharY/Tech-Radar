@@ -1,5 +1,3 @@
-# WIRING(claude): routing quiz, cards; callbacks ans, rate
-# WIRING(claude): jobs quiz_job, cards_job, mistakes_page_job
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -7,7 +5,7 @@ from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import MCQ, Flashcard, Mistake, QuizAttempt
@@ -184,8 +182,15 @@ async def run_quiz(
     owner_chat_id: int,
     limit: int = 10,
 ) -> QuizResult:
-    """Job body for quiz_job. Enqueues up to limit active MCQs to owner_chat_id."""
-    stmt = select(MCQ).where(MCQ.status == "active").order_by(MCQ.id.desc()).limit(limit)
+    """Job body for quiz_job: up to `limit` active MCQs to the owner, least answered first."""
+    stmt = (
+        select(MCQ)
+        .outerjoin(QuizAttempt, QuizAttempt.mcq_id == MCQ.id)
+        .where(MCQ.status == "active")
+        .group_by(MCQ.id)
+        .order_by(func.count(QuizAttempt.id).asc(), MCQ.id.asc())
+        .limit(limit)
+    )
     res = await session.execute(stmt)
     mcqs = list(res.scalars().all())
 

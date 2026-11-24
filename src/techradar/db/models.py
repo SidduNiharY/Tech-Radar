@@ -605,7 +605,10 @@ class QuizAttempt(Base):
     """Attempt and outcome for a quiz question."""
 
     __tablename__ = "quiz_attempts"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        UniqueConstraint("mcq_id", "date", name="uq_quiz_attempts_mcq_date"),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     mcq_id: Mapped[int] = mapped_column(ForeignKey("techradar.mcqs.id"), nullable=False)

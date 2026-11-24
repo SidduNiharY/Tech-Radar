@@ -20,6 +20,7 @@ from telegram.ext import (
 
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
+from techradar.bot.practice_commands import COMMAND_JOBS, handle_practice_command
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.reply_target import find_reply_target
 from techradar.bot.routing import route_update
@@ -122,6 +123,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(text, reply_markup=markup)
         return
 
+    if routed.action in COMMAND_JOBS:  # --- Phase 3: /quiz and /cards queue a job by name ---
+        await handle_practice_command(update, context.application.bot_data, routed.action)
+        return
+
     if routed.action == "take" and reply_ref is not None:  # --- Phase 3 ---
         await handle_take(update, context.application.bot_data, routed.arg, reply_ref)
         return
@@ -151,6 +156,7 @@ async def post_init(application: Application) -> None:
     settings = get_settings()
     session_factory = make_session_factory("app", settings)
     application.bot_data["owner_id"] = settings.telegram_owner_chat_id
+    application.bot_data["tz"] = settings.tz  # Phase 3: "today" for quiz answers is local
     # /quarantine and its buttons (bot/callbacks.py). No release gate: the bot never runs
     # the Intake Gateway; released library docs are re-gated in the parser sandbox.
     application.bot_data["session_factory"] = session_factory

@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from sqlalchemy import func
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.engine import make_engine
-from techradar.db.models import MCQ, Flashcard, Mistake, QuizAttempt
+from techradar.db.models import MCQ, Fact, Flashcard, Mistake, QuizAttempt
 from techradar.practice.mistakes import MistakeRow, render_mistakes_page, run_mistakes_page
 from techradar.practice.quiz import (
     AnswerOutcome,
@@ -21,7 +19,6 @@ from techradar.practice.quiz import (
     render_mcq,
     run_quiz,
 )
-from techradar.settings import Settings
 
 NOW = datetime(2026, 11, 8, 10, 0, tzinfo=UTC)
 
@@ -164,6 +161,8 @@ class FakeAsyncSession:
                 return self._items[0] if self._items else None
 
         stmt_str = str(stmt).lower()
+        if "from techradar.mcqs" in stmt_str:  # the quiz query joins quiz_attempts too
+            return FakeResult(list(self.mcqs.values()))
         if "quiz_attempts" in stmt_str:
             return FakeResult(self.attempts)
         if "mistakes" in stmt_str:
@@ -325,30 +324,24 @@ async def count(session: AsyncSession, table_name: str) -> int:
     return int(res or 0)
 
 
-@pytest.fixture
-def db_settings() -> Settings:
-    return Settings(
-        telegram_owner_chat_id=1,
-        db_host="127.0.0.1",
-        db_port=55432,
-        db_name="techradar",
-        secrets_dir=Path("secrets"),
+async def _fact(session: AsyncSession, key: str) -> int:
+    fact = Fact(
+        fact_key=key,
+        statement="WPI is published by the OEA.",
+        subject="WPI",
+        value=None,
+        section="economy",
+        status="verified",
     )
-
-
-@pytest.fixture
-async def session(db_settings: Settings) -> AsyncGenerator[AsyncSession]:
-    engine = make_engine("app", db_settings)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-        await s.rollback()
-    await engine.dispose()
+    session.add(fact)
+    await session.flush()
+    return fact.id
 
 
 @pytest.mark.db
 async def test_wrong_answer_creates_mistake_and_card(session: AsyncSession) -> None:
     mcq = MCQ(
+        fact_id=await _fact(session, "quiz-wrong"),
         question="Which organisation publishes the Wholesale Price Index in India?",
         options=[
             "Reserve Bank of India",
@@ -372,6 +365,7 @@ async def test_wrong_answer_creates_mistake_and_card(session: AsyncSession) -> N
 @pytest.mark.db
 async def test_quiz_answer_idempotent(session: AsyncSession) -> None:
     mcq = MCQ(
+        fact_id=await _fact(session, "quiz-idem"),
         question=(
             "Which schedule of the Indian Constitution contains the list of recognized languages?"
         ),

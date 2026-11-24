@@ -14,6 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
+from techradar.bot.practice_callbacks import PRACTICE_ACTIONS, handle_practice_callback
 from techradar.library.quarantine import (
     ReleaseRequests,
     confirm_release,
@@ -52,6 +53,10 @@ async def handle_callback_query(
             await _quarantine_callback(query, context.application.bot_data, action, args[0])
         else:
             await query.answer("Invalid request.")
+        return
+
+    if action in PRACTICE_ACTIONS:  # --- Phase 3 ---
+        await handle_practice_callback(query, context.application.bot_data, action, args)
         return
 
     if action == "chap":

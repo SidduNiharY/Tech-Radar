@@ -116,6 +116,7 @@ def upgrade() -> None:
         sa.Column("date", sa.Date(), nullable=False),
         sa.ForeignKeyConstraint(["mcq_id"], [f"{SCHEMA}.mcqs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("mcq_id", "date", name="uq_quiz_attempts_mcq_date"),
         schema=SCHEMA,
     )
 
