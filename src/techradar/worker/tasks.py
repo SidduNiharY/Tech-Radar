@@ -178,7 +178,7 @@ async def intake_library(settings: Settings, deps: IndexDeps) -> list[int]:
 @app.periodic(cron="*/10 * * * *")
 @app.task(queue="io")
 @alert_on_failure("index_sync")  # Phase 5
-async def index_sync() -> None:
+async def index_sync(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
     """Run periodic vault and library indexing."""
     settings = _get_settings()
     deps = get_index_deps()
@@ -342,7 +342,9 @@ async def plan_doc_job(doc_id: int) -> None:
     name="collect_bulk_results_job",
 )
 @alert_on_failure("collect_bulk_results_job")  # Phase 5
-async def collect_bulk_results_job() -> None:
+async def collect_bulk_results_job(
+    timestamp: int | None = None,
+) -> None:  # periodic: gets timestamp=
     """Apply finished library parse results (probe, parts, whole docs)."""
     settings = _get_settings()
     session_factory = make_session_factory("app", settings)
@@ -368,7 +370,7 @@ async def collect_bulk_results_job() -> None:
     name="resume_bulk_job",
 )
 @alert_on_failure("resume_bulk_job")  # Phase 5
-async def resume_bulk_job() -> None:
+async def resume_bulk_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
     """Re-queue lost parse jobs of every stuck library doc (queued or processing).
 
     Also deletes the originals of held docs the owner deleted with /quarantine: the bot has
@@ -503,7 +505,9 @@ async def summarize_chapters_job(doc_id: int) -> None:
     name="close_stale_sessions_job",
 )
 @alert_on_failure("close_stale_sessions_job")
-async def close_stale_sessions_job() -> None:
+async def close_stale_sessions_job(
+    timestamp: int | None = None,
+) -> None:  # periodic: gets timestamp=
     """Close study sessions left running for more than 4 hours (the owner forgot /stop)."""
     settings = _get_settings()
     session_factory = make_session_factory("app", settings)
@@ -524,7 +528,7 @@ async def close_stale_sessions_job() -> None:
     name="weekly_review_job",
 )
 @alert_on_failure("weekly_review_job")
-async def weekly_review_job() -> None:
+async def weekly_review_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
     """Write this week's review page into the vault and send the owner a summary."""
     settings = _get_settings()
     session_factory = make_session_factory("app", settings)
@@ -550,7 +554,7 @@ async def weekly_review_job() -> None:
     name="health_job",
 )
 @alert_on_failure("health_job")
-async def health_job() -> None:
+async def health_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
     """Check disk, fetching, backup and Ollama; alert the owner about each problem."""
     settings = _get_settings()
     session_factory = make_session_factory("app", settings)
