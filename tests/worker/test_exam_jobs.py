@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -118,6 +119,34 @@ async def test_exam_imports_job_reads_the_library_inbox(
 
     imp.assert_awaited_once_with(session, tmp_path / "library-inbox", official)
     session.commit.assert_awaited_once()
+
+
+def test_formula_sheets_job_declaration():
+    job = tasks.formula_sheets_job
+    assert job.name == "formula_sheets_job"
+    assert job.queue == "llm"  # it asks the model through the RAG answer
+    assert job.queueing_lock
+    assert ("formula_sheets_job", "") in app.periodic_registry.periodic_tasks
+    assert 'task_name="formula_sheets_job"' in inspect.getsource(tasks)
+
+
+async def test_formula_sheets_job_uses_the_local_day_and_the_vault(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    session = _session()
+    run = AsyncMock(return_value={"written": 2})
+    deps = object()
+    settings = SimpleNamespace(data_dir=tmp_path, tz="Asia/Kolkata")
+    monkeypatch.setattr(tasks, "_get_settings", lambda: settings)
+    monkeypatch.setattr(tasks, "make_session_factory", lambda role, s: _factory(session))
+    monkeypatch.setattr(tasks, "get_rag_deps", lambda: deps)
+    monkeypatch.setattr(tasks, "run_formula_sheets", run)
+
+    await tasks.formula_sheets_job.func.__wrapped__(timestamp=1_700_000_000)
+
+    args = run.await_args.args
+    assert args[0] is session and args[1] is deps and args[2] == tmp_path / "vault"
+    assert isinstance(args[3], date)
 
 
 def test_library_intake_leaves_the_csv_folders_alone():

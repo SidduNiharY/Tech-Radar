@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from techradar.exams import final30
 from techradar.exams.drills.quant import DrillItem
 from techradar.exams.final30 import (
     PyqRef,
     capsule_bundle,
     final_30,
     mini_mock,
+    parse_exam_dates,
+    run_formula_sheets,
     write_formula_sheet,
 )
 from techradar.rag.answer import Answer, Citation
@@ -138,6 +142,64 @@ async def test_write_formula_sheet_cannot_escape_the_vault(
     assert list(vault.rglob("*.md")) and all(
         p.resolve().is_relative_to(vault.resolve()) for p in vault.rglob("*.md")
     )
+
+
+def test_parse_exam_dates_skips_malformed_entries():
+    got = parse_exam_dates({"SSC CGL": "2026-12-01", "GATE": "soon", "X": None})
+    assert got == {"SSC CGL": date(2026, 12, 1)}
+    assert parse_exam_dates(None) == {} and parse_exam_dates("2026-12-01") == {}
+
+
+class _Scalars:
+    def __init__(self, values: list[str]) -> None:
+        self._v = values
+
+    def scalars(self) -> _Scalars:
+        return self
+
+    def all(self) -> list[str]:
+        return self._v
+
+
+def _session(subjects: list[str]) -> MagicMock:
+    s = MagicMock()
+    s.execute = AsyncMock(return_value=_Scalars(subjects))
+    return s
+
+
+@pytest.mark.asyncio
+async def test_run_formula_sheets_is_quiet_without_exam_dates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(final30, "load_exam_dates", AsyncMock(return_value={}))
+    write = AsyncMock()
+    monkeypatch.setattr(final30, "write_formula_sheet", write)
+    session = _session([])
+    assert await run_formula_sheets(session, object(), tmp_path, date(2026, 11, 8)) == {}  # type: ignore[arg-type]
+    write.assert_not_called()
+    session.execute.assert_not_called()
+    assert not (tmp_path / "final30").exists()
+
+
+@pytest.mark.asyncio
+async def test_run_formula_sheets_writes_missing_sheets_and_keeps_existing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    today = date(2026, 11, 8)
+    monkeypatch.setattr(
+        final30, "load_exam_dates", AsyncMock(return_value={"SSC CGL": date(2026, 12, 1)})
+    )
+    existing = tmp_path / "final30" / "ssc-cgl" / "quant.md"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("old", encoding="utf-8")
+    write = AsyncMock(return_value="not_enough_sources")
+    monkeypatch.setattr(final30, "write_formula_sheet", write)
+
+    counts = await run_formula_sheets(_session(["Quant", "English"]), object(), tmp_path, today)  # type: ignore[arg-type]
+
+    assert counts == {"kept": 1, "not_enough_sources": 1}
+    assert write.await_args.args[:2] == ("SSC CGL", "English")
+    assert (tmp_path / "final30" / "current-affairs.md").exists()
 
 
 def test_capsule_bundle(tmp_path: Path):

@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import PyqQuestion
+from techradar.db.models import PyqQuestion, SyllabusTopic, UserSettings
 from techradar.exams.drills import DrillItem, daily_set
 from techradar.pipeline.writer import slugify, write_note
 from techradar.rag.answer import answer_question
@@ -130,9 +130,66 @@ async def write_formula_sheet(
         f"---\n{front}---\n\n# {exam}: {subject}, formula sheet\n\n{answer.text}\n\n"
         f"## Sources\n{sources}\n"
     )
-    rel = PurePosixPath("final30") / slugify(exam) / f"{slugify(subject)}.md"
-    write_note(vault_root, rel, content)
+    write_note(vault_root, formula_sheet_rel(exam, subject), content)
     return "written"
+
+
+def formula_sheet_rel(exam: str, subject: str) -> PurePosixPath:
+    """Vault-relative path of one formula sheet; the exam and subject appear only as slugs."""
+    return PurePosixPath("final30") / slugify(exam) / f"{slugify(subject)}.md"
+
+
+def parse_exam_dates(value: object) -> dict[str, date]:
+    """`{exam: "YYYY-MM-DD"}` from the owner's settings; anything malformed is skipped."""
+    out: dict[str, date] = {}
+    if not isinstance(value, dict):
+        return out
+    for exam, raw in value.items():
+        try:
+            out[str(exam)] = date.fromisoformat(str(raw))
+        except ValueError:
+            continue
+    return out
+
+
+async def load_exam_dates(session: AsyncSession) -> dict[str, date]:
+    """The exam dates the owner set (`user_settings` key `exam_dates`); empty when none."""
+    row = await session.get(UserSettings, "exam_dates")
+    return parse_exam_dates(row.value if row else None)
+
+
+async def run_formula_sheets(
+    session: AsyncSession, deps: RagDeps, vault_root: Path, today: date
+) -> dict[str, int]:
+    """Final-30 night job: a formula sheet per syllabus subject of the nearest exam.
+
+    Does nothing (no error) without an exam date inside 30 days. A sheet that already exists
+    is kept. Also refreshes `final30/current-affairs.md`. Returns counts by outcome.
+    """
+    counts: dict[str, int] = {}
+    exam = final_30(await load_exam_dates(session), today)
+    if exam is None:
+        return counts
+    subjects = (
+        (
+            await session.execute(
+                select(SyllabusTopic.subject)
+                .where(SyllabusTopic.exam == exam)
+                .distinct()
+                .order_by(SyllabusTopic.subject)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for subject in subjects:
+        if (vault_root / formula_sheet_rel(exam, subject)).exists():
+            counts["kept"] = counts.get("kept", 0) + 1
+            continue
+        result = await write_formula_sheet(exam, subject, deps, vault_root)
+        counts[result] = counts.get(result, 0) + 1
+    capsule_bundle(vault_root, today)
+    return counts
 
 
 def capsule_bundle(vault_root: Path, today: date) -> str:

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
+from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
 from techradar.exams.weights import import_inbox_files
@@ -567,3 +568,21 @@ async def exam_imports_job(timestamp: int | None = None) -> None:
         await session.commit()
     if n_cut or n_weight:
         logger.info("exam imports: %d cutoffs, %d weights", n_cut, n_weight)
+
+
+# Nightly at 20:30 UTC = 02:00 in Asia/Kolkata, inside the night window.
+@app.periodic(cron="30 20 * * *")
+@app.task(queue="llm", queueing_lock="formula_sheets_queued", name="formula_sheets_job")
+@night_only(task_name="formula_sheets_job")
+async def formula_sheets_job(timestamp: int | None = None) -> None:
+    """Night: in the final 30 days of an exam, write a cited formula sheet per syllabus
+    subject from the owner's own notes (Task 7). Does nothing without an exam date set.
+    """
+    settings = _get_settings()
+    today = datetime.now(UTC).astimezone(ZoneInfo(settings.tz)).date()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        counts = await run_formula_sheets(
+            session, get_rag_deps(), settings.data_dir / "vault", today
+        )
+    logger.info("formula sheets: %s", counts)
