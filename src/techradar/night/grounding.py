@@ -14,6 +14,10 @@ import hashlib
 import re
 from collections.abc import Iterable, Sequence
 
+from sqlalchemy import ColumnElement, func, select
+from sqlalchemy.orm import aliased
+
+from techradar.db.models import Item
 from techradar.pipeline.writer import md_escape, slugify
 from techradar.rag.answer import build_context, check_citations, fit_hits
 from techradar.rag.budget import conservative_tokens, context_budget
@@ -34,6 +38,20 @@ def usable_hits(hits: Iterable[Hit], min_score: float = 0.0) -> list[Hit]:
         for h in hits
         if not h.flagged and h.score >= min_score and (h.doc_kind != "news" or h.verified is True)
     ]
+
+
+def unflagged_item() -> ColumnElement[bool]:
+    """The item has no flag (gateway or reader): flagged content is never a source."""
+    return func.cardinality(Item.flags) == 0
+
+
+def unflagged_cluster() -> ColumnElement[bool]:
+    """No item of the story's cluster is flagged, so its note title is safe to reuse as a topic."""
+    other = aliased(Item)  # its own alias, so the subquery is not correlated to the outer items
+    flagged = select(other.cluster_id).where(
+        other.cluster_id.is_not(None), func.cardinality(other.flags) > 0
+    )
+    return Item.cluster_id.not_in(flagged)
 
 
 def clean_topic(topic: str) -> str:

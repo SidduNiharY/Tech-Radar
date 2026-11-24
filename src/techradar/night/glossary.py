@@ -34,6 +34,8 @@ from techradar.night.grounding import (
     grounded_hits,
     safe_slug,
     sources_lines,
+    unflagged_cluster,
+    unflagged_item,
 )
 from techradar.pipeline.writer import write_note
 from techradar.rag.retrieve import RagDeps
@@ -156,6 +158,8 @@ async def entity_counts(
         .where(
             Item.status == "written",
             Item.reader_json.is_not(None),
+            unflagged_item(),
+            unflagged_cluster(),
             RawItem.fetched_at >= now - timedelta(days=days),
         )
     )

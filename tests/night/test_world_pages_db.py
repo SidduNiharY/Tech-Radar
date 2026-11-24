@@ -24,7 +24,13 @@ NOW = datetime(2026, 11, 7, 21, 30, tzinfo=UTC)
 
 
 async def _story(
-    session: AsyncSession, key: int, entities: list[str], *, days_ago: int = 1, flags=None
+    session: AsyncSession,
+    key: int,
+    entities: list[str],
+    *,
+    days_ago: int = 1,
+    flags=None,
+    cluster: int | None = None,
 ) -> None:
     src = Source(
         name=f"wp-{key}",
@@ -52,21 +58,22 @@ async def _story(
             domain=f"wp{key}.example",
             lang="en",
             content_hash=f"{key + 7000:064x}",
-            cluster_id=key,
+            cluster_id=cluster or key,
             status="written",
             flags=flags or [],
             reader_json={"entities": entities},
         )
     )
-    session.add(
-        Note(
-            cluster_id=key,
-            vault_path=f"wiki/news/2026/11/wp-{key}.md",
-            kind="news",
-            title=f"Story {key}",
-            content_hash=f"{key:064x}",
+    if cluster is None:  # a second item of a story shares its first item's note
+        session.add(
+            Note(
+                cluster_id=key,
+                vault_path=f"wiki/news/2026/11/wp-{key}.md",
+                kind="news",
+                title=f"Story {key}",
+                content_hash=f"{key:064x}",
+            )
         )
-    )
     await session.flush()
 
 

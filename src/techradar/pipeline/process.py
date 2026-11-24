@@ -412,7 +412,7 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
             articles: list[tuple[str, str, str]] = []
             for it in cluster_items:
                 cdoc, _err = _read_clean_doc(Path(it.text_path)) if it.text_path else (None, None)
-                if cdoc is not None and "gateway_flagged" not in it.flags:
+                if cdoc is not None and not it.flags:  # any flag keeps an item out of a prompt
                     articles.append((it.domain, it.title, cdoc.text))
             politics_view = await build_politics_view(deps.completer, articles)
 

@@ -36,6 +36,8 @@ from techradar.night.grounding import (
     grounded_hits,
     safe_slug,
     sources_lines,
+    unflagged_cluster,
+    unflagged_item,
 )
 from techradar.pipeline.writer import write_note
 from techradar.rag.retrieve import RagDeps
@@ -177,7 +179,8 @@ async def cluster_stats(
         .join(Note, Note.cluster_id == Item.cluster_id)
         .where(
             Item.status == "written",
-            func.cardinality(Item.flags) == 0,
+            unflagged_item(),
+            unflagged_cluster(),
             RawItem.fetched_at >= now - timedelta(days=days),
         )
         .group_by(Item.cluster_id, Note.title)

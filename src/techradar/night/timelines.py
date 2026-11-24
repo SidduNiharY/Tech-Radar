@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Item, Note, RawItem
 from techradar.db.models import Timeline as TimelineRow
-from techradar.night.grounding import safe_slug
+from techradar.night.grounding import safe_slug, unflagged_cluster, unflagged_item
 from techradar.pipeline.writer import write_note
 from techradar.security.text import sanitize_text
 
@@ -134,7 +134,8 @@ async def cluster_rows(session: AsyncSession, *, tz: str) -> list[ClusterRow]:
         .join(Note, Note.cluster_id == Item.cluster_id)
         .where(
             Item.status == "written",
-            func.cardinality(Item.flags) == 0,
+            unflagged_item(),
+            unflagged_cluster(),
             Note.kind == "news",
         )
     )
