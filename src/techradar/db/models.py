@@ -751,7 +751,7 @@ class UserSettings(Base):
     __table_args__ = {"schema": "techradar"}
 
     key: Mapped[str] = mapped_column(Text, primary_key=True)
-    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)  # any JSON (one field per key)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

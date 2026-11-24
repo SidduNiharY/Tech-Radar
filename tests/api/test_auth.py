@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 
 from techradar.api import deps
 from techradar.api.main import MAX_BODY, create_app
-from tests.api.conftest import AUTH, OWNER, TOKEN, api_settings, write_token
+from tests.api.conftest import AUTH, OWNER, TOKEN, api_settings, app_routes, write_token
 
 
 def test_missing_or_wrong_token_401(client: TestClient) -> None:
@@ -52,11 +52,35 @@ def test_foreign_host_rejected(client: TestClient) -> None:
 
 
 def test_every_v1_route_requires_auth(client: TestClient) -> None:
-    for r in client.app.routes:
-        if getattr(r, "path", "").startswith("/v1"):
-            for m in r.methods - {"HEAD", "OPTIONS"}:
-                path = r.path.replace("{", "").replace("}", "")
-                assert client.request(m, path).status_code in (401, 422), r.path
+    checked: set[tuple[str, str]] = set()
+    for route_path, methods in app_routes(client.app):
+        if route_path.startswith("/v1"):
+            for m in methods - {"HEAD", "OPTIONS"}:
+                path = route_path.replace("{", "").replace("}", "")
+                assert client.request(m, path).status_code in (401, 422), route_path
+                checked.add((route_path, m))
+    # Never vacuous: every /v1 operation in the schema was requested above.
+    schema = client.get("/openapi.json").json()["paths"]
+    in_schema = {(p, m.upper()) for p, ops in schema.items() if p.startswith("/v1") for m in ops}
+    assert in_schema and in_schema <= checked
+
+
+def test_route_listing_sees_included_routers(settings) -> None:
+    """A route added without require_caller is caught (the check above is not blind)."""
+    from fastapi import APIRouter
+
+    app = create_app(settings)
+    open_router = APIRouter(prefix="/v1")
+
+    @open_router.get("/leak")
+    def leak() -> dict[str, bool]:
+        return {"leak": True}
+
+    app.include_router(open_router)
+    c = TestClient(app)
+    paths = {p for p, _ in app_routes(app)}
+    assert {"/v1/ping", "/v1/leak"} <= paths
+    assert c.get("/v1/leak").status_code == 200  # the loop above would flag this route
 
 
 def test_healthz_unauthenticated(client: TestClient) -> None:

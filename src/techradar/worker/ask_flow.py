@@ -17,6 +17,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from techradar.bot.book_ask import valid_id
@@ -25,11 +26,12 @@ from techradar.db.models import Answer as AnswerModel
 from techradar.llm.roles import Role
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.rag.answer import LOW_CONFIDENCE, Answer, answer_question
-from techradar.rag.retrieve import RagDeps
+from techradar.rag.retrieve import RagDeps, RetrieveFilters
 
 logger = logging.getLogger(__name__)
 
 DEFER_REPLY = "I'll answer this one tonight with the bigger model."
+PENDING = "pending"  # an answers row the API created for a web ask
 DeferNight = Callable[[str, int | None], Awaitable[None]]
 
 
@@ -116,6 +118,74 @@ async def run_ask(
                 await session.commit()
             return
     await _deliver(session_factory, chat_id, question, answer)
+
+
+async def run_web_ask(
+    question: str,
+    *,
+    answer_id: object,
+    doc_id: int | None,
+    verified_only: bool,
+    deps: RagDeps,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Answer a question asked on the web: fill in the `pending` row the API created.
+
+    Phase 4 Task 2. The row must exist, still be pending and hold this question; the write is
+    conditional on `status = 'pending'`, so a replayed job never changes a finished answer.
+    No outbox message (the web polls) and no night deferral (the web waits up to 120 s).
+    On an error the row becomes `needs_review` with the flag `error`, and the error is raised.
+    """
+    if not valid_ask_args(question, doc_id, deps.settings.max_question_chars):
+        logger.warning("web ask job dropped: invalid arguments")
+        return
+    if not valid_id(answer_id):
+        logger.warning("web ask job dropped: invalid answer id")
+        return
+    row_id = int(answer_id)  # type: ignore[call-overload]
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                select(AnswerModel).where(AnswerModel.id == row_id, AnswerModel.status == PENDING)
+            )
+        ).scalar_one_or_none()
+    if row is None or row.question != question:
+        logger.warning("web ask job dropped: no matching pending answer")
+        return
+    scope = _scope(doc_id)
+    f = RetrieveFilters(verified_only=True) if verified_only else None
+    try:
+        answer = await answer_question(question, deps, f=f, **scope)
+        if answer.status == "needs_review" and "too_long" not in answer.flags:
+            answer = await answer_question(question, deps, f=f, **scope, rewrite=True, expand=True)
+    except Exception:
+        await _fill_web_answer(session_factory, row_id, None)
+        raise
+    await _fill_web_answer(session_factory, row_id, answer)
+
+
+async def _fill_web_answer(
+    session_factory: async_sessionmaker[AsyncSession], row_id: int, answer: Answer | None
+) -> None:
+    values: dict[str, Any] = (
+        {"text": "", "citations": [], "status": "needs_review", "used_unverified": False,
+         "flags": ["error"]}
+        if answer is None
+        else {
+            "text": answer.text,
+            "citations": [c.model_dump() for c in answer.citations],
+            "status": answer.status,
+            "used_unverified": answer.used_unverified,
+            "flags": answer.flags,
+        }
+    )  # fmt: skip
+    async with session_factory() as session:
+        await session.execute(
+            update(AnswerModel)
+            .where(AnswerModel.id == row_id, AnswerModel.status == PENDING)
+            .values(**values)
+        )
+        await session.commit()
 
 
 async def run_night_ask(

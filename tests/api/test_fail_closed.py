@@ -15,6 +15,7 @@ from starlette.testclient import TestClient
 
 from techradar.api.main import create_app
 from techradar.settings import Settings
+from tests.api.conftest import FakeDefer, FakeSession, use_fakes
 
 OWNER = "siddu@tailnet.test"
 
@@ -80,22 +81,33 @@ def test_prod_refuses_the_placeholder_owner_login(tmp_path: Path):
     assert r.status_code == 503
 
 
-@pytest.mark.parametrize("question", ["", "x" * 501])
-def test_ask_rejects_empty_or_too_long_questions(tmp_path: Path, question: str):
+def _ask_client(tmp_path: Path) -> tuple[TestClient, FakeSession, FakeDefer]:
+    """The prod app with the database and the queue replaced by fakes (Task 2 routes)."""
     write_token(tmp_path, "s3cret-token")
-    r = client(settings(tmp_path)).post(
+    app = create_app(settings(tmp_path))
+    session, defer = FakeSession(), FakeDefer()
+    use_fakes(app, session, defer)
+    return TestClient(app, base_url="http://localhost"), session, defer
+
+
+@pytest.mark.parametrize("question", ["", "   ", "x" * 501])
+def test_ask_rejects_empty_or_too_long_questions(tmp_path: Path, question: str):
+    c, session, defer = _ask_client(tmp_path)
+    r = c.post(
         "/v1/ask",
         json={"question": question},
         headers={"X-Service-Token": "s3cret-token", "X-TR-User": OWNER},
     )
     assert r.status_code == 422
+    assert session.added == [] and defer.calls == []
 
 
 def test_ask_accepts_a_normal_question(tmp_path: Path):
-    write_token(tmp_path, "s3cret-token")
-    r = client(settings(tmp_path)).post(
+    c, _session, defer = _ask_client(tmp_path)
+    r = c.post(
         "/v1/ask",
         json={"question": "What is the repo rate?"},
         headers={"X-Service-Token": "s3cret-token", "X-TR-User": OWNER},
     )
     assert r.status_code == 200
+    assert [name for name, _ in defer.calls] == ["ask"]

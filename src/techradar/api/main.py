@@ -13,16 +13,20 @@ Only the Next.js server talks to it, over the internal network (no published por
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from techradar.api.deps import require_caller
+from techradar.api.resources import Resources
+from techradar.api.routes import ROUTERS
 from techradar.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -30,13 +34,6 @@ logger = logging.getLogger(__name__)
 MAX_BODY: int = 65_536
 ALLOWED_HOSTS = ["api", "localhost", "127.0.0.1"]
 TEST_HOST = "testserver"  # what Starlette's TestClient sends; never trusted in production
-
-
-class AskRequest(BaseModel):
-    """A question for /v1/ask (answers.question is varchar(500))."""
-
-    question: str = Field(min_length=1, max_length=500)
-    verified_only: bool = False
 
 
 class BodyLimit:
@@ -117,6 +114,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = _settings_or_default()
     is_prod = settings.env == "prod"
+    resources = Resources(settings)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        await resources.aclose()
 
     app = FastAPI(
         title="TechRadar Brain API",
@@ -128,8 +131,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             RequestValidationError: _validation_error,
             Exception: _internal_error,
         },
+        lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.resources = resources
 
     # The last middleware added runs first: the host check, then the body limit.
     app.add_middleware(BodyLimit, max_body=MAX_BODY)
@@ -153,10 +158,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def status() -> dict[str, Any]:
         return {"status": "ok", "version": "0.1.0", "env": settings.env}
 
-    @v1_router.post("/ask")
-    def ask(request: AskRequest) -> dict[str, Any]:
-        return {"answer_id": 1, "status": "queued"}
-
+    for router in ROUTERS:
+        v1_router.include_router(router)
     app.include_router(v1_router)
     return app
 

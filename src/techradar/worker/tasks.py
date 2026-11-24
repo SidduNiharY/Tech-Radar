@@ -38,7 +38,7 @@ from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
-from techradar.worker.ask_flow import run_ask, run_night_ask
+from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
 
 logger = logging.getLogger(__name__)
 
@@ -199,12 +199,33 @@ def get_rag_deps() -> RagDeps:
 
 
 @app.task(queue="llm", lock="ask", name="ask")
-async def ask_job(chat_id: int, question: str, doc_id: int | None = None) -> None:
-    """Answer a question (of one book when doc_id is set) and enqueue the reply to the outbox.
+async def ask_job(
+    question: str,
+    chat_id: int | None = None,
+    answer_id: int | None = None,
+    doc_id: int | None = None,
+    verified_only: bool = False,
+) -> None:
+    """Answer a question (of one book when doc_id is set).
 
-    A hard question is deferred to `ask_night` (owner chat only); see worker/ask_flow.py.
+    From Telegram (`chat_id`): enqueue the reply to the outbox; a hard question is deferred to
+    `ask_night` (owner chat only). From the web (`answer_id`, Phase 4): fill in the pending
+    answers row the API created; the web polls it. See worker/ask_flow.py.
     """
     settings = _get_settings()
+    if answer_id is not None:
+        await run_web_ask(
+            question,
+            answer_id=answer_id,
+            doc_id=doc_id,
+            verified_only=verified_only,
+            deps=get_rag_deps(),
+            session_factory=make_session_factory("app", settings),
+        )
+        return
+    if chat_id is None:
+        logger.warning("ask job dropped: neither a chat nor an answer row")
+        return
     await run_ask(
         question,
         chat_id=chat_id,

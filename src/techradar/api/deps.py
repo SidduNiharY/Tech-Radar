@@ -10,15 +10,27 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Annotated, Any
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Path as PathParam
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from techradar.api.resources import Defer, Resources, ollama_ps, read_meminfo
+from techradar.llm.roles import RoleConfigError, load_roles
 from techradar.settings import SecretError, Settings, get_settings, read_secret
 
 logger = logging.getLogger(__name__)
 
 PLACEHOLDER_OWNER = "owner@local"
+MAX_DB_ID = 2**63 - 1
+
+# A row id in a path: a positive bigint, so no id reaches SQL out of range.
+DbId = Annotated[int, PathParam(ge=1, le=MAX_DB_ID)]
 
 
 class ServiceTokenMissing(Exception):
@@ -81,3 +93,64 @@ async def require_caller(
     if not _same(x_tr_user, expected_user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return expected_user
+
+
+# --- route dependencies (Task 2); tests override these ---------------------------------
+
+
+def resources(request: Request) -> Resources:
+    return request.app.state.resources  # type: ignore[no-any-return]
+
+
+async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """A `tr_app` session for routes that change data; the route commits."""
+    async with resources(request).session_factory("app")() as session:
+        yield session
+
+
+async def get_ro_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """A `tr_ro` session for GET routes: the database itself refuses any write."""
+    async with resources(request).session_factory("ro")() as session:
+        yield session
+
+
+def get_defer(request: Request) -> Defer:
+    """Queue a job by name (Procrastinate); tests record the calls instead."""
+    return resources(request).defer
+
+
+def get_now() -> datetime:
+    return datetime.now(UTC)
+
+
+async def get_loaded_models(request: Request) -> list[dict[str, Any]]:
+    return await ollama_ps(app_settings(request).ollama_base_url)
+
+
+def get_memory() -> tuple[int, int]:
+    return read_meminfo()
+
+
+ROLES_PATHS = (Path("/infra/models/roles.yaml"), Path("infra/models/roles.yaml"))
+
+
+def get_roles() -> dict[str, str]:
+    """Job name to Ollama tag, from roles.yaml; {} when the file is missing or invalid."""
+    path = next((p for p in ROLES_PATHS if p.is_file()), ROLES_PATHS[-1])
+    try:
+        roles = load_roles(path, allow_cloud=False)
+    except RoleConfigError, OSError, ValueError:
+        logger.warning("roles.yaml unavailable for /v1/models/status")
+        return {}
+    return {role.value: model.ollama_tag for role, model in roles.items()}
+
+
+# Parameter types for routes (FastAPI resolves them; tests override the functions above).
+AppSession = Annotated[AsyncSession, Depends(get_session)]
+RoSession = Annotated[AsyncSession, Depends(get_ro_session)]
+Now = Annotated[datetime, Depends(get_now)]
+AppSettings = Annotated[Settings, Depends(app_settings)]
+DeferJob = Annotated[Defer, Depends(get_defer)]
+Roles = Annotated[dict[str, str], Depends(get_roles)]
+LoadedModels = Annotated[list[dict[str, Any]], Depends(get_loaded_models)]
+Memory = Annotated[tuple[int, int], Depends(get_memory)]

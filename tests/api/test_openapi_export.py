@@ -1,4 +1,8 @@
-"""Tests for OpenAPI specification schema exporter (SEC-27)."""
+"""Tests for the OpenAPI export (Phase 4 Task 2). SEC: SEC-27.
+
+Before: the script added its own `/v1/upload` route straight onto the app, outside the `/v1`
+router and so without the caller check, and exported that fake route.
+"""
 
 from __future__ import annotations
 
@@ -7,69 +11,70 @@ from pathlib import Path
 
 import pytest
 
-from scripts.export_openapi import export_openapi, main
+from scripts.export_openapi import DEFAULT_OUTPUT, export_openapi, main
+
+PHASE4_PATHS = {
+    "/v1/ping",
+    "/v1/today",
+    "/v1/ask",
+    "/v1/answers/{answer_id}",
+    "/v1/answers/{answer_id}/save",
+    "/v1/practice/cards/due",
+    "/v1/practice/cards/{card_id}/back",
+    "/v1/practice/cards/{card_id}/rate",
+    "/v1/quiz/today",
+    "/v1/quiz/{mcq_id}/answer",
+    "/v1/models/status",
+    "/v1/settings",
+}
 
 
-def test_export_openapi_success(tmp_path: Path) -> None:
-    """Exporting OpenAPI schema succeeds and generates valid JSON with required paths."""
-    target_path = tmp_path / "openapi.json"
-    schema = export_openapi(target_path)
+def test_export_writes_the_real_routes(tmp_path: Path) -> None:
+    target = tmp_path / "openapi.json"
+    schema = export_openapi(target)
+    loaded = json.loads(target.read_text(encoding="utf-8"))
+    assert loaded == schema
+    assert loaded["openapi"].startswith("3.")
+    assert loaded["info"]["title"] == "TechRadar Brain API"
+    assert PHASE4_PATHS <= set(loaded["paths"])
 
-    # File exists and is valid JSON
-    assert target_path.exists()
-    assert target_path.is_file()
 
-    loaded_schema = json.loads(target_path.read_text(encoding="utf-8"))
-    assert loaded_schema == schema
+def test_export_adds_no_route_of_its_own(tmp_path: Path) -> None:
+    paths = export_openapi(tmp_path / "o.json")["paths"]
+    assert "/v1/upload" not in paths
+    assert all(p.startswith("/v1/") or p == "/healthz" for p in paths)
 
-    # Verify root fields
-    assert "openapi" in loaded_schema
-    assert loaded_schema["openapi"].startswith("3.")
-    assert loaded_schema["info"]["title"] == "TechRadar Brain API"
 
-    # Verify required endpoints are present
-    paths = loaded_schema.get("paths", {})
-    assert "/v1/ping" in paths
-    assert "/v1/status" in paths
-    assert "/v1/ask" in paths
-    assert "/v1/upload" in paths
+def test_every_v1_operation_declares_the_caller_headers(tmp_path: Path) -> None:
+    """The generated client types carry the token and owner headers for every /v1 call."""
+    paths = export_openapi(tmp_path / "o.json")["paths"]
+    for path, ops in paths.items():
+        if not path.startswith("/v1/"):
+            continue
+        for method, op in ops.items():
+            headers = {p["name"].lower() for p in op.get("parameters", []) if p["in"] == "header"}
+            assert {"x-service-token", "x-tr-user"} <= headers, (method, path)
+
+
+def test_default_output_is_the_web_app() -> None:
+    assert DEFAULT_OUTPUT == Path("apps/web/openapi.json")
 
 
 def test_export_openapi_cli_custom_path(tmp_path: Path) -> None:
-    """CLI properly accepts custom output path via --output argument."""
     custom_target = tmp_path / "nested" / "custom_api.json"
-    exit_code = main(["--output", str(custom_target)])
-
-    assert exit_code == 0
-    assert custom_target.exists()
-
-    content = json.loads(custom_target.read_text(encoding="utf-8"))
-    paths = content.get("paths", {})
-    assert "/v1/ping" in paths
-    assert "/v1/status" in paths
-    assert "/v1/ask" in paths
-    assert "/v1/upload" in paths
+    assert main(["--output", str(custom_target)]) == 0
+    assert PHASE4_PATHS <= set(json.loads(custom_target.read_text(encoding="utf-8"))["paths"])
 
 
 def test_export_openapi_cli_short_flag(tmp_path: Path) -> None:
-    """CLI properly accepts custom output path via -o argument."""
     custom_target = tmp_path / "short_flag" / "openapi.json"
-    exit_code = main(["-o", str(custom_target)])
-
-    assert exit_code == 0
-    assert custom_target.exists()
-
-    content = json.loads(custom_target.read_text(encoding="utf-8"))
-    assert "/v1/upload" in content.get("paths", {})
+    assert main(["-o", str(custom_target)]) == 0
+    assert "/v1/ask" in json.loads(custom_target.read_text(encoding="utf-8"))["paths"]
 
 
 def test_export_openapi_error_handling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Script handles write errors cleanly and returns non-zero exit code."""
-
     def mock_write_text(*args: object, **kwargs: object) -> None:
         raise OSError("Permission denied")
 
     monkeypatch.setattr(Path, "write_text", mock_write_text)
-
-    exit_code = main(["--output", str(tmp_path / "fail.json")])
-    assert exit_code == 1
+    assert main(["--output", str(tmp_path / "fail.json")]) == 1
