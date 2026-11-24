@@ -583,12 +583,13 @@ async def summarize_doc(
     one chapter. `in_window` (when given) is asked before EACH chapter: once it says no, the
     run stops with what is done and `more` is 1, so the caller re-defers to the next window.
 
-    A chapter the model cannot summarise safely stays without `summary_path` and is counted
-    in `failed`; it is tried again on the next run, up to `max_attempts` times in all (see
-    `read_attempts`), then given up. The doc becomes `ready` (book evals made, Ready message
-    queued, once) only when no chapter is left to try: a doc that is already `ready` is
-    never announced again, but gets its evals made again if a re-index deleted them. If some
-    chapters were given up the message says `n of total chapters summarised`.
+    A chapter the model cannot summarise safely (or whose model call raises) stays without
+    `summary_path` and is counted in `failed`; it is tried again on the next run, up to
+    `max_attempts` times in all (see `read_attempts`), then given up. The doc becomes
+    `ready` (book evals made, Ready message queued, once) only when no chapter is left to
+    try: a doc that is already `ready` is never announced again, but gets its evals made
+    again if a re-index deleted them. If some chapters were given up the message says
+    `n of total chapters summarised`.
 
     Before each chapter, and again right before its note is written, the doc and chapter are
     looked up: a deleted chapter is skipped (no orphan note), and a doc that was flagged or
@@ -731,7 +732,19 @@ async def summarize_doc(
             page_end=chapter.page_end,
         )
         record_attempt(library_dir, chapter.id)
-        summary = await summarize_chapter(completer, row, used)
+        try:
+            summary = await summarize_chapter(completer, row, used)
+        except Exception as exc:
+            # The call itself failed (Ollama down, a timeout): a failed attempt like a bad
+            # answer, so the chapter is tried again next run and given up after
+            # `max_attempts`. Cancellation (BaseException) still stops the job.
+            logger.warning(
+                "chapter %d of doc %d: model call failed (%s)",
+                chapter.id,
+                doc_id,
+                type(exc).__name__,
+            )
+            summary = None
         if summary is None:
             counts["failed"] += 1
             logger.warning("chapter %d of doc %d: summary failed", chapter.id, doc_id)
