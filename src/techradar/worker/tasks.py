@@ -23,7 +23,10 @@ from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import enqueue_message
+from techradar.night.chains import run_chains
 from techradar.night.deep_dive import run_deep_dive
+from techradar.night.glossary import run_glossary
+from techradar.night.timelines import run_timelines
 from techradar.night.window import in_night_window, next_window_start, night_only
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
@@ -493,3 +496,54 @@ async def deep_dive_job(timestamp: int | None = None) -> None:
         )
         await session.commit()
     logger.info("deep dive: %s", result.model_dump())
+
+
+@app.periodic(cron="0 20 * * *")  # 01:30 IST
+@app.task(queue=NIGHT_QUEUE, name="glossary_job")
+@night_only(task_name="glossary_job")
+async def glossary_job(timestamp: int | None = None) -> None:
+    """Write up to five missing glossary entries from the terms the news keeps naming."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_glossary(
+            session,
+            now=datetime.now(UTC),
+            deps=get_rag_deps(),
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+    logger.info("glossary: %s", result.model_dump())
+
+
+@app.periodic(cron="30 20 * * *")  # 02:00 IST
+@app.task(queue=NIGHT_QUEUE, name="timelines_job")
+@night_only(task_name="timelines_job")
+async def timelines_job(timestamp: int | None = None) -> None:
+    """Regenerate the story timeline of every entity with enough stories (code only)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_timelines(
+            session, tz=settings.tz, vault_root=settings.data_dir / "vault"
+        )
+        await session.commit()
+    logger.info("timelines: %s", result.model_dump())
+
+
+@app.periodic(cron="0 21 * * *")  # 02:30 IST
+@app.task(queue=NIGHT_QUEUE, name="chains_job")
+@night_only(task_name="chains_job")
+async def chains_job(timestamp: int | None = None) -> None:
+    """Add a cause-and-effect diagram to each recent deep dive that has none."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_chains(
+            session,
+            now=datetime.now(UTC),
+            deps=get_rag_deps(),
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+    logger.info("chains: %s", result.model_dump())
