@@ -70,3 +70,20 @@ def test_render_mock_reply_above_cutoff():
     m = MockScore(exam="SSC CGL", total=145.0, max_total=200.0, sections=[])
     reply = render_mock_reply(m, 136.0, "General")
     assert "You're 9.0 marks above last year's cutoff (136.0, General)." in reply
+
+
+def test_extract_mock_regex_attempted_and_correct_belong_to_the_section_above():
+    m = extract_mock_regex(
+        "Total Score: 60 / 100\nQuantitative Aptitude 32.5 / 50\nAttempted: 20\nCorrect: 13\n"
+        "English 27.5 / 50\nAttempted 22\nCorrect 15"
+    )
+    assert m is not None
+    assert (m.sections[0].attempted, m.sections[0].correct) == (20, 13)
+    assert (m.sections[1].attempted, m.sections[1].correct) == (22, 15)
+
+
+async def test_ocr_text_reaches_the_model_inside_untrusted_markers():
+    completer = FakeCompleter(['{"exam":"SSC","total":123.5,"max_total":200,"sections":[]}'])
+    assert await extract_mock(completer, "garbled 123.5 / 200") is not None
+    user = completer.calls[0]["messages"][1]["content"]
+    assert "<<UNTRUSTED " in user

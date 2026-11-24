@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.engine import make_engine
 from techradar.db.models import Revision, StudySession, SyllabusTopic
 from techradar.exams.syllabus import coverage, parse_topics, sync_syllabus
-from techradar.settings import Settings
 
 
 def test_parse_topics_stops_at_next_heading():
@@ -24,27 +21,6 @@ def test_parse_topics_caps_length():
     parsed = parse_topics(md)
     assert len(parsed) == 1
     assert len(parsed[0]) == 120
-
-
-@pytest.fixture
-def db_settings() -> Settings:
-    return Settings(
-        telegram_owner_chat_id=1,
-        db_host="127.0.0.1",
-        db_port=55432,
-        db_name="techradar",
-        secrets_dir=Path("secrets"),
-    )
-
-
-@pytest.fixture
-async def session(db_settings: Settings) -> AsyncGenerator[AsyncSession]:
-    engine = make_engine("app", db_settings)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-        await s.rollback()
-    await engine.dispose()
 
 
 @pytest.mark.db

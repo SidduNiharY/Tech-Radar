@@ -74,6 +74,11 @@ def upgrade() -> None:
             [f"{SCHEMA}.syllabus_topics.id"],
             name="fk_pyq_questions_topic_id",
         ),
+        sa.CheckConstraint("qtype IN ('MCQ','MSQ','NAT')", name="ck_pyq_questions_qtype"),
+        sa.CheckConstraint(
+            "tag_status IN ('none','suggested','confirmed')",
+            name="ck_pyq_questions_tag_status",
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema=SCHEMA,
     )
@@ -163,6 +168,12 @@ def upgrade() -> None:
             ["topic_id"],
             [f"{SCHEMA}.syllabus_topics.id"],
             name="fk_topic_sources_topic_id",
+        ),
+        sa.CheckConstraint(
+            "kind IN ('chapter','pyq','pack_item','note')", name="ck_topic_sources_kind"
+        ),
+        sa.CheckConstraint(
+            "status IN ('suggested','confirmed','dismissed')", name="ck_topic_sources_status"
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(

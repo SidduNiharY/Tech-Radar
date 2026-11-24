@@ -108,7 +108,7 @@ async def test_post_init_wires_the_quarantine_dependencies(
     application = SimpleNamespace(bot=object(), bot_data={})
     settings = SimpleNamespace(
         telegram_owner_chat_id=OWNER, data_dir=tmp_path, db_host="h", db_port=1, db_name="d",
-        secrets_dir=tmp_path,
+        secrets_dir=tmp_path, tz="Asia/Kolkata",
     )  # fmt: skip
     monkeypatch.setattr(bot_main, "get_settings", lambda: settings)
     await bot_main.post_init(application)  # type: ignore[arg-type]
@@ -116,5 +116,6 @@ async def test_post_init_wires_the_quarantine_dependencies(
     assert application.bot_data["quarantine_dir"] == tmp_path / "quarantine"
     # The bot has no library mount: worker-bulk removes originals of deleted held docs.
     assert "library_dir" not in application.bot_data
+    assert application.bot_data["tz"] == "Asia/Kolkata"
     assert application.bot_data["owner_id"] == OWNER
     assert "release_gate" not in application.bot_data  # the bot never gates files itself

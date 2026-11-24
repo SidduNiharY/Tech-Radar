@@ -30,40 +30,85 @@ from techradar.exams.drills import (
 )
 
 
+def _num(v: float) -> str:
+    return f"{round(v, 2):g}"
+
+
 def _recompute_ci(m: dict[str, int | float | str]) -> str:
-    p = float(m["p"])
-    r = float(m["r"])
-    t = float(m["t"])
+    p, r, t = float(m["p"]), float(m["r"]), float(m["t"])
     ci = round(p * (1 + r / 100) ** t - p, 2)
     return str(int(ci)) if ci == int(ci) else f"{ci:.2f}"
 
 
+def _shift(word: str, s: int) -> str:
+    return "".join(chr((ord(c) - 65 + s) % 26 + 65) for c in word)
+
+
+def _series_next(m: dict[str, int | float | str]) -> str:
+    start = int(m["start"])
+    nxt = {
+        "arithmetic": lambda: start + 4 * int(m.get("step", 0)),
+        "squares": lambda: (start + 4) ** 2,
+        "geometric": lambda: start * int(m.get("ratio", 1)) ** 4,
+        "cubes": lambda: (start + 4) ** 3,
+    }[str(m["kind"])]()
+    return str(nxt)
+
+
+def _is_prime(n: int) -> bool:
+    return n > 1 and all(n % i for i in range(2, int(n**0.5) + 1))
+
+
+def _odd_one_out(m: dict[str, int | float | str]) -> str:
+    primes = [int(x) for x in str(m["primes"]).split(",")]
+    composite = int(m["composite"])
+    assert all(_is_prime(p) for p in primes) and not _is_prime(composite)
+    return str(composite)
+
+
+# Each oracle recomputes the answer from the question's own inputs, never from `meta["ans"]`.
 GENERATORS_WITH_ORACLES = [
     (gen_compound_interest, _recompute_ci),
-    (gen_percentage_of, lambda m: str((int(m["p"]) * int(m["x"])) // 100)),
-    (gen_percent_change, lambda m: f"{int(m['ans'])}%"),
-    (gen_ratio_share, lambda m: str(int(m["ans"]))),
-    (gen_simple_interest, lambda m: str((int(m["p"]) * int(m["r"]) * int(m["t"])) // 100)),
-    (gen_profit_loss_percent, lambda m: f"{int(m['ans'])}%"),
-    (gen_average, lambda m: str(int(m["ans"]))),
-    (gen_time_speed_distance, lambda m: f"{int(m['ans'])} km"),
+    (gen_percentage_of, lambda m: _num(int(m["p"]) * int(m["x"]) / 100)),
+    (
+        gen_percent_change,
+        lambda m: _num((int(m["new"]) - int(m["old"])) * 100 / int(m["old"])) + "%",
+    ),
+    (
+        gen_ratio_share,
+        lambda m: _num(
+            int(m["total"]) * max(int(m["a"]), int(m["b"])) / (int(m["a"]) + int(m["b"]))
+        ),
+    ),
+    (gen_simple_interest, lambda m: _num(int(m["p"]) * int(m["r"]) * int(m["t"]) / 100)),
+    (
+        gen_profit_loss_percent,
+        lambda m: _num((int(m["sp"]) - int(m["cp"])) * 100 / int(m["cp"])) + "%",
+    ),
+    (
+        gen_average,
+        lambda m: _num(
+            sum(map(int, str(m["numbers"]).split(","))) / len(str(m["numbers"]).split(","))
+        ),
+    ),
+    (gen_time_speed_distance, lambda m: f"{int(m['speed']) * int(m['time'])} km"),
     (
         gen_work_together,
         lambda m: (
-            f"{int(float(m['ans']))} days"
-            if float(m["ans"]) == int(float(m["ans"]))
-            else f"{float(m['ans']):.2f} days"
+            f"{int(m['a']) * int(m['b']) // (int(m['a']) + int(m['b']))} days"
+            if int(m["a"]) * int(m["b"]) % (int(m["a"]) + int(m["b"])) == 0
+            else f"{int(m['a']) * int(m['b']) / (int(m['a']) + int(m['b'])):.2f} days"
         ),
     ),
-    (gen_number_series, lambda m: str(m["ans"])),
-    (gen_coding_decoding, lambda m: str(m["ans"])),
-    (gen_direction_sense, lambda m: f"{m['ans']} km"),
-    (gen_odd_one_out, lambda m: str(m["ans"])),
+    (gen_number_series, _series_next),
+    (gen_coding_decoding, lambda m: _shift("RIVER", int(m["shift"]))),
+    (gen_direction_sense, lambda m: f"{round((int(m['x']) ** 2 + int(m['y']) ** 2) ** 0.5)} km"),
+    (gen_odd_one_out, _odd_one_out),
     (gen_table, lambda m: str(int(m["a"]) * int(m["b"]))),
     (gen_square, lambda m: str(int(m["n"]) * int(m["n"]))),
     (gen_cube, lambda m: str(int(m["n"]) ** 3)),
-    (gen_percent_fraction, lambda m: str(m["ans"])),
-    (gen_approximation, lambda m: str(m["ans"])),
+    (gen_percent_fraction, lambda m: _num(int(m["num"]) * 100 / int(m["den"])) + "%"),
+    (gen_approximation, lambda m: f"~{round(int(m['a']) * int(m['b']) / 10) * 10}"),
 ]
 
 

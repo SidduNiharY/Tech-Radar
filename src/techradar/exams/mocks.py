@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from techradar.llm.client import Completer, complete_json
 from techradar.llm.roles import Role
+from techradar.security.untrusted import wrap_untrusted
 
 _MOCK_SYSTEM = (
     "You are an assistant extracting mock test scorecard results from text. "
@@ -48,11 +49,24 @@ def extract_mock_regex(text: str) -> MockScore | None:
         r"^([A-Za-z\s&]+?)\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)\s*/\s*([0-9]+(?:\.[0-9]+)?)$",
     )
 
+    attempted_pat = re.compile(r"^attempted\s*:?\s*([0-9]+)$", re.IGNORECASE)
+    correct_pat = re.compile(r"^correct\s*:?\s*([0-9]+)$", re.IGNORECASE)
+
     sections: list[SectionScore] = []
 
     for line in lines:
         trimmed = line.strip()
         if not trimmed:
+            continue
+
+        # `Attempted: n` and `Correct: n` belong to the section just above them
+        am, cm = attempted_pat.match(trimmed), correct_pat.match(trimmed)
+        if am or cm:
+            if sections:
+                if am:
+                    sections[-1].attempted = int(am.group(1))
+                if cm:
+                    sections[-1].correct = int(cm.group(1))
             continue
 
         # Check total
@@ -143,7 +157,7 @@ async def extract_mock(completer: Completer, text: str) -> MockScore | None:
         return regex_res
 
     # Fallback to model
-    untrusted_user = f"Scorecard text (untrusted OCR):\n```\n{text}\n```"
+    untrusted_user = f"Scorecard text (untrusted OCR):\n{wrap_untrusted(text)}"
     try:
         model_score = await complete_json(
             completer,

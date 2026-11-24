@@ -14,7 +14,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
+from techradar.bot.drill import answer_drill
 from techradar.bot.planner_commands import handle_checkin_tap
+from techradar.db.models import TopicSource
+from techradar.exams.sources import decide_source
 from techradar.library.quarantine import (
     ReleaseRequests,
     confirm_release,
@@ -70,6 +73,21 @@ async def handle_callback_query(
             return
         await query.answer(await handle_checkin_tap(action, args[0], context.application.bot_data))
         return
+
+    # --- Phase 8 ---
+    if action in SOURCE_ACTIONS:
+        if len(args) == 1:
+            await _source_callback(query, context.application.bot_data, action, args[0])
+        else:
+            await query.answer("Invalid request.")
+        return
+    if action == "drill":
+        if len(args) == 2:
+            await answer_drill(query, context.application.bot_data, args[0], args[1])
+        else:
+            await query.answer("Invalid request.")
+        return
+    # --- end Phase 8 ---
 
     if action == "save_answer" and len(args) == 1:
         procrastinate_app = context.application.bot_data.get("procrastinate_app")
@@ -162,3 +180,37 @@ async def _quarantine_callback(query: Any, bot_data: Any, action: str, item_id: 
         await session.commit()
     logger.info("quarantine delete %s: %s", item_id, deleted)
     await query.answer(_DELETE_ANSWERS.get(deleted, "Done."))
+
+
+# --- Phase 8: exams ---------------------------------------------------------------
+
+SOURCE_ACTIONS = frozenset({"srcok", "srcno"})
+
+
+async def _source_callback(query: Any, bot_data: Any, action: str, source_id: int) -> None:
+    """Keep (`srcok`) or dismiss (`srcno`) a suggested topic source (SEC-26).
+
+    Only reached after the owner check, and only for a button in the owner's own chat. A model
+    suggestion counts as a source only after this press.
+    """
+    message = query.message
+    if message is None or message.chat.id != bot_data.get("owner_id"):
+        await query.answer("Not available.")
+        return
+    session_factory = bot_data.get("session_factory")
+    if session_factory is None:
+        await query.answer("Not available yet.")
+        return
+    keep = action == "srcok"
+    async with session_factory() as session:
+        source = await session.get(TopicSource, source_id)
+        if source is None:
+            await query.answer("Nothing to show.")
+            return
+        await decide_source(session, source_id, keep=keep, now=datetime.now(UTC))
+        await session.commit()
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)  # the buttons are done
+    except Exception:  # an old message may not be editable; the decision is saved anyway
+        logger.info("could not remove the buttons of source %s", source_id)
+    await query.answer("Kept." if keep else "Dismissed.")

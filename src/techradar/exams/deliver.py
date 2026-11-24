@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import DrillAttempt
-from techradar.exams.drills import daily_set
+from techradar.exams.drills import DrillItem, daily_set
+from techradar.messaging.outbox import Button
 
 
 class DrillOutcome(BaseModel):
@@ -34,6 +36,8 @@ async def record_drill(
         raise ValueError(f"Question index {n} out of range for daily set (size {len(items)})")
 
     item = items[n]
+    if not 0 <= chosen < len(item.options):
+        raise ValueError(f"Choice {chosen} is not one of the {len(item.options)} options")
 
     # Check for existing attempt for (day, n)
     stmt = select(DrillAttempt).where(DrillAttempt.day == day)
@@ -87,6 +91,45 @@ async def record_drill(
         chosen=chosen_str,
         answer_option=item.options[item.answer_index],
     )
+
+
+DRILL_SIZE = 20
+_LABELS = ("A", "B", "C", "D")
+
+
+def drill_day(sent_at: datetime, tz: str) -> date:
+    """The local calendar day a question was sent (its answer counts for that day's set)."""
+    return sent_at.astimezone(ZoneInfo(tz)).date()
+
+
+def render_drill_item(
+    item: DrillItem, n: int, total: int = DRILL_SIZE
+) -> tuple[str, list[list[Button]]]:
+    """Question text and the four answer buttons `drill:<n>:<0-3>`. The key is never sent."""
+    lines = [f"Drill {n + 1}/{total}", "", item.question, ""]
+    lines += [f"{_LABELS[i]}) {opt}" for i, opt in enumerate(item.options)]
+    buttons = [[Button(text=_LABELS[i], data=f"drill:{n}:{i}") for i in range(len(item.options))]]
+    return "\n".join(lines), buttons
+
+
+def render_drill_feedback(outcome: DrillOutcome) -> str:
+    """One line for a right answer; the right option and its working for a wrong one."""
+    head = "Already answered. " if outcome.already_answered else ""
+    if outcome.correct:
+        return f"{head}✅ Correct · {outcome.seconds:.0f} s"
+    return f"{head}❌ Not quite. Answer: {outcome.answer_option}\n{outcome.explanation}"
+
+
+async def next_unanswered(session: AsyncSession, day: date, total: int = DRILL_SIZE) -> int | None:
+    """The first question of the day's set without an answer yet, or None when all are done."""
+    done = {a.item.get("n") for a in await day_attempts(session, day) if isinstance(a.item, dict)}
+    return next((n for n in range(total) if n not in done), None)
+
+
+async def day_attempts(session: AsyncSession, day: date) -> list[DrillAttempt]:
+    """Every answer given for one day's set."""
+    stmt = select(DrillAttempt).where(DrillAttempt.day == day).order_by(DrillAttempt.id)
+    return list((await session.execute(stmt)).scalars().all())
 
 
 def render_drill_summary(attempts: Sequence[DrillAttempt]) -> str:

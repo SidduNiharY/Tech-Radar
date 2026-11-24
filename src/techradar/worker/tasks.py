@@ -16,6 +16,9 @@ from sqlalchemy import select
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
+from techradar.exams.final30 import run_formula_sheets
+from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
+from techradar.exams.syllabus import sync_syllabus
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
@@ -562,3 +565,89 @@ async def health_job() -> None:
             backup_status=read_backup_status(settings.data_dir / "status" / "backup.json"),
         )
         await session.commit()
+
+
+# --- Phase 8: exams ---------------------------------------------------------------
+# Jobs of the exam tools (plans/2026-11-07-techradar-phase8-exams.md). Each one opens its own
+# session; the exams modules take the session and the time and never open one themselves.
+
+
+@app.periodic(cron="30 3 * * *")
+@app.task(queue="io", queueing_lock="syllabus_sync_queued", name="syllabus_sync_job")
+async def syllabus_sync_job(timestamp: int | None = None) -> None:
+    """Daily: read `syllabus/**/*.md` from the vault into `syllabus_topics` (Task 1).
+
+    A periodic job is always called with `timestamp=` (procrastinate adds it), so every
+    periodic job of this block takes it.
+    """
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        topics = await sync_syllabus(session, settings.data_dir / "vault")
+        await session.commit()
+    logger.info("syllabus sync: %d topics", topics)
+
+
+def _exam_models() -> tuple[LiteLLMCompleter, LiteLLMEmbedder]:
+    """The local worker/checker models and the embedder (never a cloud model)."""
+    roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
+    return LiteLLMCompleter(roles, "http://ollama:11434"), LiteLLMEmbedder(
+        roles, "http://ollama:11434"
+    )
+
+
+# Nightly at 20:00 UTC = 01:30 in Asia/Kolkata, inside the night window (01:00-05:00); outside
+# it `night_only` queues the job for the next window start instead of running it.
+@app.periodic(cron="0 20 * * *")
+@app.task(queue="llm", queueing_lock="suggest_sources_queued", name="suggest_topic_sources_job")
+@night_only(task_name="suggest_topic_sources_job")
+async def suggest_topic_sources_job(timestamp: int | None = None) -> None:
+    """Nightly: pick syllabus topics for unlinked library chapters (Task 2b).
+
+    A past-paper tag the owner already confirmed links at once; a model's chapter pick stays
+    `suggested` until the owner presses Keep in the Sunday digest (`srcok:<id>`).
+    """
+    settings = _get_settings()
+    completer, embedder = _exam_models()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        created = await run_suggest_topic_sources(
+            session,
+            embedder,
+            completer,
+            now=datetime.now(UTC),
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+    logger.info("topic sources: %d new", created)
+
+
+# Sundays 12:45 UTC = 18:15 in Asia/Kolkata.
+@app.periodic(cron="45 12 * * 0")
+@app.task(queue="io", queueing_lock="sources_digest_queued", name="sources_digest_job")
+async def sources_digest_job(timestamp: int | None = None) -> None:
+    """Sundays 18:15: ask the owner to confirm up to 10 suggested sources (Task 2b)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        sent = await enqueue_sources_digest(session, settings.telegram_owner_chat_id)
+        await session.commit()
+    logger.info("sources digest: %d suggestions queued", sent)
+
+
+# Nightly at 20:30 UTC = 02:00 in Asia/Kolkata, inside the night window.
+@app.periodic(cron="30 20 * * *")
+@app.task(queue="llm", queueing_lock="formula_sheets_queued", name="formula_sheets_job")
+@night_only(task_name="formula_sheets_job")
+async def formula_sheets_job(timestamp: int | None = None) -> None:
+    """Night: in the final 30 days of an exam, write a cited formula sheet per syllabus
+    subject from the owner's own notes (Task 7). Does nothing without an exam date set.
+    """
+    settings = _get_settings()
+    today = datetime.now(UTC).astimezone(ZoneInfo(settings.tz)).date()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        counts = await run_formula_sheets(
+            session, get_rag_deps(), settings.data_dir / "vault", today
+        )
+    logger.info("formula sheets: %s", counts)

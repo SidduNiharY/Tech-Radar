@@ -12,6 +12,12 @@ from techradar.exams.final30 import (
     mini_mock,
     write_formula_sheet,
 )
+from techradar.exams.sources import (
+    decide_source,
+    run_sources_digest,
+    run_suggest_topic_sources,
+    topics_without_sources,
+)
 from techradar.exams.syllabus import (
     TopicCoverage,
     coverage,
@@ -39,6 +45,7 @@ __all__ = [
     "capsule_bundle",
     "coverage",
     "coverage_for",
+    "decide_source",
     "final_30",
     "gate_weights",
     "import_cutoffs",
@@ -48,6 +55,9 @@ __all__ = [
     "mini_mock",
     "parse_topics",
     "render_answer_key_notice",
+    "run_sources_digest",
+    "run_suggest_topic_sources",
     "sync_syllabus",
+    "topics_without_sources",
     "write_formula_sheet",
 ]
