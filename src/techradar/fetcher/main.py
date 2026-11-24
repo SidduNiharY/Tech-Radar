@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
@@ -23,6 +24,8 @@ from techradar.fetcher.store import store_raw, write_job
 from techradar.schemas.pipeline import JobKind, ParseJob
 from techradar.security.urls import load_allowlist
 from techradar.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 async def run_cycle(
@@ -187,8 +190,16 @@ async def _run_fetcher(
 
 def main() -> None:
     settings = get_settings()
-    allowlist_path = Path("infra/squid/allowlist.txt")
-    allowed = load_allowlist(allowlist_path) if allowlist_path.is_file() else frozenset()
+    # Fail closed and loudly: a missing allowlist is an error, never an empty allowlist.
+    try:
+        allowed = load_allowlist(settings.squid_allowlist)
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.error(
+            "Squid allowlist %s cannot be read (%s): the fetcher fetches nothing",
+            settings.squid_allowlist,
+            type(exc).__name__,
+        )
+        raise SystemExit(2) from None
 
     raw_dir = settings.data_dir / "raw"
     jobs_dir = settings.data_dir / "parse-jobs"
