@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import os
 import re
 import shutil
@@ -49,67 +51,137 @@ def release_steps(steps: Sequence[IntakeStep]) -> list[IntakeStep]:
 
 
 # Raw and library files are named after their content: `<sha256>.<ext>`.
-_CONTENT_NAME = re.compile(r"[0-9a-f]{64}\.[a-z0-9]{1,5}")
+_CONTENT_NAME = re.compile(r"([0-9a-f]{64})\.[a-z0-9]{1,5}")
 _DIR_NOFOLLOW = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+_HASH_CHUNK = 1024 * 1024
+MAX_HELD_CANDIDATES = 3  # copies hashed per hold, at most (a planted tree cannot stall it)
 
 
-def _held_copy(raw_path: Path, quarantine_dir: Path, job_id: str) -> Path | None:
-    """An earlier held copy of the same file (`quarantine/<other job>/<same name>`).
+def _sha256_fd(fd: int) -> str:
+    h = hashlib.sha256()
+    while chunk := os.read(fd, _HASH_CHUNK):
+        h.update(chunk)
+    return h.hexdigest()
 
-    Only content-addressed names qualify (the name is the bytes' sha256), and only a
-    regular, read-only file of the same size inside a real folder: links are never used.
+
+def _verified_held_copy(
+    quarantine_dir: Path, job_id: str, name: str, size: int
+) -> tuple[int, os.stat_result] | None:
+    """An earlier held copy of the same bytes: (its folder's descriptor, its stat).
+
+    The parser has no database, so the quarantine folder is the only index, and it is
+    writable: nothing in it is trusted on its name, size or mode. Every folder and file is
+    opened with O_NOFOLLOW relative to its parent (a link is never used), and a candidate
+    is accepted only when the sha256 of its bytes, read through that descriptor, equals the
+    content name `<sha256>.<ext>`. The caller closes the returned descriptor.
     """
-    name = raw_path.name
-    if _CONTENT_NAME.fullmatch(name) is None:
+    m = _CONTENT_NAME.fullmatch(name)
+    if m is None:
         return None
+    expected = m.group(1)
     try:
-        size = os.stat(raw_path).st_size
         root = os.open(quarantine_dir, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
         return None
+    tried = 0
     try:
         for entry in sorted(os.scandir(root), key=lambda e: e.name):
+            if tried >= MAX_HELD_CANDIDATES:
+                break
             if entry.name == job_id or not entry.is_dir(follow_symlinks=False):
                 continue
             try:
-                fd = os.open(entry.name, _DIR_NOFOLLOW, dir_fd=root)
+                dfd = os.open(entry.name, _DIR_NOFOLLOW, dir_fd=root)
             except OSError:
                 continue
+            keep = False
             try:
-                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
-            except OSError:
-                continue
+                try:
+                    ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+                except OSError:
+                    continue  # missing, or a link (ELOOP)
+                try:
+                    st = os.fstat(ffd)
+                    if not stat.S_ISREG(st.st_mode) or st.st_size != size:
+                        continue
+                    tried += 1
+                    if _sha256_fd(ffd) != expected:
+                        continue
+                finally:
+                    os.close(ffd)
+                keep = True
+                return dfd, st
             finally:
-                os.close(fd)
-            if stat.S_ISREG(st.st_mode) and st.st_size == size and st.st_mode & 0o777 == 0o400:
-                return quarantine_dir / entry.name / name
+                if not keep:
+                    os.close(dfd)
     finally:
         os.close(root)
     return None
+
+
+def _same_inode(st: os.stat_result, dir_fd: int, name: str) -> bool:
+    try:
+        now = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISREG(now.st_mode) and (now.st_dev, now.st_ino) == (st.st_dev, st.st_ino)
+
+
+def _fresh_copy(raw_path: Path, target_fd: int, name: str) -> None:
+    """Copy into a private temp file, then rename it over whatever is at `name`.
+
+    The rename replaces a planted file or link at the target; a link is never followed.
+    The copy gets the time it was held as its mtime (retention ages held copies from it).
+    """
+    tmp = f".hold-{os.urandom(8).hex()}"
+    wfd = os.open(
+        tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=target_fd
+    )
+    try:
+        with raw_path.open("rb") as src, os.fdopen(wfd, "wb", closefd=False) as dst:
+            shutil.copyfileobj(src, dst, _HASH_CHUNK)
+        os.fchmod(wfd, 0o400)
+        os.close(wfd)
+        wfd = -1
+        os.replace(tmp, name, src_dir_fd=target_fd, dst_dir_fd=target_fd)
+    except BaseException:
+        if wfd >= 0:
+            os.close(wfd)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp, dir_fd=target_fd)
+        raise
 
 
 def quarantine_file(raw_path: Path, quarantine_dir: Path, job_id: str) -> Path:
     """Safely isolate a quarantined raw file with read-only permissions (0o400).
 
     Held once per file: when another job of the same file (a video's segments) is already
-    held, its copy is hard-linked here instead of copying the whole file again. A new copy
-    gets the time it was held as its mtime (retention ages held copies from it).
+    held, that copy is hard-linked here instead of copying the whole file again, but only
+    after its bytes were hashed through an O_NOFOLLOW descriptor and match the content
+    name (`_verified_held_copy`). After linking, the target must be that same inode; a
+    pre-existing target that is not (planted bytes, a link) is replaced by a fresh copy.
     """
+    name = raw_path.name
     target_dir = quarantine_dir / job_id
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / raw_path.name
-    held = _held_copy(raw_path, quarantine_dir, job_id)
-    if held is not None:
-        try:
-            os.link(held, target_path, follow_symlinks=False)
-            return target_path
-        except FileExistsError:
-            return target_path
-        except OSError:
-            pass  # gone meanwhile (deleted or expired): copy it after all
-    shutil.copyfile(raw_path, target_path)
-    os.chmod(target_path, 0o400)
-    return target_path
+    target_fd = os.open(target_dir, _DIR_NOFOLLOW)  # a planted link here fails closed
+    try:
+        found = _verified_held_copy(quarantine_dir, job_id, name, os.stat(raw_path).st_size)
+        if found is not None:
+            src_fd, st = found
+            try:
+                with contextlib.suppress(FileExistsError, OSError):
+                    os.link(
+                        name, name, src_dir_fd=src_fd, dst_dir_fd=target_fd, follow_symlinks=False
+                    )
+                if _same_inode(st, target_fd, name) and _same_inode(st, src_fd, name):
+                    return target_dir / name
+            finally:
+                os.close(src_fd)
+        _fresh_copy(raw_path, target_fd, name)
+    finally:
+        os.close(target_fd)
+    return target_dir / name
 
 
 @dataclass(frozen=True)
