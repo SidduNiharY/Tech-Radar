@@ -20,6 +20,7 @@ from telegram.ext import (
 
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
+from techradar.bot.drill import start_drill
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.routing import route_update
 from techradar.db.engine import make_session_factory
@@ -85,6 +86,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(reply)
         return
 
+    # --- Phase 8 ---
+    if routed.action == "drill":  # the router allows it from the owner's own chat only
+        await start_drill(update, context.application.bot_data, settings.tz)
+        return
+    # --- end Phase 8 ---
+
     if routed.action == "quarantine":  # the router allows it from the owner's own chat only
         session_factory = context.application.bot_data.get("session_factory")
         if session_factory is None:
@@ -135,6 +142,7 @@ async def post_init(application: Application) -> None:
     application.bot_data["session_factory"] = session_factory
     application.bot_data["quarantine_dir"] = settings.data_dir / "quarantine"
     application.bot_data["library_dir"] = settings.data_dir / "library"
+    application.bot_data["tz"] = settings.tz  # Phase 8: the day a drill question belongs to
 
     try:
         from procrastinate import App, PsycopgConnector

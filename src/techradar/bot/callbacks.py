@@ -14,6 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
+from techradar.bot.drill import answer_drill
 from techradar.db.models import TopicSource
 from techradar.exams.sources import decide_source
 from techradar.library.quarantine import (
@@ -67,6 +68,12 @@ async def handle_callback_query(
     if action in SOURCE_ACTIONS:
         if len(args) == 1:
             await _source_callback(query, context.application.bot_data, action, args[0])
+        else:
+            await query.answer("Invalid request.")
+        return
+    if action == "drill":
+        if len(args) == 2:
+            await answer_drill(query, context.application.bot_data, args[0], args[1])
         else:
             await query.answer("Invalid request.")
         return

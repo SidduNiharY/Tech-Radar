@@ -23,6 +23,7 @@ Action = Literal[
     "take",
     "quarantine",
     "ignore",
+    "drill",  # Phase 8
 ]
 
 
@@ -99,6 +100,11 @@ def route_update(
         return Routed("inbox")
     if cmd == "/plan":
         return Routed("plan")
+    # --- Phase 8 ---
+    if cmd == "/drill":
+        # Timed drills are the owner's own practice, not a study group's.
+        return Routed("drill") if chat_id == owner_id else Routed("ignore")
+    # --- end Phase 8 ---
     if cmd == "/quarantine":
         # Releasing held files is the owner's alone, never a study group's (SEC-14).
         return Routed("quarantine") if chat_id == owner_id else Routed("ignore")
