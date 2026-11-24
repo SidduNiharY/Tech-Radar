@@ -147,3 +147,22 @@ async def test_commands_queue_their_job_by_name(action: str, job: str):
     deferrer.defer_async.assert_awaited_once_with()
     await handle_practice_command(update, {}, action)
     update.message.reply_text.assert_awaited_once_with("Not available yet.")
+
+
+async def test_read_button_queues_make_chapter_cards(monkeypatch: pytest.MonkeyPatch):
+    from techradar.worker.names import MAKE_CHAPTER_CARDS
+
+    update, query, context, session = _query("read:11")
+    deferrer = SimpleNamespace(defer_async=AsyncMock())
+    proc = MagicMock()
+    proc.configure_task = MagicMock(return_value=deferrer)
+    context.application.bot_data["procrastinate_app"] = proc
+    await handle_callback_query(update, context)
+    proc.configure_task.assert_called_once_with(name=MAKE_CHAPTER_CARDS)
+    deferrer.defer_async.assert_awaited_once_with(chapter_id=11)
+    # a stranger tapping it queues nothing
+    update, query, context, session = _query("read:11", from_id=999)
+    context.application.bot_data["procrastinate_app"] = proc
+    proc.reset_mock()
+    await handle_callback_query(update, context)
+    proc.configure_task.assert_not_called()

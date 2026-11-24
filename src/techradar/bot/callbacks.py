@@ -14,7 +14,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
-from techradar.bot.practice_callbacks import PRACTICE_ACTIONS, handle_practice_callback
+from techradar.bot.practice_callbacks import (
+    PRACTICE_ACTIONS,
+    chapter_buttons,
+    handle_practice_callback,
+    markup,
+)
 from techradar.library.quarantine import (
     ReleaseRequests,
     confirm_release,
@@ -89,6 +94,12 @@ async def _chapters_callback(query: Any, bot_data: Any, doc_id: int) -> None:
         await query.answer("Nothing to show.")
         return
     await message.reply_text(text)
+    # --- Phase 3: one button per chapter to mark it as read (cards come with it) ---
+    async with session_factory() as session:
+        shown = await chapter_buttons(session, doc_id)
+    if shown is not None:
+        read_text, read_buttons = shown
+        await message.reply_text(read_text, reply_markup=markup(read_buttons))
     await query.answer()
 
 

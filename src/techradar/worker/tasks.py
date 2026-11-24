@@ -29,6 +29,7 @@ from techradar.night.window import in_night_window, next_window_start, night_onl
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
+from techradar.practice.chapter_cards import run_make_chapter_cards
 from techradar.practice.flashcards import run_cards
 from techradar.practice.mcq import run_make_mcqs
 from techradar.practice.mistakes import run_mistakes_page
@@ -45,7 +46,7 @@ from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
-from techradar.worker.names import CARDS, MISTAKES_PAGE, QUIZ, SAVE_TAKE
+from techradar.worker.names import CARDS, MAKE_CHAPTER_CARDS, MISTAKES_PAGE, QUIZ, SAVE_TAKE
 
 logger = logging.getLogger(__name__)
 
@@ -583,3 +584,18 @@ async def mistakes_page_job() -> None:
     settings = _get_settings()
     async with make_session_factory("app", settings)() as session:
         await run_mistakes_page(session, now=_local_now(), vault_dir=settings.data_dir / "vault")
+
+
+@app.task(queue="llm", name=MAKE_CHAPTER_CARDS)
+async def make_chapter_cards_job(chapter_id: int) -> None:
+    """Mark a chapter as read, make its quote-checked cards, tell the owner."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_make_chapter_cards(
+            session,
+            _completer(),
+            chapter_id,
+            _local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+        )
+        await session.commit()

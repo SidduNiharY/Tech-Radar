@@ -117,3 +117,15 @@ async def test_quiz_and_cards_jobs_pass_the_daily_limits(monkeypatch: pytest.Mon
         cards.await_args.kwargs["new_limit"] == 10 and cards.await_args.kwargs["review_limit"] == 40
     )
     assert session.commit.await_count == 2
+
+
+async def test_make_chapter_cards_job_runs_and_commits(monkeypatch: pytest.MonkeyPatch):
+    session = _patch(monkeypatch)
+    run = AsyncMock()
+    monkeypatch.setattr(tasks, "run_make_chapter_cards", run)
+    monkeypatch.setattr(tasks, "_completer", lambda: "completer")
+    await tasks.make_chapter_cards_job(chapter_id=11)
+    assert run.await_args.args[1:3] == ("completer", 11)
+    assert run.await_args.kwargs["owner_chat_id"] == 42
+    assert tasks.make_chapter_cards_job.queue == "llm"
+    session.commit.assert_awaited_once()

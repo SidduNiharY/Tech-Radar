@@ -15,17 +15,20 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from techradar.db.models import MCQ
+from techradar.db.models import MCQ, LibraryChapter, LibraryDoc
 from techradar.messaging.outbox import Button
+from techradar.practice.chapter_cards import render_chapter_list
 from techradar.practice.flashcards import rate_card, reveal_card, source_text
 from techradar.practice.quiz import record_answer, render_feedback
+from techradar.worker.names import MAKE_CHAPTER_CARDS
 
 logger = logging.getLogger(__name__)
 
-PRACTICE_ACTIONS = frozenset({"ans", "rate", "card_show", "src"})
+PRACTICE_ACTIONS = frozenset({"ans", "rate", "card_show", "src", "read"})
 
 
 def markup(buttons: list[list[Button]]) -> InlineKeyboardMarkup:
@@ -66,6 +69,8 @@ async def handle_practice_callback(
         await _answer(query, message, session_factory, args[0], args[1], now)
     elif action == "rate":
         await _rate(query, session_factory, args[0], args[1], now)
+    elif action == "read":
+        await _read(query, bot_data, args[0])
     elif action == "card_show":
         async with session_factory() as session:
             shown = await reveal_card(session, args[0])
@@ -118,3 +123,32 @@ async def _rate(query: Any, session_factory: Any, card_id: int, rating: int, now
         outcome = await rate_card(session, card_id, rating, now)  # type: ignore[arg-type]
         await session.commit()
     await query.answer({"rated": "Saved.", "already_rated": "Already rated."}.get(outcome, "Gone."))
+
+
+async def _read(query: Any, bot_data: Mapping[str, Any], chapter_id: int) -> None:
+    """ "Mark as read" for one chapter: the cards are made by the worker, which then replies."""
+    proc_app = bot_data.get("procrastinate_app")
+    if proc_app is None:
+        await query.answer("Not available yet.")
+        return
+    await proc_app.configure_task(name=MAKE_CHAPTER_CARDS).defer_async(chapter_id=chapter_id)
+    await query.answer("Marking as read...")
+
+
+async def chapter_buttons(session: Any, doc_id: int) -> tuple[str, list[list[Button]]] | None:
+    """The `read:<chapter_id>` buttons of a ready book (what the `chap` button adds)."""
+    doc = await session.get(LibraryDoc, doc_id)
+    if doc is None:
+        return None
+    chapters = (
+        (
+            await session.execute(
+                select(LibraryChapter)
+                .where(LibraryChapter.doc_id == doc_id)
+                .order_by(LibraryChapter.ordinal)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return render_chapter_list(doc, chapters) if chapters else None
