@@ -108,7 +108,7 @@ services:
         ipv4_address: 10.250.10.10
     volumes:
       # /quarantine Delete unlinks held copies (rw). Nothing else under /data: originals of
-      # deleted held library docs are removed by worker-bulk (purge_deleted_originals).
+      # deleted held library docs are removed by worker-bulk (purge_deleted_held_docs).
       - ./data/quarantine:/data/quarantine
     secrets:
       - tr_ro_password

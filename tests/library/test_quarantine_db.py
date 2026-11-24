@@ -16,10 +16,20 @@ from pathlib import Path
 
 import pytest
 import yaml
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from techradar.db.engine import make_engine
-from techradar.db.models import LibraryDoc, QuarantineItem
+from techradar.db.models import (
+    BookEval,
+    Chunk,
+    LibraryChapter,
+    LibraryDoc,
+    LibraryPart,
+    QuarantineItem,
+    StarterPack,
+    StarterPackItem,
+)
 from techradar.intake.av import AvResult
 from techradar.intake.gateway import gate_job
 from techradar.library.quarantine import (
@@ -27,9 +37,10 @@ from techradar.library.quarantine import (
     confirm_release,
     delete_item,
     doc_flagged,
+    doc_released,
     hold_library_doc,
     list_quarantine,
-    purge_deleted_originals,
+    purge_deleted_held_docs,
     release,
     request_release,
 )
@@ -363,7 +374,7 @@ async def test_delete_item_removes_file_and_is_idempotent(
 
 async def test_delete_never_touches_the_library(session: AsyncSession, tmp_path: Path) -> None:
     # The bot runs delete_item and has no library mount: the original stays until
-    # worker-bulk's purge_deleted_originals removes it.
+    # worker-bulk's purge_deleted_held_docs removes it.
     qdir, lib = tmp_path / "q", tmp_path / "library"
     doc, item = await _held_doc(session, qdir)
     original = _original(lib, doc)
@@ -378,18 +389,132 @@ def _original(lib: Path, doc: LibraryDoc, data: bytes = b"macro docx") -> Path:
     return original
 
 
+async def _purge(session: AsyncSession, lib: Path) -> list[int]:
+    return await purge_deleted_held_docs(session, library_dir=lib)
+
+
+async def _gone(session: AsyncSession, doc_id: int) -> bool:
+    found = await session.execute(select(LibraryDoc.id).where(LibraryDoc.id == doc_id))
+    return found.first() is None
+
+
 async def test_purge_removes_the_original_of_a_deleted_held_doc(
     session: AsyncSession, tmp_path: Path
 ) -> None:
     qdir, lib = tmp_path / "q", tmp_path / "library"
     doc, item = await _held_doc(session, qdir)
     original = _original(lib, doc)
-    assert await purge_deleted_originals(session, library_dir=lib) == 0  # still held
+    doc_id = doc.id
+    assert doc_id not in await _purge(session, lib)  # still held
     assert _exists(original)
     assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
-    assert await purge_deleted_originals(session, library_dir=lib) == 1
-    assert not _exists(original)
-    assert await purge_deleted_originals(session, library_dir=lib) == 0  # gone: idempotent
+    assert doc_id in await _purge(session, lib)
+    assert not _exists(original) and await _gone(session, doc_id)
+    assert doc_id not in await _purge(session, lib)  # gone: idempotent
+
+
+async def test_purge_removes_every_row_of_the_doc(session: AsyncSession, tmp_path: Path) -> None:
+    # Nothing of a deleted or expired held doc stays: its original, its row, the rows that
+    # hang off it and its held-item rows. A starter pack item only loses the link.
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    _original(lib, doc)
+    pack = StarterPack(name="tstq" + os.urandom(4).hex(), exam="bank", approved=True)
+    session.add(pack)
+    await session.flush()
+    pitem = StarterPackItem(
+        pack_id=pack.id,
+        url="https://ncert.nic.in/a.pdf",
+        title="t",
+        kind="pdf",
+        licence="l",
+        status="downloaded",
+        doc_id=doc.id,
+    )
+    part = LibraryPart(doc_id=doc.id, ordinal=0, status="failed")
+    chapter = LibraryChapter(doc_id=doc.id, ordinal=1, title="c", text_path="text/x/01.md")
+    session.add_all([pitem, part, chapter])
+    await session.flush()
+    session.add(BookEval(doc_id=doc.id, question="q?", expected_chunk_ids=[]))
+    session.add(
+        Chunk(
+            doc_path=f"library/{doc.id}/01.md",
+            doc_kind="library",
+            title="t",
+            ordinal=1,
+            text="x",
+            lang="en",
+            content_hash=os.urandom(32).hex(),
+            doc_id=doc.id,
+            chapter_id=chapter.id,
+        )
+    )
+    await session.flush()
+    doc_id, item_id = doc.id, item.id
+    assert await delete_item(session, item_id, quarantine_dir=qdir, now=NOW) == "deleted"
+    assert doc_id in await _purge(session, lib)
+    assert await _gone(session, doc_id)
+    for model in (LibraryPart, LibraryChapter, BookEval):
+        rows = await session.execute(select(model.id).where(model.doc_id == doc_id))
+        assert rows.first() is None, model.__name__
+    chunks = await session.execute(
+        select(Chunk.id).where(Chunk.doc_kind == "library", Chunk.doc_id == doc_id)
+    )
+    assert chunks.first() is None
+    held = await session.execute(select(QuarantineItem.id).where(QuarantineItem.id == item_id))
+    assert held.first() is None
+    await session.refresh(pitem)
+    assert pitem.doc_id is None and pitem.status == "downloaded"  # never downloaded again
+
+
+async def test_an_expired_held_doc_is_purged_like_a_deleted_one(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    # Retention expires the held copy (deleted_at, cleanup_retention); worker-bulk then
+    # removes the original and the rows.
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    original = _original(lib, doc)
+    doc_id = doc.id
+    item.deleted_at = NOW  # what retention does after expires_at
+    await session.flush()
+    assert doc_id in await _purge(session, lib)
+    assert not _exists(original) and await _gone(session, doc_id)
+
+
+async def test_the_same_book_can_be_added_again_after_a_purge(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    # The old row no longer says "Already in your library", and a release the owner once
+    # gave to these bytes is not inherited by the new copy.
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    _original(lib, doc)
+    sha, path, name = doc.sha256, doc.original_path, Path(doc.original_path).name
+    session.add(
+        QuarantineItem(
+            job_id=os.urandom(16).hex(),
+            path=str(qdir / "old" / name),
+            origin="library",
+            reasons=["macros"],
+            released_at=NOW,
+        )
+    )
+    assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
+    assert doc.id in await _purge(session, lib)
+    again = LibraryDoc(
+        sha256=sha,
+        title="Macro Book",
+        kind="docx",
+        origin="library",
+        original_path=path,
+        size_bytes=1000,
+        status="queued",
+        trust="my_own",
+    )
+    session.add(again)
+    await session.flush()  # no unique clash on sha256
+    assert await doc_released(session, again) is False
 
 
 async def test_purge_keeps_the_original_of_a_doc_that_is_not_held(
@@ -401,8 +526,8 @@ async def test_purge_keeps_the_original_of_a_doc_that_is_not_held(
     assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
     doc.status = "processing"  # e.g. another copy of it is being read
     await session.flush()
-    assert await purge_deleted_originals(session, library_dir=lib) == 0
-    assert _exists(original)
+    assert doc.id not in await _purge(session, lib)
+    assert _exists(original) and not await _gone(session, doc.id)
 
 
 async def test_purge_keeps_the_original_while_another_held_copy_is_live(
@@ -421,10 +546,10 @@ async def test_purge_keeps_the_original_while_another_held_copy_is_live(
         session, doc, job_id=job2, quarantine_dir=qdir, reasons=["macros"], chat_id=None
     )
     assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
-    assert await purge_deleted_originals(session, library_dir=lib) == 0
+    assert doc.id not in await _purge(session, lib)
     assert _exists(original)
     assert await delete_item(session, item2.id, quarantine_dir=qdir, now=NOW) == "deleted"
-    assert await purge_deleted_originals(session, library_dir=lib) == 1
+    assert doc.id in await _purge(session, lib)
     assert not _exists(original)
 
 
@@ -439,8 +564,25 @@ async def test_purge_never_follows_a_stored_path_outside_originals(
     assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
     doc.original_path = f"text/{Path(doc.original_path).name}"
     await session.flush()
-    assert await purge_deleted_originals(session, library_dir=lib) == 0
+    assert doc.id not in await _purge(session, lib)
     assert book.read_bytes() == b"my book"
+    assert not await _gone(session, doc.id)  # refused: everything is kept (and logged)
+
+
+async def test_purge_never_follows_a_linked_originals_folder(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    qdir, lib = tmp_path / "q", tmp_path / "library"
+    doc, item = await _held_doc(session, qdir)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    victim = elsewhere / Path(doc.original_path).name
+    victim.write_bytes(b"keep")
+    lib.mkdir()
+    (lib / "originals").symlink_to(elsewhere, target_is_directory=True)
+    assert await delete_item(session, item.id, quarantine_dir=qdir, now=NOW) == "deleted"
+    assert doc.id not in await _purge(session, lib)
+    assert victim.read_bytes() == b"keep" and not await _gone(session, doc.id)
 
 
 async def test_delete_item_refuses_path_outside_quarantine(

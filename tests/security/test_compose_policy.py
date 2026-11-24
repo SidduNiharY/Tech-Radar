@@ -218,7 +218,7 @@ def _mounts(svc: dict) -> tuple[set[str], set[str]]:
 def test_bot_mounts_only_the_quarantine_folder(compose_data):
     # /quarantine Delete unlinks the held copy (remove_held_file), so the bot needs rw on
     # data/quarantine and nothing else under /data. The originals of deleted held docs are
-    # removed by worker-bulk (purge_deleted_originals), never by the bot.
+    # removed by worker-bulk (purge_deleted_held_docs), never by the bot.
     svc = compose_data["services"]["bot"]
     rw, ro = _mounts(svc)
     assert rw == {"/data/quarantine"}
