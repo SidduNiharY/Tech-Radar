@@ -104,6 +104,9 @@ def test_read_backup_status(tmp_path):
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_run_health_checks_alerts_once_per_window(session):
+    from sqlalchemy import update
+
+    from techradar.db.models import Source
     from techradar.ops.health import run_health_checks
 
     kwargs = {
@@ -112,6 +115,9 @@ async def test_run_health_checks_alerts_once_per_window(session):
         "ollama_ok": True,
         "backup_status": {"ok": True, "at": NOW.isoformat()},
     }
+    # Other db tests leave committed sources behind; make every one fresh, so only the disk
+    # check fires (rolled back with the session).
+    await session.execute(update(Source).values(last_fetched_at=NOW))
     assert await run_health_checks(session, now=NOW, **kwargs) == ["disk"]
     assert await run_health_checks(session, now=NOW + timedelta(hours=1), **kwargs) == []
     assert await run_health_checks(session, now=NOW + timedelta(hours=7), **kwargs) == ["disk"]

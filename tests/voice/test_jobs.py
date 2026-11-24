@@ -50,7 +50,7 @@ async def test_no_speech_reply(session: Any, tmp_path: Path) -> None:
             voice_row.id,
             transcriber=FakeTranscriber(silent_transcript),
             phoneme_model=FakePhonemeModel(),
-            completer=FakeCompleter(),
+            completer=FakeCompleter([]),
             outbox=outbox,
             voice_dir=tmp_path,
         )
@@ -93,7 +93,7 @@ async def test_audio_deleted_after_24h_unless_kept(session: Any, tmp_path: Path)
             voice_row.id,
             transcriber=FakeTranscriber(t),
             phoneme_model=FakePhonemeModel(),
-            completer=FakeCompleter(),
+            completer=FakeCompleter([]),
             outbox=FakeOutbox(),
             voice_dir=tmp_path,
         )
