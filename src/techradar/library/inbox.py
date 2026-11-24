@@ -74,7 +74,9 @@ MIME_TO_EXT: dict[str, str] = {
     "text/html": "html",
 }
 
-SKIPPED_DIRS = frozenset({"done", "rejected", "gate"})  # at the inbox root; phase 8 routes gate/
+# At the inbox root. Phase 8: gate/ is routed by the past-paper intake; cutoffs/ and weightage/
+# hold the owner's CSVs, which `exam_imports_job` reads (library intake would reject them).
+SKIPPED_DIRS = frozenset({"done", "rejected", "gate", "cutoffs", "weightage"})
 MAX_TITLE_CHARS = 300
 MAX_NAME_CHARS = 120
 MAX_DEPTH = 8  # folders below the inbox root

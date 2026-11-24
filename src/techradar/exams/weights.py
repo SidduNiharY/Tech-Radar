@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import csv
+import io
 import math
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from techradar.db.models import Cutoff
+from techradar.db.models import TopicWeight as TopicWeightRow
 
 
 class CutoffRow(BaseModel):
@@ -36,6 +44,10 @@ class TopicWeight(BaseModel):
     topic: str
     marks_total: float
     share: float
+    # Set for imported weightage (stored in `topic_weights`); GATE weights leave them empty.
+    exam: str = ""
+    weight: float = 0.0
+    source: str = ""
 
 
 class PyqRow(BaseModel):
@@ -141,6 +153,94 @@ def import_weightage(rows: Iterable[dict[str, Any]]) -> list[WeightRow]:
             )
         )
     return out
+
+
+MAX_CSV_BYTES = 1_000_000
+MAX_CSV_ROWS = 5000
+UNVERIFIED = "analysis (unverified)"
+
+
+def read_csv_rows(folder: Path) -> list[dict[str, Any]]:
+    """Rows of every regular `*.csv` in one inbox folder (the owner's own files).
+
+    A link, a file over 1 MB, or a folder that is not there contributes nothing; at most
+    5,000 rows are read in all. The text is data: it is only parsed, never run.
+    """
+    rows: list[dict[str, Any]] = []
+    if not folder.is_dir() or folder.is_symlink():
+        return rows
+    for path in sorted(folder.glob("*.csv")):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_CSV_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for row in csv.DictReader(io.StringIO(text)):
+            rows.append(dict(row))
+            if len(rows) >= MAX_CSV_ROWS:
+                return rows
+    return rows
+
+
+def aggregate_weightage(rows: Iterable[WeightRow]) -> list[TopicWeight]:
+    """One weight per (exam, subject, topic): the questions summed over the years given."""
+    totals: dict[tuple[str, str, str], float] = {}
+    for r in rows:
+        key = (r.exam, r.subject, r.topic)
+        totals[key] = totals.get(key, 0.0) + float(r.questions)
+    grand = sum(totals.values())
+    return [
+        TopicWeight(
+            exam=e,
+            subject=s,
+            topic=t,
+            marks_total=w,
+            share=w / grand if grand else 0.0,
+            weight=w,
+            source=UNVERIFIED,
+        )
+        for (e, s, t), w in totals.items()
+    ]
+
+
+async def store_imports(
+    session: AsyncSession, cutoffs: Sequence[CutoffRow], weights: Sequence[TopicWeight]
+) -> None:
+    """Upsert the cutoffs and weights; the same files imported again change nothing."""
+    for c in cutoffs:
+        stmt = pg_insert(Cutoff).values(**c.model_dump())
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["exam", "year", "tier", "category"],
+                set_={"score": stmt.excluded.score, "source_url": stmt.excluded.source_url},
+            )
+        )
+    for w in weights:
+        stmt = pg_insert(TopicWeightRow).values(
+            exam=w.exam, subject=w.subject, topic=w.topic, weight=w.weight, source=w.source
+        )
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["exam", "subject", "topic"],
+                set_={"weight": stmt.excluded.weight, "source": stmt.excluded.source},
+            )
+        )
+    await session.flush()
+
+
+async def import_inbox_files(
+    session: AsyncSession, inbox: Path, official: frozenset[str]
+) -> tuple[int, int]:
+    """Import `cutoffs/*.csv` and `weightage/*.csv` from the library inbox.
+
+    Returns (cutoffs stored, weights stored). A cutoff whose `source_url` is not on an
+    official domain is dropped; weightage is always labelled `analysis (unverified)`.
+    """
+    cutoffs = import_cutoffs(read_csv_rows(inbox / "cutoffs"), official)
+    weights = aggregate_weightage(import_weightage(read_csv_rows(inbox / "weightage")))
+    await store_imports(session, cutoffs, weights)
+    return len(cutoffs), len(weights)
 
 
 def gate_weights(confirmed: Sequence[Any]) -> list[TopicWeight]:
