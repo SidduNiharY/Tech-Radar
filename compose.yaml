@@ -178,6 +178,8 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile
       target: parser
+    # Reaps ffmpeg/ffprobe/OCR children that outlive a job (the code reaps them too).
+    init: true
     network_mode: none
     mem_limit: 3g
     cpus: "2.0"
