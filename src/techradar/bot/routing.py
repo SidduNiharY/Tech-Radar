@@ -24,6 +24,10 @@ Action = Literal[
     "quarantine",
     "packs",
     "ignore",
+    # --- Phase 5 ---
+    "study",
+    "stop",
+    "skill",
 ]
 
 
@@ -105,6 +109,13 @@ def route_update(
         return Routed("quarantine") if chat_id == owner_id else Routed("ignore")
     if cmd == "/packs":  # starter packs status: the owner's own chat only
         return Routed("packs") if chat_id == owner_id else Routed("ignore")
+
+    # --- Phase 5 ---
+    # The study tracker and the skill map are the owner's alone, never a study group's (SEC-26).
+    if cmd in ("/study", "/stop", "/skill"):
+        if chat_id != owner_id:
+            return Routed("ignore")
+        return Routed(cmd[1:], cleaned[len(words[0]) :].strip())  # type: ignore[arg-type]
 
     if (
         not cmd.startswith("/")

@@ -4,12 +4,22 @@ from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import LibraryChapter, LibraryDoc, Revision, StudySession
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def local_date(now: datetime) -> date:
+    """The Asia/Kolkata calendar day of `now` (a naive `now` is taken as already local)."""
+    if now.tzinfo is None:
+        return now.date()
+    return now.astimezone(IST).date()
 
 
 class Goal(StrEnum):
@@ -139,7 +149,7 @@ async def stop_session(session: AsyncSession, now: datetime) -> StudyStop | None
     existing_pending = (await session.execute(rev_check)).scalars().first()
     g = Goal(s.goal)
     if existing_pending is None:
-        rev_dates = revision_dates(now.date(), g)
+        rev_dates = revision_dates(local_date(now), g)
         for rd in rev_dates:
             session.add(
                 Revision(
@@ -215,7 +225,7 @@ async def close_stale_sessions(session: AsyncSession, now: datetime) -> int:
         )
         if (await session.execute(rev_check)).scalars().first() is None:
             g = Goal(s.goal)
-            rev_dates = revision_dates(s.ended_at.date(), g)
+            rev_dates = revision_dates(local_date(s.ended_at), g)
             for rd in rev_dates:
                 session.add(
                     Revision(
@@ -234,3 +244,62 @@ async def close_stale_sessions(session: AsyncSession, now: datetime) -> int:
 async def run_close_stale_sessions(session: AsyncSession, now: datetime) -> int:
     """Alias runner for close_stale_sessions."""
     return await close_stale_sessions(session, now)
+
+
+async def running_session(session: AsyncSession) -> StudySession | None:
+    """The study session that has not been stopped, if any."""
+    stmt = (
+        select(StudySession)
+        .where(StudySession.ended_at.is_(None))
+        .order_by(StudySession.started_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+STUDY_USAGE = "Use /study <goal> <topic>, for example /study gate operating systems."
+
+
+async def study_reply(session: AsyncSession, arg: str, now: datetime) -> str:
+    """Body of `/study`: start a session, or say which one is already running."""
+    parsed = parse_study_command(arg)
+    if parsed is None:
+        return STUDY_USAGE
+    goal, topic = parsed
+    if await start_session(session, goal, topic, now) == "started":
+        return f"Started {goal.name} · {topic}. Send /stop when you finish."
+    running = await running_session(session)
+    if running is None:  # stopped between the two calls
+        return "No session running."
+    since = running.started_at.astimezone(IST).strftime("%H:%M")
+    return f"Already studying {Goal(running.goal).name} · {running.topic} since {since}."
+
+
+async def stop_reply(session: AsyncSession, now: datetime) -> str:
+    """Body of `/stop`."""
+    stopped = await stop_session(session, now)
+    if stopped is None:
+        return "No session running."
+    text = f"Stopped: {stopped.minutes} min of {stopped.goal.name} · {stopped.topic}."
+    if stopped.revision_dates:
+        text += f" Revisions set for {join_dates(stopped.revision_dates)}."
+    return text
+
+
+def local_day_bounds(first: date, last: date) -> tuple[datetime, datetime]:
+    """[start, end) timestamps covering the India days `first` to `last` inclusive."""
+    start = datetime.combine(first, datetime.min.time(), tzinfo=IST)
+    end = datetime.combine(last + timedelta(days=1), datetime.min.time(), tzinfo=IST)
+    return start, end
+
+
+async def minutes_by_goal(session: AsyncSession, first: date, last: date) -> dict[Goal, int]:
+    """Study minutes per goal for the India days `first` to `last` (closed sessions only)."""
+    start, end = local_day_bounds(first, last)
+    rows = await session.execute(
+        select(StudySession.goal, func.coalesce(func.sum(StudySession.minutes), 0))
+        .where(StudySession.started_at >= start, StudySession.started_at < end)
+        .where(StudySession.minutes.is_not(None))
+        .group_by(StudySession.goal)
+    )
+    return {Goal(goal): int(total) for goal, total in rows.all()}

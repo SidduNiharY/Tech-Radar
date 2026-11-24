@@ -25,9 +25,14 @@ from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
 from techradar.llm.roles import load_roles
 from techradar.messaging.outbox import enqueue_message
 from techradar.night.window import in_night_window, next_window_start, night_only
+from techradar.ops.alerts import alert_on_failure
+from techradar.ops.health import read_backup_status, run_health_checks
+from techradar.ops.status import check_disk_live, check_ollama_live
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
 from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
+from techradar.planner.progress import run_weekly_review
+from techradar.planner.sessions import close_stale_sessions, local_date
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -96,6 +101,7 @@ def get_pipeline_deps() -> PipelineDeps:
 
 
 @app.task(queue="llm", lock="pipeline")
+@alert_on_failure("collect_and_process")  # Phase 5
 async def collect_and_process() -> None:
     """Collect parser outputs and process unindexed items."""
     deps = get_pipeline_deps()
@@ -104,6 +110,7 @@ async def collect_and_process() -> None:
 
 
 @app.task(queue="io")
+@alert_on_failure("retention")  # Phase 5
 async def retention() -> None:
     """Run periodic retention cleanup."""
     deps = get_pipeline_deps()
@@ -167,6 +174,7 @@ async def intake_library(settings: Settings, deps: IndexDeps) -> list[int]:
 
 @app.periodic(cron="*/10 * * * *")
 @app.task(queue="io")
+@alert_on_failure("index_sync")  # Phase 5
 async def index_sync() -> None:
     """Run periodic vault and library indexing."""
     settings = _get_settings()
@@ -330,6 +338,7 @@ async def plan_doc_job(doc_id: int) -> None:
     queueing_lock="collect_bulk_results_queued",
     name="collect_bulk_results_job",
 )
+@alert_on_failure("collect_bulk_results_job")  # Phase 5
 async def collect_bulk_results_job() -> None:
     """Apply finished library parse results (probe, parts, whole docs)."""
     settings = _get_settings()
@@ -355,6 +364,7 @@ async def collect_bulk_results_job() -> None:
     queueing_lock="resume_bulk_queued",
     name="resume_bulk_job",
 )
+@alert_on_failure("resume_bulk_job")  # Phase 5
 async def resume_bulk_job() -> None:
     """Re-queue lost parse jobs of every stuck library doc (queued or processing).
 
@@ -475,3 +485,80 @@ async def summarize_chapters_job(doc_id: int) -> None:
         await _queue_summaries(
             doc_id, when=next_window_start(datetime.now(UTC).astimezone(zone), start)
         )
+
+
+# --- Phase 5 ---------------------------------------------------------------------
+# Planner, progress and reliability. Jobs never fall back to the Mac (D19): when the server
+# is off they wait, and the next tick catches up once. Every body below is idempotent.
+
+
+@app.periodic(cron="0 * * * *")
+@app.task(
+    queue="io",
+    lock="close_stale_sessions",
+    queueing_lock="close_stale_sessions_queued",
+    name="close_stale_sessions_job",
+)
+@alert_on_failure("close_stale_sessions_job")
+async def close_stale_sessions_job() -> None:
+    """Close study sessions left running for more than 4 hours (the owner forgot /stop)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        closed = await close_stale_sessions(session, datetime.now(UTC))
+        await session.commit()
+    if closed:
+        logger.info("auto-closed %d stale study sessions", closed)
+
+
+# Sundays at 19:00 India time. Procrastinate reads cron in UTC: 13:30 UTC is 19:00 IST.
+# A missed Sunday is not repeated later (one review per week, see `run_weekly_review`).
+@app.periodic(cron="30 13 * * 0")
+@app.task(
+    queue="io",
+    lock="weekly_review",
+    queueing_lock="weekly_review_queued",
+    name="weekly_review_job",
+)
+@alert_on_failure("weekly_review_job")
+async def weekly_review_job() -> None:
+    """Write this week's review page into the vault and send the owner a summary."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        await run_weekly_review(
+            session,
+            local_date(datetime.now(UTC)),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+
+
+# Hourly. Reads the backup status file the backup script writes into `data/status/` (the
+# worker needs `./data/status` mounted read-only: compose.yaml, left for the owner). A missing
+# file counts as "backup has not succeeded", so the alert also tells the owner the mount is
+# missing. Alerts are de-duplicated per problem for 6 hours, so downtime sends nothing twice.
+@app.periodic(cron="5 * * * *")
+@app.task(
+    queue="io",
+    lock="health",
+    queueing_lock="health_queued",
+    name="health_job",
+)
+@alert_on_failure("health_job")
+async def health_job() -> None:
+    """Check disk, fetching, backup and Ollama; alert the owner about each problem."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    ollama_ok = await check_ollama_live() is not None
+    async with session_factory() as session:
+        await run_health_checks(
+            session,
+            now=datetime.now(UTC),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            disk_free_pct=check_disk_live(settings.data_dir),
+            ollama_ok=ollama_ok,
+            backup_status=read_backup_status(settings.data_dir / "status" / "backup.json"),
+        )
+        await session.commit()

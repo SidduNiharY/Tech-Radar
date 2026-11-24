@@ -55,14 +55,19 @@ async def set_skill_status(
     status: str,
     today: date,
 ) -> str:
-    """Update skill status and updated timestamp in vault skill markdown."""
+    """Update skill status and updated timestamp in vault skill markdown.
+
+    WIRING(claude): `/skill` (bot/planner_commands.py) calls this. `PUT /v1/skills/{slug}` (the
+    API agent) must call it too, with the name taken from the slug, and map the three replies.
+    """
     if status not in SKILL_STATUSES:
         return "Status must be not_started, learning or built."
 
     slug = slugify(name)
     skill_file = vault_root / "skills" / f"{slug}.md"
 
-    if not skill_file.is_file():
+    # never write through a symlink: a planted link must not reach a file outside the vault
+    if skill_file.is_symlink() or not skill_file.is_file():
         return f"No skill page called {name}."
 
     content = skill_file.read_text(encoding="utf-8")

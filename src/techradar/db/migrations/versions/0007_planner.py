@@ -23,6 +23,7 @@ NEW_TABLES = [
     "revisions",
     "checkins",
     "plans",
+    "job_alerts",
 ]
 
 
@@ -98,6 +99,16 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("date"),
+        schema=SCHEMA,
+    )
+
+    # 5. job_alerts (Task 6): one row per alert key, for the 6-hour de-duplication.
+    # Named job_alerts because `alerts` already belongs to the exam watcher.
+    op.create_table(
+        "job_alerts",
+        sa.Column("key", sa.String(length=80), nullable=False),
+        sa.Column("last_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("key"),
         schema=SCHEMA,
     )
 
