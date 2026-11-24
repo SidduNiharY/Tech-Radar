@@ -31,9 +31,11 @@ from techradar.pipeline.retention import cleanup_retention
 from techradar.pipeline.writer import slugify
 from techradar.practice.chapter_cards import run_make_chapter_cards
 from techradar.practice.flashcards import run_cards
+from techradar.practice.grammar import run_grammar, run_grammar_set
 from techradar.practice.mcq import run_make_mcqs
 from techradar.practice.mistakes import run_mistakes_page
 from techradar.practice.quiz import run_quiz
+from techradar.practice.vocab import run_vocab
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -46,7 +48,14 @@ from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
-from techradar.worker.names import CARDS, MAKE_CHAPTER_CARDS, MISTAKES_PAGE, QUIZ, SAVE_TAKE
+from techradar.worker.names import (
+    CARDS,
+    GRAMMAR_SET,
+    MAKE_CHAPTER_CARDS,
+    MISTAKES_PAGE,
+    QUIZ,
+    SAVE_TAKE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -597,5 +606,42 @@ async def make_chapter_cards_job(chapter_id: int) -> None:
             chapter_id,
             _local_now(),
             owner_chat_id=settings.telegram_owner_chat_id,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="15 0 * * *")  # 05:45 Asia/Kolkata
+@app.task(queue="llm", queueing_lock="grammar_queued", name="grammar_job")
+async def grammar_job() -> None:
+    """Make today's 10 grammar items; each is kept only when the checker model agrees."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_grammar(session, _completer(), now=_local_now(), limit=10)
+        await session.commit()
+
+
+@app.periodic(cron="15 0 * * *")  # 05:45 Asia/Kolkata
+@app.task(queue="llm", queueing_lock="vocab_queued", name="vocab_job")
+async def vocab_job() -> None:
+    """Pick 5 new words from the last day's English text and make their cards.
+
+    The default analyzer is pure Python; spaCy and wordfreq are not approved yet.
+    """
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_vocab(session, _completer(), now=_local_now(), limit=5)
+        await session.commit()
+
+
+@app.task(queue="io", name=GRAMMAR_SET)
+async def grammar_set_job() -> None:
+    """/grammar: today's grammar set with its answer buttons, into the outbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_grammar_set(
+            session,
+            now=_local_now(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            limit=10,
         )
         await session.commit()

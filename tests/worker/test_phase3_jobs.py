@@ -129,3 +129,21 @@ async def test_make_chapter_cards_job_runs_and_commits(monkeypatch: pytest.Monke
     assert run.await_args.kwargs["owner_chat_id"] == 42
     assert tasks.make_chapter_cards_job.queue == "llm"
     session.commit.assert_awaited_once()
+
+
+def test_grammar_vocab_jobs_run_at_0545_ist_on_the_llm_queue():
+    for job in (tasks.grammar_job, tasks.vocab_job):
+        assert job.queue == "llm" and job.queueing_lock
+    assert tasks.grammar_set_job.name == "grammar_set" and tasks.grammar_set_job.queue == "io"
+
+
+async def test_grammar_and_vocab_jobs_run_and_commit(monkeypatch: pytest.MonkeyPatch):
+    session = _patch(monkeypatch)
+    grammar, vocab = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(tasks, "run_grammar", grammar)
+    monkeypatch.setattr(tasks, "run_vocab", vocab)
+    monkeypatch.setattr(tasks, "_completer", lambda: "completer")
+    await tasks.grammar_job()
+    await tasks.vocab_job()
+    assert grammar.await_args.kwargs["limit"] == 10 and vocab.await_args.kwargs["limit"] == 5
+    assert session.commit.await_count == 2

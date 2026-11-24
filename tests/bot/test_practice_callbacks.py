@@ -166,3 +166,14 @@ async def test_read_button_queues_make_chapter_cards(monkeypatch: pytest.MonkeyP
     proc.reset_mock()
     await handle_callback_query(update, context)
     proc.configure_task.assert_not_called()
+
+
+async def test_gram_button_answers_in_chat(monkeypatch: pytest.MonkeyPatch):
+    update, query, context, session = _query("gram:9:1")
+    monkeypatch.setattr(pc, "answer_grammar", AsyncMock(return_value="✅ Correct."))
+    await handle_callback_query(update, context)
+    query.message.reply_text.assert_awaited_once_with("✅ Correct.")
+    session.commit.assert_awaited_once()
+    update, query, context, session = _query("gram:9:7")
+    await handle_callback_query(update, context)
+    query.answer.assert_awaited_once_with("Invalid request.")

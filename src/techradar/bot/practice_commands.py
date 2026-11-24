@@ -11,9 +11,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from techradar.worker.names import CARDS, QUIZ
+from techradar.worker.names import CARDS, GRAMMAR_SET, QUIZ
 
-COMMAND_JOBS: Mapping[str, str] = {"quiz": QUIZ, "cards": CARDS}
+COMMAND_JOBS: Mapping[str, str] = {"quiz": QUIZ, "cards": CARDS, "grammar": GRAMMAR_SET}
 
 
 async def handle_practice_command(update: Any, bot_data: Mapping[str, Any], action: str) -> None:

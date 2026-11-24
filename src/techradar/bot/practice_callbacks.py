@@ -23,12 +23,13 @@ from techradar.db.models import MCQ, LibraryChapter, LibraryDoc
 from techradar.messaging.outbox import Button
 from techradar.practice.chapter_cards import render_chapter_list
 from techradar.practice.flashcards import rate_card, reveal_card, source_text
+from techradar.practice.grammar import answer_grammar
 from techradar.practice.quiz import record_answer, render_feedback
 from techradar.worker.names import MAKE_CHAPTER_CARDS
 
 logger = logging.getLogger(__name__)
 
-PRACTICE_ACTIONS = frozenset({"ans", "rate", "card_show", "src", "read"})
+PRACTICE_ACTIONS = frozenset({"ans", "rate", "card_show", "src", "read", "gram"})
 
 
 def markup(buttons: list[list[Button]]) -> InlineKeyboardMarkup:
@@ -60,7 +61,7 @@ async def handle_practice_callback(
     if session_factory is None or message is None:
         await query.answer("Not available yet.")
         return
-    if len(args) != (2 if action in ("ans", "rate") else 1):
+    if len(args) != (2 if action in ("ans", "rate", "gram") else 1):
         await query.answer("Invalid request.")
         return
     now = _local_now(bot_data)
@@ -69,6 +70,8 @@ async def handle_practice_callback(
         await _answer(query, message, session_factory, args[0], args[1], now)
     elif action == "rate":
         await _rate(query, session_factory, args[0], args[1], now)
+    elif action == "gram":
+        await _grammar(query, message, session_factory, args[0], args[1], now)
     elif action == "read":
         await _read(query, bot_data, args[0])
     elif action == "card_show":
@@ -152,3 +155,19 @@ async def chapter_buttons(session: Any, doc_id: int) -> tuple[str, list[list[But
         .all()
     )
     return render_chapter_list(doc, chapters) if chapters else None
+
+
+async def _grammar(
+    query: Any, message: Any, session_factory: Any, item_id: int, chosen: int, now: datetime
+) -> None:
+    if not 0 <= chosen <= 3:
+        await query.answer("Invalid request.")
+        return
+    async with session_factory() as session:
+        feedback = await answer_grammar(session, item_id, chosen, now)
+        await session.commit()
+    if feedback is None:
+        await query.answer("Nothing to answer.")
+        return
+    await message.reply_text(feedback)
+    await query.answer()
