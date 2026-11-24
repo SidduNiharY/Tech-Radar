@@ -23,17 +23,16 @@ from techradar.db.models import LibraryDoc, QuarantineItem
 from techradar.intake.av import AvResult
 from techradar.intake.gateway import gate_job
 from techradar.library.quarantine import (
-    ReleaseRequests,
-    confirm_release,
     delete_item,
     doc_flagged,
     hold_library_doc,
     list_quarantine,
     release,
-    request_release,
+    release_prompt,
 )
 from techradar.schemas.pipeline import CleanDoc, ParseJob, ParseResult
 from techradar.settings import Settings
+from techradar.tickets import create_ticket, run_confirmed
 from tests.intake.library_fixtures import make_docx
 
 pytestmark = pytest.mark.db
@@ -147,26 +146,28 @@ async def _held_doc(
     return doc, item
 
 
+async def _release_ticket(session: AsyncSession, item_id: int, *, at: datetime = NOW) -> str:
+    """Step 1 as `qrel:<id>` does it: the prompt, stored as a ticket for chat OWNER."""
+    text = await release_prompt(session, item_id)
+    assert text is not None
+    t = await create_ticket(
+        session, session_id=f"tg:{OWNER}", channel="telegram", action="quarantine.release",
+        args={"id": item_id}, summary=text, now=at,
+    )  # fmt: skip
+    return t.token
+
+
 async def test_release_processes_as_flagged(session: AsyncSession, tmp_path: Path) -> None:
     doc, item = await _held_doc(session, tmp_path / "q")
     assert await doc_flagged(session, doc.id) is False
-    gate = Gate(tmp_path / "q")
-    requests = ReleaseRequests()
 
-    prompt = await request_release(session, item.id, requests=requests, now=NOW)
-    assert prompt is not None
-    text, buttons = prompt
-    assert text == (
+    assert await release_prompt(session, item.id) == (
         "Release Macro Book? It will be processed as flagged: searchable, "
         "but never used for facts, cards or questions."
     )
-    assert [[b.text, b.data] for b in buttons[0]] == [["Yes, release", f"qrel_ok:{item.id}"]]
-
-    outcome = await confirm_release(
-        session, item.id, requests=requests, gate=gate, now=NOW + timedelta(seconds=30)
-    )
-    assert outcome == "released"
-    assert gate.calls == 0  # a library doc is gated by the parser when its jobs re-run
+    token = await _release_ticket(session, item.id)
+    result = await run_confirmed(session, token, f"tg:{OWNER}", NOW + timedelta(seconds=30))
+    assert result == ("ok", "Released. It will be processed as flagged.")
     assert await doc_flagged(session, doc.id) is True
     await session.refresh(item)
     await session.refresh(doc)
@@ -174,16 +175,11 @@ async def test_release_processes_as_flagged(session: AsyncSession, tmp_path: Pat
     assert doc.status == "queued"  # planned again; its jobs run as owner-released
 
 
-async def test_release_button_expires(session: AsyncSession, tmp_path: Path) -> None:
+async def test_release_ticket_expires(session: AsyncSession, tmp_path: Path) -> None:
     doc, item = await _held_doc(session, tmp_path / "q")
-    gate = Gate(tmp_path / "q")
-    requests = ReleaseRequests()
-    assert await request_release(session, item.id, requests=requests, now=NOW) is not None
-    outcome = await confirm_release(
-        session, item.id, requests=requests, gate=gate, now=NOW + timedelta(seconds=61)
-    )
-    assert outcome == "expired"
-    assert gate.calls == 0
+    token = await _release_ticket(session, item.id)
+    result = await run_confirmed(session, token, f"tg:{OWNER}", NOW + timedelta(seconds=61))
+    assert result == ("expired", None)
     assert await doc_flagged(session, doc.id) is False
     await session.refresh(item)
     assert item.released_at is None
@@ -192,36 +188,30 @@ async def test_release_button_expires(session: AsyncSession, tmp_path: Path) -> 
 async def test_double_confirm_is_a_no_op(session: AsyncSession, tmp_path: Path) -> None:
     _doc, item = await _held_doc(session, tmp_path / "q")
     gate = Gate(tmp_path / "q")
-    requests = ReleaseRequests()
-    await request_release(session, item.id, requests=requests, now=NOW)
-    first = await confirm_release(session, item.id, requests=requests, gate=gate, now=NOW)
-    second = await confirm_release(session, item.id, requests=requests, gate=gate, now=NOW)
-    assert (first, second) == ("released", "no_request")
-    # A new request for a released item is refused, so it cannot be released twice.
-    assert await request_release(session, item.id, requests=requests, now=NOW) is None
+    token = await _release_ticket(session, item.id)
+    first = await run_confirmed(session, token, f"tg:{OWNER}", NOW)
+    second = await run_confirmed(session, token, f"tg:{OWNER}", NOW)
+    assert (first[0], second) == ("ok", ("used", None))
+    # A new prompt for a released item is refused, so it cannot be released twice.
+    assert await release_prompt(session, item.id) is None
     assert await release(session, item.id, gate=gate, now=NOW) == "not_found"
     assert gate.calls == 0
 
 
-async def test_confirm_without_request_is_a_no_op(session: AsyncSession, tmp_path: Path) -> None:
+async def test_another_chat_cannot_confirm(session: AsyncSession, tmp_path: Path) -> None:
     doc, item = await _held_doc(session, tmp_path / "q")
-    gate = Gate(tmp_path / "q")
-    outcome = await confirm_release(
-        session, item.id, requests=ReleaseRequests(), gate=gate, now=NOW
-    )
-    assert outcome == "no_request"
-    assert gate.calls == 0
+    token = await _release_ticket(session, item.id)
+    assert await run_confirmed(session, token, "tg:-100", NOW) == ("wrong_session", None)
     assert await doc_flagged(session, doc.id) is False
 
 
-async def test_request_for_unknown_or_deleted_item_is_refused(
+async def test_prompt_for_unknown_or_deleted_item_is_refused(
     session: AsyncSession, tmp_path: Path
 ) -> None:
-    requests = ReleaseRequests()
-    assert await request_release(session, -1, requests=requests, now=NOW) is None
+    assert await release_prompt(session, -1) is None
     _doc, item = await _held_doc(session, tmp_path / "q")
     assert await delete_item(session, item.id, quarantine_dir=tmp_path / "q", now=NOW) == "deleted"
-    assert await request_release(session, item.id, requests=requests, now=NOW) is None
+    assert await release_prompt(session, item.id) is None
     assert await release(session, item.id, gate=Gate(tmp_path / "q"), now=NOW) == "not_found"
 
 

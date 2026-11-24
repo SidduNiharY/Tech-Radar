@@ -761,10 +761,20 @@ class UserSettings(Base):
 
 
 class PendingAction(Base):
-    """Two-step confirmation ticket for sensitive operations."""
+    """One-time confirmation ticket (SEC-56, techradar.tickets). Readable by tr_app only."""
 
     __tablename__ = "pending_actions"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        CheckConstraint("channel IN ('web','telegram','voice')", name="ck_pending_actions_channel"),
+        CheckConstraint("token ~ '^[0-9a-f]{32}$'", name="ck_pending_actions_token"),
+        Index(
+            "uq_pending_actions_open_session",
+            "session_id",
+            unique=True,
+            postgresql_where=text("used_at IS NULL AND cancelled_at IS NULL"),
+        ),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     token: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)

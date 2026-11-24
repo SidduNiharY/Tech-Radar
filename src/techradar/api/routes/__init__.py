@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from techradar.api.routes import ask, models, practice, quiz, settings, today
+from techradar.api.routes import ask, models, practice, quiz, settings, tickets, today
 
 ROUTERS: tuple[APIRouter, ...] = (
     today.router,
@@ -13,4 +13,5 @@ ROUTERS: tuple[APIRouter, ...] = (
     quiz.router,
     settings.router,
     models.router,
+    tickets.router,
 )

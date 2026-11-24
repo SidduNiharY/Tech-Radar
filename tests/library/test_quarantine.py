@@ -15,9 +15,10 @@ import pytest
 from techradar.db.models import Outbox
 from techradar.library.quarantine import (
     QuarantineRow,
-    ReleaseRequests,
+    delete_action,
     held_file,
     notify_quarantined,
+    release_action,
     remove_held_file,
     remove_original,
     render_quarantine,
@@ -119,34 +120,16 @@ def test_render_quarantine_empty() -> None:
 
 
 # --- release window -------------------------------------------------------------
+# The 60 s, single-use, per-session window is a ticket since Phase 4 Task 2b:
+# tests/test_tickets.py (db) and tests/test_tickets_unit.py.
 
 
-def test_release_request_valid_for_sixty_seconds() -> None:
-    req = ReleaseRequests()
-    req.record(7, T0)
-    assert req.take(7, T0 + timedelta(seconds=60)) == "ok"
-
-
-def test_release_request_expires_after_sixty_seconds() -> None:
-    req = ReleaseRequests()
-    req.record(7, T0)
-    assert req.take(7, T0 + timedelta(seconds=61)) == "expired"
-    # Expired requests are used up too.
-    assert req.take(7, T0 + timedelta(seconds=62)) == "missing"
-
-
-def test_release_request_single_use_and_per_item() -> None:
-    req = ReleaseRequests()
-    req.record(7, T0)
-    assert req.take(8, T0) == "missing"
-    assert req.take(7, T0 + timedelta(seconds=1)) == "ok"
-    assert req.take(7, T0 + timedelta(seconds=2)) == "missing"
-
-
-def test_release_request_from_the_future_is_refused() -> None:
-    req = ReleaseRequests()
-    req.record(7, T0)
-    assert req.take(7, T0 - timedelta(seconds=1)) == "expired"
+@pytest.mark.parametrize("args", [{}, {"id": "5"}, {"id": True}, {"id": 0}, {"id": 2**63}])
+async def test_ticket_actions_refuse_bad_args_without_a_query(args: dict[str, object]) -> None:
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=AssertionError("no query expected"))
+    assert await release_action(session, args) == "Nothing to release."
+    assert await delete_action(session, args) == "Nothing to delete."
 
 
 # --- safe delete ----------------------------------------------------------------

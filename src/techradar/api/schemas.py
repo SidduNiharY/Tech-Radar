@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from techradar.planner.sessions import Goal
 from techradar.schemas.pipeline import Section
+from techradar.tickets import ConfirmResult, Ticket
 
 __all__ = [
     "Answer",
@@ -30,7 +31,10 @@ __all__ = [
     "QuizQuestion",
     "RateCardRequest",
     "RateCardResponse",
+    "ConfirmRequest",
+    "ConfirmResponse",
     "Ticket",
+    "TicketResponse",
     "TodayItem",
     "TodayResponse",
     "UserSettings",
@@ -217,13 +221,21 @@ class UserSettings(_In):
     )
 
 
-# --- tickets ----------------------------------------------------------------------------
+# --- tickets (Task 2b; `Ticket` is techradar.tickets.Ticket) --------------------------------
 
 
-class Ticket(_Out):
-    """Confirmation ticket for two-step verification."""
+class ConfirmRequest(_In):
+    """Only the token: the action and its arguments are the ones stored with the ticket."""
 
-    id: int
-    token: str
-    summary: str
-    expires_at: datetime
+    token: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+
+class ConfirmResponse(_Out):
+    result: ConfirmResult
+    message: str | None = None
+
+
+class TicketResponse(_Out):
+    """What a route that needs a confirmation returns instead of acting (Task 5b)."""
+
+    ticket: Ticket

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from techradar.api.resources import Defer, Resources, ollama_ps, read_meminfo
 from techradar.llm.roles import RoleConfigError, load_roles
 from techradar.settings import SecretError, Settings, get_settings, read_secret
+from techradar.tickets import web_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,19 @@ def get_roles() -> dict[str, str]:
     return {role.value: model.ollama_tag for role, model in roles.items()}
 
 
+def web_session(x_tr_session: str | None = Header(None)) -> str:
+    """`web:<X-TR-Session>` (Task 2b): the browser tab a ticket belongs to; 400 if malformed.
+
+    The `web:` prefix is added here, so a client can never name a Telegram or voice session.
+    """
+    session_id = web_session_id(x_tr_session)
+    if session_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Bad request")
+    return session_id
+
+
 # Parameter types for routes (FastAPI resolves them; tests override the functions above).
+WebSession = Annotated[str, Depends(web_session)]
 AppSession = Annotated[AsyncSession, Depends(get_session)]
 RoSession = Annotated[AsyncSession, Depends(get_ro_session)]
 Now = Annotated[datetime, Depends(get_now)]
