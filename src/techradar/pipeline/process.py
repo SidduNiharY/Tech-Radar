@@ -17,6 +17,7 @@ from techradar.db.models import Fact, FactSource, IntakeLog, Item, Note, Quarant
 from techradar.library.quarantine import held_file, notify_quarantined, should_notify
 from techradar.llm.client import Completer, Embedder
 from techradar.pipeline.filter import assign_cluster, profile_texts, relevance
+from techradar.pipeline.politics_view import build_politics_view
 from techradar.pipeline.reader import build_reader_graph, read_item
 from techradar.pipeline.supersede import supersede_if_newer
 from techradar.pipeline.verify import check_fact, fact_key, headline_ok, is_verified
@@ -28,7 +29,7 @@ from techradar.pipeline.writer import (
     render_story,
     write_note,
 )
-from techradar.schemas.pipeline import CleanDoc, ParseResult
+from techradar.schemas.pipeline import CleanDoc, ParseResult, Section
 from techradar.security.urls import UrlRejected, check_url, registrable_domain
 from techradar.settings import Settings
 
@@ -404,6 +405,17 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
         verified_headline = headline_ok(cluster_domains, output.section, deps.official)
         has_flag = any("gateway_flagged" in it.flags for it in cluster_items)
 
+        # --- Phase 7: a politics story that passed the headline rule also gets a view, with the
+        # opinions of each outlet kept apart from the facts (the model has no tools).
+        politics_view = None
+        if output.section is Section.POLITICS and verified_headline:
+            articles: list[tuple[str, str, str]] = []
+            for it in cluster_items:
+                cdoc, _err = _read_clean_doc(Path(it.text_path)) if it.text_path else (None, None)
+                if cdoc is not None and "gateway_flagged" not in it.flags:
+                    articles.append((it.domain, it.title, cdoc.text))
+            politics_view = await build_politics_view(deps.completer, articles)
+
         story_note = StoryNote(
             cluster_id=item.cluster_id,
             title=item.title,
@@ -416,6 +428,7 @@ async def process_item(item_id: int, deps: PipelineDeps) -> ItemOutcome:
             sources=story_sources,
             verified_headline=verified_headline,
             is_flagged=has_flag,
+            politics=politics_view,
         )
 
         # 7. Write Note
