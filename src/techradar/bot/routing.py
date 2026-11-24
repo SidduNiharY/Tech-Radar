@@ -22,6 +22,9 @@ Action = Literal[
     "plan",
     "take",
     "quarantine",
+    # --- Phase 7 ---
+    "predict",
+    "prediction_reply",
     "ignore",
 ]
 
@@ -44,6 +47,7 @@ def route_update(
     is_briefing_reply: bool = False,
     briefing_message_ids: Set[int] | None = None,
     ready_message_ids: Set[int] = frozenset(),
+    prediction_message_ids: Set[int] = frozenset(),
 ) -> Routed:
     """Route an incoming Telegram message.
 
@@ -59,6 +63,9 @@ def route_update(
         Routed("quarantine") for /quarantine from the owner's own chat only
         Routed("ask_book", text) for a plain-text reply (no command) from the owner's own chat
             to one of `ready_message_ids` (the caller looked the Ready messages up)
+        Routed("predict", arg) for /predict from the owner's own chat only (Phase 7)
+        Routed("prediction_reply", text) for a plain-text reply from the owner's own chat to
+            one of `prediction_message_ids` (the caller looked the reminders up)
         Routed("take", reply_text) for replies to active briefing messages
         Routed("ignore") for unauthorized chats or unknown/empty messages
     """
@@ -73,6 +80,15 @@ def route_update(
     valid_briefings = set(active_briefing_message_ids)
     if briefing_message_ids:
         valid_briefings.update(briefing_message_ids)
+
+    # --- Phase 7: predictions log (the owner's own chat only, never a study group) ---
+    if (
+        chat_id == owner_id
+        and reply_to_message_id is not None
+        and reply_to_message_id in prediction_message_ids
+        and not cleaned.startswith("/")
+    ):
+        return Routed("prediction_reply", cleaned)
 
     if is_briefing_reply or (
         reply_to_message_id is not None and reply_to_message_id in valid_briefings
@@ -99,6 +115,10 @@ def route_update(
         return Routed("inbox")
     if cmd == "/plan":
         return Routed("plan")
+    if cmd == "/predict":  # --- Phase 7 ---
+        if chat_id != owner_id:
+            return Routed("ignore")
+        return Routed("predict", cleaned[len(words[0]) :].strip())
     if cmd == "/quarantine":
         # Releasing held files is the owner's alone, never a study group's (SEC-14).
         return Routed("quarantine") if chat_id == owner_id else Routed("ignore")

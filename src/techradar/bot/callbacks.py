@@ -14,6 +14,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
+from techradar.bot.predict import handle_outcome_button
 from techradar.library.quarantine import (
     ReleaseRequests,
     confirm_release,
@@ -57,6 +58,18 @@ async def handle_callback_query(
     if action == "chap":
         if len(args) == 1 and valid_id(args[0]):
             await _chapters_callback(query, context.application.bot_data, args[0])
+        else:
+            await query.answer("Invalid request.")
+        return
+
+    # --- Phase 7: prediction outcome buttons, `pred:<id>:<1-3>` ---
+    if action == "pred":
+        if len(args) == 2 and valid_id(args[0]):
+            message = query.message
+            if message is None or message.chat.id != owner_id:
+                await query.answer("Not available.")
+            else:
+                await handle_outcome_button(query, context.application.bot_data, args[0], args[1])
         else:
             await query.answer("Invalid request.")
         return

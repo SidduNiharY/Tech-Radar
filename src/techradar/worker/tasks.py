@@ -43,7 +43,8 @@ from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
-from techradar.worker.names import NIGHT_QUEUE
+from techradar.worker.names import NIGHT_QUEUE, PREDICTIONS_SYNC
+from techradar.world.predictions import run_prediction_reminder, sync_predictions_vault
 
 logger = logging.getLogger(__name__)
 
@@ -547,3 +548,33 @@ async def chains_job(timestamp: int | None = None) -> None:
         )
         await session.commit()
     logger.info("chains: %s", result.model_dump())
+
+
+@app.periodic(cron="30 2 * * *")  # 02:30 UTC = 08:00 IST
+@app.task(queue="io", name="prediction_reminder_job")
+async def prediction_reminder_job(timestamp: int | None = None) -> None:
+    """Ask the owner about each prediction that has come due (once each), then refresh the page."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        sent = await run_prediction_reminder(
+            session,
+            now=datetime.now(UTC),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            tz=settings.tz,
+        )
+        await session.commit()
+    logger.info("prediction reminders sent: %d", sent)
+    try:
+        await predictions_sync_job.defer_async()
+    except procrastinate_exceptions.AlreadyEnqueued:
+        pass  # a refresh is already waiting
+
+
+@app.task(queue="io", name=PREDICTIONS_SYNC, queueing_lock=PREDICTIONS_SYNC)
+async def predictions_sync_job() -> None:
+    """Regenerate context/predictions.md from the database (the bot has no vault)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        await sync_predictions_vault(session, settings.data_dir / "vault", settings.tz)

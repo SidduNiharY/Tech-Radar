@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -20,6 +22,7 @@ from telegram.ext import (
 
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
+from techradar.bot.predict import find_prediction, handle_predict, handle_prediction_reply
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.routing import route_update
 from techradar.db.engine import make_session_factory
@@ -58,12 +61,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("Not available yet.")
             return
 
+    # --- Phase 7: a reply to a prediction reminder (the owner's own chat only) ---
+    prediction_id: int | None = None
+    if reply_id is not None and chat_id == settings.telegram_owner_chat_id:
+        try:
+            prediction_id = await find_prediction(context.application.bot_data, chat_id, reply_id)
+        except Exception:
+            logger.exception("could not look up the prediction reminder")
+
     routed = route_update(
         chat_id=chat_id,
         text=text,
         owner_id=settings.telegram_owner_chat_id,
         reply_to_message_id=reply_id,
         ready_message_ids=frozenset({reply_id}) if ready_doc and reply_id else frozenset(),
+        prediction_message_ids=(
+            frozenset({reply_id}) if prediction_id and reply_id else frozenset()
+        ),
     )
 
     if routed.action == "ignore":
@@ -103,6 +117,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else None
         )
         await update.message.reply_text(text, reply_markup=markup)
+        return
+
+    # --- Phase 7: the router allows both from the owner's own chat only ---
+    if routed.action == "predict":
+        today = datetime.now(ZoneInfo(settings.tz)).date()
+        await handle_predict(update, context.application.bot_data, routed.arg, today=today)
+        return
+
+    if routed.action == "prediction_reply" and prediction_id is not None:
+        await handle_prediction_reply(
+            update, context.application.bot_data, prediction_id, routed.arg
+        )
         return
 
     if routed.action in ("ask", "ask_book"):
