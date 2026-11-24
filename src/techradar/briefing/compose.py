@@ -279,7 +279,10 @@ async def run_briefing(
 
     briefing_obj = Briefing(date=now.date(), items=selected, plan_lines=plan_lines or [])
 
-    briefing_row = BriefingModel(date=now.date(), sent_at=now)
+    # Phase 4: the web's Today screen reads the stories from briefings.items.
+    briefing_row = BriefingModel(
+        date=now.date(), sent_at=now, items=[c.model_dump(mode="json") for c in selected]
+    )
     session.add(briefing_row)
     await session.flush()
 

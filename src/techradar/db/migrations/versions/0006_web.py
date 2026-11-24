@@ -22,6 +22,7 @@ NEW_TABLES = [
     "user_settings",
     "pending_actions",
 ]
+RO_TABLES = ["user_settings"]  # not pending_actions (see the REVOKE below)
 
 
 def upgrade() -> None:
@@ -62,7 +63,20 @@ def upgrade() -> None:
         sa.Column("cancelled_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("token", name="uq_pending_actions_token"),
+        sa.CheckConstraint(
+            "channel IN ('web','telegram','voice')", name="ck_pending_actions_channel"
+        ),
+        sa.CheckConstraint("token ~ '^[0-9a-f]{32}$'", name="ck_pending_actions_token"),
         schema=SCHEMA,
+    )
+    # At most one open ticket per session (create_ticket cancels the old one first).
+    op.create_index(
+        "uq_pending_actions_open_session",
+        "pending_actions",
+        ["session_id"],
+        unique=True,
+        schema=SCHEMA,
+        postgresql_where=sa.text("used_at IS NULL AND cancelled_at IS NULL"),
     )
 
     # 3. Add column items to briefings
@@ -87,7 +101,11 @@ def upgrade() -> None:
         "END IF;",
         "IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_ro') THEN",
     ]
-    stmts += [f"GRANT SELECT ON {SCHEMA}.{t} TO tr_ro;" for t in NEW_TABLES]
+    stmts += [f"GRANT SELECT ON {SCHEMA}.{t} TO tr_ro;" for t in RO_TABLES]
+    # Ticket tokens confirm actions: the read-only role (RAG, reports) never sees them.
+    # The default privileges in infra/postgres/init/01-roles.sh grant SELECT on every new
+    # table to tr_ro, so dropping the GRANT is not enough.
+    stmts += [f"REVOKE ALL ON {SCHEMA}.pending_actions FROM tr_ro;"]
     stmts += ["END IF;", "END $$;"]
     op.execute("\n".join(stmts))
 

@@ -25,13 +25,9 @@ from techradar.bot.practice_callbacks import (
 from techradar.bot.predict import handle_outcome_button
 from techradar.db.models import TopicSource
 from techradar.exams.sources import decide_source
-from techradar.library.quarantine import (
-    ReleaseRequests,
-    confirm_release,
-    delete_item,
-    request_release,
-)
+from techradar.library.quarantine import DELETE_MESSAGES, delete_item, release_prompt
 from techradar.messaging.outbox import parse_callback
+from techradar.tickets import create_ticket, run_confirmed, tg_session_id, token_for
 from techradar.worker.names import SAVE_ANSWER
 
 logger = logging.getLogger(__name__)
@@ -144,59 +140,69 @@ async def _chapters_callback(query: Any, bot_data: Any, doc_id: int) -> None:
     await query.answer()
 
 
-QUARANTINE_ACTIONS = frozenset({"qrel", "qrel_ok", "qdel"})
+# tk: confirm a ticket (Phase 4 Task 2b). qrel_ok: the old in-memory second step, gone.
+QUARANTINE_ACTIONS = frozenset({"qrel", "qrel_ok", "qdel", "tk"})
 CHECKIN_ACTIONS = frozenset({"sleep", "energy", "mood"})  # Phase 5
 
-_RELEASE_ANSWERS = {
-    "released": "Released. It will be processed as flagged.",
-    "rejected": "Still refused: the file failed a check that a release cannot override.",
-    "failed": "Could not release it; it stays held.",
-    "not_found": "Nothing to release.",
-    "expired": "That button expired. Press Release again.",
-    "no_request": "Press Release first.",
-}
-_DELETE_ANSWERS = {
-    "deleted": "Deleted.",
-    "already": "Already deleted.",
-    "refused": "Could not delete that file.",
-    "not_found": "Nothing to delete.",
-}
+EXPIRED_ANSWER = "That confirmation expired. Try again."
+INVALID_ANSWER = "That confirmation is no longer valid."
 
 
 async def _quarantine_callback(query: Any, bot_data: Any, action: str, item_id: int) -> None:
-    """Release (two steps) or delete a held file. Only reached after the owner check."""
+    """Release (through a ticket) or delete a held file. Only reached after the owner check.
+
+    `qrel:<id>` stores a ticket for this chat (`tg:<chat_id>`, 60 s) and shows `tk:<ticket>`;
+    `tk:<ticket>` runs that ticket's stored action once (techradar.tickets).
+    """
+    if action == "qrel_ok":
+        await query.answer("That button expired. Press Release again.")
+        return
     session_factory = bot_data.get("session_factory")
-    if session_factory is None:
+    message = query.message
+    if session_factory is None or message is None:
         await query.answer("Not available yet.")
         return
-    requests = bot_data.get("quarantine_requests")
-    if not isinstance(requests, ReleaseRequests):
-        requests = bot_data["quarantine_requests"] = ReleaseRequests()
+    session_id = tg_session_id(message.chat.id)
     now = datetime.now(UTC)
 
     if action == "qrel":
         async with session_factory() as session:
-            prompt = await request_release(session, item_id, requests=requests, now=now)
-        if prompt is None or query.message is None:
-            await query.answer("Nothing to release.")
-            return
-        text, buttons = prompt
+            text = await release_prompt(session, item_id)
+            if text is None:
+                await query.answer("Nothing to release.")
+                return
+            ticket = await create_ticket(
+                session,
+                session_id=session_id,
+                channel="telegram",
+                action="quarantine.release",
+                args={"id": item_id},
+                summary=text,
+                now=now,
+            )
+            await session.commit()
         markup = InlineKeyboardMarkup(
-            [[InlineKeyboardButton(b.text, callback_data=b.data) for b in row] for row in buttons]
+            [[InlineKeyboardButton("Yes, release", callback_data=f"tk:{ticket.id}")]]
         )
-        await query.message.reply_text(text, reply_markup=markup)
+        await message.reply_text(text, reply_markup=markup)
         await query.answer()
         return
 
-    if action == "qrel_ok":
-        # A library doc needs no gate here: its jobs re-run in the parser as owner-released.
-        # Other held files need an injected release gate; without one nothing is released.
-        gate = bot_data.get("release_gate")
+    if action == "tk":
         async with session_factory() as session:
-            outcome = await confirm_release(session, item_id, requests=requests, gate=gate, now=now)
+            token = await token_for(session, item_id, session_id)
+            if token is None:
+                await query.answer(INVALID_ANSWER)
+                return
+            result, reply = await run_confirmed(session, token, session_id, now)
             await session.commit()
-        logger.info("quarantine release %s: %s", item_id, outcome)
-        await query.answer(_RELEASE_ANSWERS.get(outcome, "Done."))
+        logger.info("ticket %s: %s", item_id, result)
+        if result == "ok":
+            await query.answer(reply or "Done.")
+        elif result == "expired":
+            await query.answer(EXPIRED_ANSWER)
+        else:
+            await query.answer(INVALID_ANSWER)
         return
 
     quarantine_dir = bot_data.get("quarantine_dir")
@@ -208,7 +214,7 @@ async def _quarantine_callback(query: Any, bot_data: Any, action: str, item_id: 
         deleted = await delete_item(session, item_id, quarantine_dir=Path(quarantine_dir), now=now)
         await session.commit()
     logger.info("quarantine delete %s: %s", item_id, deleted)
-    await query.answer(_DELETE_ANSWERS.get(deleted, "Done."))
+    await query.answer(DELETE_MESSAGES.get(deleted, "Done."))
 
 
 # --- Phase 8: exams ---------------------------------------------------------------

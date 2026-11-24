@@ -58,15 +58,36 @@ def test_user_settings_validation():
             verified_only_default=False,
         )
 
+    # Sections are the known ones only (was `Section | str`: any string, any length)
+    with pytest.raises(ValidationError):
+        UserSettings(briefing_time="08:00", sections=["tech", "x" * 5000])
+
+    # Unknown fields are refused
+    with pytest.raises(ValidationError):
+        UserSettings(briefing_time="08:00", sections=["tech"], owner_login="evil")
+
+    # Weekly targets are bounded minutes
+    with pytest.raises(ValidationError):
+        UserSettings(briefing_time="08:00", sections=["tech"], weekly_targets_min={"dev": -1})
+
+
+def test_ask_request_strips_and_refuses_blank():
+    assert AskRequest(question="  What is CRR?  ").question == "What is CRR?"
+    for blank in ("   ", "\n\t"):
+        with pytest.raises(ValidationError):
+            AskRequest(question=blank)
+    with pytest.raises(ValidationError):
+        AskRequest(question="q", chat_id=5)  # no extra fields reach the job
+
 
 def test_today_response_serialization():
     item = TodayItem(
-        cluster_id=101,
+        cluster_id="101",
         title="Headline Title",
         section="india",
         exam_tags=["GATE", "UPSC"],
-        verified_headline="Verified facts summary",
-        four_questions=["Q1", "Q2", "Q3", "Q4"],
+        verified_headline=True,
+        four_questions={"why": "Rates held", "how_it_affects_me": "EMIs stay"},
         note_path="notes/today.md",
     )
     resp = TodayResponse(
@@ -91,13 +112,15 @@ def test_quiz_question_and_outcome():
 
     outcome = AnswerOutcome(
         correct=True,
-        chosen=1,
-        answer_index=1,
+        correct_index=1,
         explanation="Network layer routes packets.",
-        card_created=False,
+        already_answered=False,
     )
     assert outcome.correct is True
-    assert outcome.chosen == 1
+    assert outcome.correct_index == 1
+    # The quiz question never carries the key.
+    assert "answer_index" not in QuizQuestion.model_fields
+    assert "correct_index" not in QuizQuestion.model_fields
 
 
 def test_ticket_schema():

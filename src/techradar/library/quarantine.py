@@ -4,9 +4,10 @@ Phase 2c Task 10. SEC: SEC-14, SEC-15, SEC-43, SEC-57.
 
 The release path decides whether a hostile file gets processed, so every step fails closed:
 
-- A release needs two button presses: `qrel:<id>` records the request time, `qrel_ok:<id>`
-  must follow within 60 s. Requests live in memory (ReleaseRequests): a restart forgets
-  them, which only makes the owner press Release again.
+- A release needs a confirmed ticket (Phase 4 Task 2b, techradar.tickets): `qrel:<id>`
+  stores one (`quarantine.release`, args `{"id": <id>}`, 60 s, this chat only) and its
+  button `tk:<ticket_id>` runs `release_action` once. The web does the same with its own
+  session. Tickets live in Postgres: a restart keeps them, and they still expire.
 - The release itself claims the row with one conditional UPDATE (`released_at IS NULL AND
   deleted_at IS NULL`), so two confirms, two processes or a stale button can never release
   an item twice.
@@ -35,11 +36,11 @@ import os
 import re
 import stat
 import unicodedata
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,13 +60,12 @@ from techradar.schemas.pipeline import ParseResult
 logger = logging.getLogger(__name__)
 
 NOTICE_ORIGINS = frozenset({"telegram", "library", "pack"})
-RELEASE_WINDOW = timedelta(seconds=60)
 MAX_NAME = 120
 MAX_REASONS = 200
 LIST_LIMIT = 10
 
 ReleaseGate = Callable[[QuarantineItem], Awaitable[ParseResult]]
-ReleaseOutcome = Literal["released", "rejected", "failed", "not_found", "expired", "no_request"]
+ReleaseOutcome = Literal["released", "rejected", "failed", "not_found"]
 DeleteOutcome = Literal["deleted", "already", "refused", "not_found"]
 FileOutcome = Literal["deleted", "gone", "refused"]
 
@@ -214,58 +214,86 @@ async def quarantine_listing(session: AsyncSession) -> tuple[str, list[list[Butt
 # --- release --------------------------------------------------------------------
 
 
-class ReleaseRequests:
-    """When the owner pressed Release, per item. Each request is used at most once."""
-
-    def __init__(self) -> None:
-        self._at: dict[int, datetime] = {}
-
-    def record(self, item_id: int, now: datetime) -> None:
-        stale = [k for k, t in self._at.items() if now - t > RELEASE_WINDOW]
-        for k in stale:
-            del self._at[k]
-        self._at[item_id] = now
-
-    def take(self, item_id: int, now: datetime) -> Literal["ok", "expired", "missing"]:
-        at = self._at.pop(item_id, None)
-        if at is None:
-            return "missing"
-        if now < at or now - at > RELEASE_WINDOW:
-            return "expired"
-        return "ok"
-
-
-async def request_release(
-    session: AsyncSession, item_id: int, *, requests: ReleaseRequests, now: datetime
-) -> tuple[str, list[list[Button]]] | None:
-    """Step 1 (`qrel:<id>`): the confirm prompt, or None for an unknown/used item."""
+async def release_prompt(session: AsyncSession, item_id: int) -> str | None:
+    """Step 1 (`qrel:<id>`, or the web's Release): the confirm text, or None for an
+    unknown, released or deleted item. The caller stores it as a ticket's summary
+    (techradar.tickets); the release runs only when that ticket is confirmed.
+    """
     item = await _live_item(session, item_id)
     if item is None:
         return None
-    requests.record(item.id, now)
     name = clean_text(await _display_name(session, item), MAX_NAME) or "file"
-    text = (
+    return (
         f"Release {name}? It will be processed as flagged: searchable, "
         "but never used for facts, cards or questions."
     )
-    return text, [[Button(text="Yes, release", data=f"qrel_ok:{item.id}")]]
 
 
-async def confirm_release(
-    session: AsyncSession,
-    item_id: int,
-    *,
-    requests: ReleaseRequests,
-    gate: ReleaseGate | None,
-    now: datetime,
-) -> ReleaseOutcome:
-    """Step 2 (`qrel_ok:<id>`): release only after an unexpired, unused step 1."""
-    state = requests.take(item_id, now)
-    if state == "missing":
-        return "no_request"
-    if state == "expired":
-        return "expired"
-    return await release(session, item_id, gate=gate, now=now)
+async def delete_prompt(session: AsyncSession, item_id: int) -> str | None:
+    """The web's Delete confirm text, or None for an unknown, released or deleted item."""
+    item = await _live_item(session, item_id)
+    if item is None:
+        return None
+    name = clean_text(await _display_name(session, item), MAX_NAME) or "file"
+    return f"Delete {name}? The held file is removed for good."
+
+
+RELEASE_MESSAGES: dict[str, str] = {
+    "released": "Released. It will be processed as flagged.",
+    "rejected": "Still refused: the file failed a check that a release cannot override.",
+    "failed": "Could not release it; it stays held.",
+    "not_found": "Nothing to release.",
+}
+DELETE_MESSAGES: dict[str, str] = {
+    "deleted": "Deleted.",
+    "already": "Already deleted.",
+    "refused": "Could not delete that file.",
+    "not_found": "Nothing to delete.",
+}
+
+
+def _ticket_item_id(args: Mapping[str, Any]) -> int | None:
+    value = args.get("id")
+    ok = isinstance(value, int) and not isinstance(value, bool) and 0 < value <= 2**63 - 1
+    return value if ok else None  # type: ignore[return-value]
+
+
+def _data_dir() -> Path:
+    from techradar.settings import Settings, get_settings
+
+    try:
+        return get_settings().data_dir
+    except ValueError:
+        return Settings(telegram_owner_chat_id=1).data_dir
+
+
+async def release_action(session: AsyncSession, args: Mapping[str, Any]) -> str:
+    """`quarantine.release`, run only by a confirmed ticket. No gate: library docs are
+    re-gated by the parser; other held files are refused (as before). Flushes only.
+    """
+    item_id = _ticket_item_id(args)
+    if item_id is None:
+        return RELEASE_MESSAGES["not_found"]
+    outcome = await release(session, item_id, gate=None, now=datetime.now(UTC))
+    logger.info("quarantine release %s: %s", item_id, outcome)
+    return RELEASE_MESSAGES.get(outcome, "Done.")
+
+
+async def delete_action(session: AsyncSession, args: Mapping[str, Any]) -> str:
+    """`quarantine.delete`, run only by a confirmed ticket. Flushes only."""
+    item_id = _ticket_item_id(args)
+    if item_id is None:
+        return DELETE_MESSAGES["not_found"]
+    data = _data_dir()
+    outcome = await delete_item(
+        session,
+        item_id,
+        quarantine_dir=data / "quarantine",
+        library_dir=data / "library",
+        now=datetime.now(UTC),
+    )
+    logger.info("quarantine delete %s: %s", item_id, outcome)
+    return DELETE_MESSAGES.get(outcome, "Done.")
 
 
 async def doc_released(

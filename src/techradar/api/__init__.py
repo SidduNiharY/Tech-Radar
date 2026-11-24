@@ -1,14 +1,5 @@
-"""TechRadar API package."""
+"""TechRadar API package (Phase 4).
 
-from techradar.api.deps import require_caller
-from techradar.api.main import MAX_BODY, create_app
-from techradar.api.ticket import ActionTicket, TicketStore, create_ticket
-
-__all__ = [
-    "ActionTicket",
-    "MAX_BODY",
-    "TicketStore",
-    "create_app",
-    "create_ticket",
-    "require_caller",
-]
+Kept free of imports, so code without FastAPI (the worker) can use `techradar.api.schemas`.
+Import the app from `techradar.api.main` and the caller check from `techradar.api.deps`.
+"""
