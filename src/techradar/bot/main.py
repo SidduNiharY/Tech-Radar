@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
+from techradar.bot.econ import handle_econ
 from techradar.bot.predict import find_prediction, handle_predict, handle_prediction_reply
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.routing import route_update
@@ -120,6 +121,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # --- Phase 7: the router allows both from the owner's own chat only ---
+    if routed.action == "econ":
+        await handle_econ(update, context.application.bot_data, routed.arg)
+        return
+
     if routed.action == "predict":
         today = datetime.now(ZoneInfo(settings.tz)).date()
         await handle_predict(update, context.application.bot_data, routed.arg, today=today)

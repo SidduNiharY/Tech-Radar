@@ -25,6 +25,7 @@ Action = Literal[
     # --- Phase 7 ---
     "predict",
     "prediction_reply",
+    "econ",
     "ignore",
 ]
 
@@ -63,6 +64,7 @@ def route_update(
         Routed("quarantine") for /quarantine from the owner's own chat only
         Routed("ask_book", text) for a plain-text reply (no command) from the owner's own chat
             to one of `ready_message_ids` (the caller looked the Ready messages up)
+        Routed("econ", arg) for /econ from the owner's own chat only (Phase 7)
         Routed("predict", arg) for /predict from the owner's own chat only (Phase 7)
         Routed("prediction_reply", text) for a plain-text reply from the owner's own chat to
             one of `prediction_message_ids` (the caller looked the reminders up)
@@ -115,6 +117,10 @@ def route_update(
         return Routed("inbox")
     if cmd == "/plan":
         return Routed("plan")
+    if cmd == "/econ":  # --- Phase 7: the owner keeps the numbers ---
+        if chat_id != owner_id:
+            return Routed("ignore")
+        return Routed("econ", cleaned[len(words[0]) :].strip())
     if cmd == "/predict":  # --- Phase 7 ---
         if chat_id != owner_id:
             return Routed("ignore")

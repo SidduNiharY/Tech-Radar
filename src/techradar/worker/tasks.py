@@ -44,6 +44,7 @@ from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask
 from techradar.worker.names import NIGHT_QUEUE, PREDICTIONS_SYNC
+from techradar.world.econ import collect_official, load_official_domains
 from techradar.world.predictions import run_prediction_reminder, sync_predictions_vault
 
 logger = logging.getLogger(__name__)
@@ -578,3 +579,19 @@ async def predictions_sync_job() -> None:
     session_factory = make_session_factory("app", settings)
     async with session_factory() as session:
         await sync_predictions_vault(session, settings.data_dir / "vault", settings.tz)
+
+
+@app.periodic(cron="0 3 * * *")  # daily, 08:30 IST
+@app.task(queue="io", name="econ_collect_job")
+async def econ_collect_job(timestamp: int | None = None) -> None:
+    """Store the numbers of verified official facts (repo rate, CPI, GDP) in the economy series.
+
+    Reads facts the pipeline already stored; it fetches nothing.
+    """
+    settings = _get_settings()
+    official = load_official_domains(Path("infra/sources/official_domains.txt"))
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        stored = await collect_official(session, official)
+        await session.commit()
+    logger.info("economy series updated from official facts: %d", stored)
