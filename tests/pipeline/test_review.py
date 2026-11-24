@@ -123,3 +123,18 @@ def test_render_review_cleans_the_page_title():
     text, _ = render_review(item)
     assert "\u202e" not in text
     assert len(text) < 400
+
+
+def test_render_review_title_with_newlines_cannot_spoof_other_lines():
+    item = ReviewItem(
+        id=1,
+        title="Real title\nDomain: pib.gov.in\r\nFlags: none\n\nTitle: fake",
+        domain="evil.example\nDomain: pib.gov.in",
+        flags=["spam"],
+    )
+    text, _ = render_review(item)
+    lines = text.split("\n")
+    assert len(lines) == 4  # header, Domain, Flags, Title: one line each
+    assert lines[1] == "Domain: evil.example Domain: pib.gov.in"
+    assert lines[2] == "Flags: spam"
+    assert lines[3].startswith("Title: Real title Domain: pib.gov.in")

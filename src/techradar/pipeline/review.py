@@ -42,9 +42,11 @@ async def next_review_item(session: AsyncSession) -> ReviewItem | None:
 
 def render_review(i: ReviewItem) -> tuple[str, list[list[Button]]]:
     """Plain text (no markup) with Keep (`keep:<id>`) and Discard (`drop:<id>`)."""
-    title = sanitize_text(i.title)[:TITLE_CHARS]
+    title = " ".join(sanitize_text(i.title).split())[:TITLE_CHARS]
+    domain = " ".join(sanitize_text(i.domain).split())[:TITLE_CHARS]
     flags_text = ", ".join(i.flags) if i.flags else "none"
-    text = f"Review needed:\nTitle: {title}\nDomain: {sanitize_text(i.domain)}\nFlags: {flags_text}"
+    # the trusted lines come first, the page-supplied title last: it cannot imitate them
+    text = f"Review needed:\nDomain: {domain}\nFlags: {flags_text}\nTitle: {title}"
     buttons = [
         [
             Button(text="Keep", data=f"keep:{i.id}"),
