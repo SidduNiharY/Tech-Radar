@@ -424,6 +424,21 @@ def test_render_ready_partial_exact():
     )
 
 
+def test_render_ready_flagged_exact():
+    # A flagged book is searchable (labelled) but never summarised or quizzed (Global
+    # Constraints): its final state is `ready`, and the owner is told why there are no notes.
+    from techradar.library.summaries import render_ready_flagged
+
+    assert render_ready_flagged("Operating Systems", 12) == (
+        "Ready: Operating Systems · 12 chapters, searchable but flagged by the safety checks, "
+        "so no summaries or questions are made from it. "
+        "Reply to this message with a question to ask this book."
+    )
+    out = render_ready_flagged("Bad\x00\ntitle\x07‮!" + "T" * 500, 2)
+    assert out.startswith("Ready: Bad title!" + "T" * 110 + " · 2 chapters")
+    assert "summaries in your vault" not in out
+
+
 def test_render_ready_partial_cleans_title_and_handles_zero():
     from techradar.library.summaries import render_ready_partial
 

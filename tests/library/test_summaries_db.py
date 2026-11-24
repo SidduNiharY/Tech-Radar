@@ -20,6 +20,7 @@ from techradar.library.index import index_library_chapter
 from techradar.library.summaries import (
     read_attempts,
     render_ready,
+    render_ready_flagged,
     render_ready_partial,
     summarize_doc,
 )
@@ -574,7 +575,10 @@ async def test_failed_reindex_keeps_the_evals(
 # --- flagged docs -------------------------------------------------------------------
 
 
-async def test_flagged_doc_is_not_summarised_or_made_ready(session: AsyncSession, tmp_path: Path):
+async def test_flagged_doc_is_ready_but_never_summarised(session: AsyncSession, tmp_path: Path):
+    # It used to stay `processing` for ever. Flagged content is searchable and labelled but
+    # never summarised or quizzed: the doc becomes `ready` with no notes and no evals, and
+    # the owner is told so, once.
     d = await _make_doc(session, 2)
     d.doc.flagged = True
     fake = FakeCompleter([SUMMARY] * 2 + [_question(i) for i in range(15)])
@@ -582,9 +586,28 @@ async def test_flagged_doc_is_not_summarised_or_made_ready(session: AsyncSession
     assert fake.calls == []
     assert all(ch.summary_path is None for ch in d.chapters)
     doc = await session.get(LibraryDoc, d.doc.id)
-    assert doc is not None and doc.status == "processing" and doc.ready_at is None
-    assert await _ready_messages(session, d.doc.id) == []
+    assert doc is not None and doc.status == "ready" and doc.ready_at is not None
+    [msg] = await _ready_messages(session, d.doc.id)
+    assert msg.text == render_ready_flagged("A Book", 2)
+    rows = (await session.execute(select(BookEval).where(BookEval.doc_id == d.doc.id))).all()
+    assert rows == []
     assert not (tmp_path / "vault").exists()
+    # A second run (or a later re-index) never announces it again.
+    assert await _run(session, fake, d, tmp_path) == _counts()
+    assert len(await _ready_messages(session, d.doc.id)) == 1 and fake.calls == []
+
+
+async def test_flagged_doc_waits_for_its_chapters_to_be_indexed(
+    session: AsyncSession, tmp_path: Path
+):
+    d = await _make_doc(session, 2)
+    d.doc.flagged = True
+    await _drop_chapter_chunks(session, d.chapters[1])
+    _write_text(tmp_path, d.chapters[1], "Words that the indexer has not embedded yet.")
+    assert await _run(session, FakeCompleter([]), d, tmp_path) == _counts()
+    doc = await session.get(LibraryDoc, d.doc.id)
+    assert doc is not None and doc.status == "processing"
+    assert await _ready_messages(session, d.doc.id) == []
 
 
 async def test_book_evals_refuse_a_flagged_doc(session: AsyncSession):
@@ -610,8 +633,12 @@ async def test_flagging_the_doc_mid_run_stops_the_run_and_writes_nothing(
     assert _notes(tmp_path) == []
     assert all(c.summary_path is None for c in indexed_doc.chapters)
     doc = await session.get(LibraryDoc, indexed_doc.doc.id)
-    assert doc is not None and doc.status == "processing"
-    assert await _ready_messages(session, doc.id) == []
+    # Never stuck in `processing`: ready as a flagged book, with no evals.
+    assert doc is not None and doc.status == "ready"
+    [msg] = await _ready_messages(session, doc.id)
+    assert msg.text == render_ready_flagged("A Book", 3)
+    rows = (await session.execute(select(BookEval).where(BookEval.doc_id == doc.id))).all()
+    assert rows == []
 
 
 async def test_flagged_doc_loses_the_notes_that_were_already_written(

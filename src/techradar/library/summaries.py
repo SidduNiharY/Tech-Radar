@@ -396,6 +396,16 @@ def render_ready_partial(title: str, done: int, total: int) -> str:
     return f"{head}{vault}. Reply to this message with a question to ask this book."
 
 
+def render_ready_flagged(title: str, n_chapters: int) -> str:
+    """The Ready message of a flagged book: searchable, but never summarised or quizzed."""
+    clean = one_line(title)[:READY_TITLE_CHARS]
+    return (
+        f"Ready: {clean} · {n_chapters} chapters, searchable but flagged by the safety checks, "
+        "so no summaries or questions are made from it. "
+        "Reply to this message with a question to ask this book."
+    )
+
+
 def chapters_button(doc_id: int) -> Button:
     """The `Chapters` button of the Ready message (callback data `chap:<doc_id>`)."""
     return Button(text="Chapters", data=f"chap:{doc_id}")
@@ -582,9 +592,10 @@ async def summarize_doc(
 
     Before each chapter, and again right before its note is written, the doc and chapter are
     looked up: a deleted chapter is skipped (no orphan note), and a doc that was flagged or
-    rejected meanwhile stops the run. A flagged doc is simply skipped by this job (never
-    summarised, no evals, never announced) and any notes it already has are deleted; its
-    status is left as it is, the library flow decides what a flagged doc becomes.
+    rejected meanwhile stops the run. A flagged doc is never summarised and gets no evals;
+    any notes it already has are deleted. Flagged chunks are still searchable, so once its
+    chapters are indexed a `processing` flagged doc becomes `ready` and the owner gets a
+    Ready message that says it is flagged (once; a doc already `ready` is not announced).
 
     Returns counts: summarized, failed, skipped (already had a summary), given_up (chapters
     that will never get a summary) and more (1 when another run is needed).
@@ -603,16 +614,32 @@ async def summarize_doc(
             c.summary_path = None
         await save()
 
+    async def finish_flagged(chapters: Sequence[LibraryChapter]) -> None:
+        """Searchable, never summarised: drop its notes; a `processing` doc becomes ready."""
+        await drop_summaries(chapters)
+        if doc.status != "processing":
+            return
+        logger.info("library doc %d is flagged: ready without summaries", doc_id)
+        doc.status = "ready"
+        doc.ready_at = datetime.now(UTC)
+        await enqueue_message(
+            session,
+            owner_chat_id,
+            render_ready_flagged(doc.title, len(chapters)),
+            purpose="library_ready",
+            buttons=[[chapters_button(doc_id)]],
+            ref_id=doc_id,
+        )
+        await save()
+
     doc = await session.get(LibraryDoc, doc_id)
     if doc is None or doc.status not in ("processing", "ready"):
         return counts
     chapters = await _load_chapters(session, doc_id)
-    if doc.flagged:
-        logger.info("library doc %d is flagged; not summarised", doc_id)
-        await drop_summaries(chapters)
-        return counts
     if not chapters:
         return counts
+    if doc.flagged:
+        await drop_summaries(chapters)  # at once, even while indexing is not done
 
     chunk_counts = dict(
         (
@@ -647,6 +674,9 @@ async def summarize_doc(
             len(chapters),
         )
         return counts
+    if doc.flagged:
+        await finish_flagged(chapters)
+        return counts
 
     doc_row = DocRow(id=doc.id, title=doc.title)
     title = doc.title
@@ -662,7 +692,7 @@ async def summarize_doc(
         if state is None or state.status not in ("processing", "ready"):
             return counts
         if state.flagged:
-            await drop_summaries(chapters)
+            await finish_flagged(chapters)
             return counts
         if not state.chapter_exists:
             continue  # deleted while the job ran
@@ -711,7 +741,7 @@ async def summarize_doc(
         if state is None or state.status not in ("processing", "ready"):
             return counts
         if state.flagged:
-            await drop_summaries(chapters)
+            await finish_flagged(chapters)
             return counts
         if not state.chapter_exists:
             logger.info("chapter %d of doc %d was deleted; no note written", chapter.id, doc_id)
@@ -754,7 +784,7 @@ async def summarize_doc(
     if state is None or state.status not in ("processing", "ready"):
         return counts
     if state.flagged:
-        await drop_summaries(chapters)
+        await finish_flagged(chapters)
         return counts
     done = sum(1 for c in chapters if c.summary_path)
     if state.status == "processing":
