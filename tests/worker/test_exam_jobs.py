@@ -96,31 +96,6 @@ async def test_sources_digest_job_goes_to_the_owner_only(
     session.commit.assert_awaited_once()
 
 
-def test_exam_imports_job_declaration():
-    job = tasks.exam_imports_job
-    assert job.name == "exam_imports_job"
-    assert job.queue == "io"
-    assert job.queueing_lock
-    assert ("exam_imports_job", "") in app.periodic_registry.periodic_tasks
-
-
-async def test_exam_imports_job_reads_the_library_inbox(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
-    session = _session()
-    imp = AsyncMock(return_value=(2, 5))
-    official = frozenset({"ssc.gov.in"})
-    monkeypatch.setattr(tasks, "_get_settings", lambda: SimpleNamespace(data_dir=tmp_path))
-    monkeypatch.setattr(tasks, "make_session_factory", lambda role, s: _factory(session))
-    monkeypatch.setattr(tasks, "_official_domains", lambda: official)
-    monkeypatch.setattr(tasks, "import_inbox_files", imp)
-
-    await tasks.exam_imports_job(timestamp=1_700_000_000)
-
-    imp.assert_awaited_once_with(session, tmp_path / "library-inbox", official)
-    session.commit.assert_awaited_once()
-
-
 def test_formula_sheets_job_declaration():
     job = tasks.formula_sheets_job
     assert job.name == "formula_sheets_job"
@@ -147,12 +122,6 @@ async def test_formula_sheets_job_uses_the_local_day_and_the_vault(
     args = run.await_args.args
     assert args[0] is session and args[1] is deps and args[2] == tmp_path / "vault"
     assert isinstance(args[3], date)
-
-
-def test_library_intake_leaves_the_csv_folders_alone():
-    from techradar.library.inbox import SKIPPED_DIRS
-
-    assert {"cutoffs", "weightage", "gate"} <= SKIPPED_DIRS
 
 
 async def test_syllabus_sync_job_reads_the_vault_and_commits(

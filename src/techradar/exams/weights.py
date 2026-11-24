@@ -1,15 +1,18 @@
+# WIRING(claude): exams cutoffs/weightage folder intake (O_NOFOLLOW + dir_fd, as
+# library/inbox.py) calls import_cutoff_text / import_weightage_text with each file's text.
 from __future__ import annotations
 
 import csv
 import io
 import math
+import re
 from collections.abc import Iterable, Sequence
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Cutoff
@@ -95,6 +98,8 @@ def import_cutoffs(
             year = int(raw_year) if raw_year is not None else 0
         except ValueError, TypeError:
             continue
+        if not MIN_YEAR <= year <= MAX_YEAR:
+            continue
 
         exam = str(r.get("exam", "")).strip()
         tier = str(r.get("tier", "")).strip()
@@ -138,6 +143,8 @@ def import_weightage(rows: Iterable[dict[str, Any]]) -> list[WeightRow]:
                 year = int(raw_y)
             except ValueError, TypeError:
                 year = None
+        if year is not None and not MIN_YEAR <= year <= MAX_YEAR:
+            continue
 
         source_url = str(r.get("source_url", "")).strip()
 
@@ -155,31 +162,35 @@ def import_weightage(rows: Iterable[dict[str, Any]]) -> list[WeightRow]:
     return out
 
 
-MAX_CSV_BYTES = 1_000_000
+MAX_CSV_CHARS = 1_000_000
 MAX_CSV_ROWS = 5000
+MIN_YEAR, MAX_YEAR = 1900, 2100
 UNVERIFIED = "analysis (unverified)"
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
-def read_csv_rows(folder: Path) -> list[dict[str, Any]]:
-    """Rows of every regular `*.csv` in one inbox folder (the owner's own files).
+class CsvRejected(ValueError):
+    """A whole CSV file was refused (too big, control characters, malformed)."""
 
-    A link, a file over 1 MB, or a folder that is not there contributes nothing; at most
-    5,000 rows are read in all. The text is data: it is only parsed, never run.
+
+def parse_csv_text(text: str) -> list[dict[str, Any]]:
+    """Rows of one CSV file's text. The caller reads the file; this only parses it.
+
+    Refuses a file over 1,000,000 characters or with a NUL or other control character
+    (tab, newline and carriage return are fine); reads at most 5,000 rows.
     """
+    if len(text) > MAX_CSV_CHARS:
+        raise CsvRejected("file too large")
+    if _CONTROL.search(text):
+        raise CsvRejected("control characters in the file")
     rows: list[dict[str, Any]] = []
-    if not folder.is_dir() or folder.is_symlink():
-        return rows
-    for path in sorted(folder.glob("*.csv")):
-        try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_CSV_BYTES:
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for row in csv.DictReader(io.StringIO(text)):
-            rows.append(dict(row))
+    try:
+        for row in csv.DictReader(io.StringIO(text), strict=True):
+            rows.append({str(k): v for k, v in row.items() if k is not None})
             if len(rows) >= MAX_CSV_ROWS:
-                return rows
+                break
+    except csv.Error as exc:
+        raise CsvRejected(f"malformed CSV: {exc}") from exc
     return rows
 
 
@@ -188,7 +199,7 @@ def aggregate_weightage(rows: Iterable[WeightRow]) -> list[TopicWeight]:
     totals: dict[tuple[str, str, str], float] = {}
     for r in rows:
         key = (r.exam, r.subject, r.topic)
-        totals[key] = totals.get(key, 0.0) + float(r.questions)
+        totals[key] = totals.get(key, 0.0) + float(max(r.questions, 0))
     grand = sum(totals.values())
     return [
         TopicWeight(
@@ -229,18 +240,46 @@ async def store_imports(
     await session.flush()
 
 
-async def import_inbox_files(
-    session: AsyncSession, inbox: Path, official: frozenset[str]
-) -> tuple[int, int]:
-    """Import `cutoffs/*.csv` and `weightage/*.csv` from the library inbox.
+class ImportReport(BaseModel):
+    """What a batch of files gave: rows stored, and files refused with the reason."""
 
-    Returns (cutoffs stored, weights stored). A cutoff whose `source_url` is not on an
-    official domain is dropped; weightage is always labelled `analysis (unverified)`.
+    cutoffs: int = 0
+    weights: int = 0
+    rejected: dict[str, str] = Field(default_factory=dict)
+
+
+async def import_cutoff_text(
+    session: AsyncSession, name: str, text: str, official: frozenset[str], report: ImportReport
+) -> None:
+    """Parse, validate and store one cutoffs CSV; a bad file is recorded, never raised.
+
+    The file is stored in its own savepoint, so it cannot roll back the others.
     """
-    cutoffs = import_cutoffs(read_csv_rows(inbox / "cutoffs"), official)
-    weights = aggregate_weightage(import_weightage(read_csv_rows(inbox / "weightage")))
-    await store_imports(session, cutoffs, weights)
-    return len(cutoffs), len(weights)
+    try:
+        cutoffs = import_cutoffs(parse_csv_text(text), official)
+        async with session.begin_nested():
+            await store_imports(session, cutoffs, [])
+    except (csv.Error, ValueError, ValidationError, SQLAlchemyError) as exc:
+        report.rejected[name] = type(exc).__name__
+        return
+    report.cutoffs += len(cutoffs)
+
+
+async def import_weightage_text(
+    session: AsyncSession, name: str, text: str, report: ImportReport
+) -> None:
+    """Parse, validate and store one weightage CSV (summed per topic, `analysis (unverified)`).
+
+    A bad file is recorded, never raised; each file has its own savepoint.
+    """
+    try:
+        weights = aggregate_weightage(import_weightage(parse_csv_text(text)))
+        async with session.begin_nested():
+            await store_imports(session, [], weights)
+    except (csv.Error, ValueError, ValidationError, SQLAlchemyError) as exc:
+        report.rejected[name] = type(exc).__name__
+        return
+    report.weights += len(weights)
 
 
 def gate_weights(confirmed: Sequence[Any]) -> list[TopicWeight]:

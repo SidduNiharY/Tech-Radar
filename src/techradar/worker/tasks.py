@@ -19,7 +19,6 @@ from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
-from techradar.exams.weights import import_inbox_files
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
@@ -539,35 +538,6 @@ async def sources_digest_job(timestamp: int | None = None) -> None:
         sent = await enqueue_sources_digest(session, settings.telegram_owner_chat_id)
         await session.commit()
     logger.info("sources digest: %d suggestions queued", sent)
-
-
-def _official_domains() -> frozenset[str]:
-    """The official domains (`infra/sources/official_domains.txt`); none when it is missing."""
-    path = Path("infra/sources/official_domains.txt")
-    if not path.exists():
-        return frozenset()
-    return frozenset(
-        line.strip().lstrip(".")
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.startswith("#")
-    )
-
-
-@app.periodic(cron="*/30 * * * *")
-@app.task(queue="io", queueing_lock="exam_imports_queued", name="exam_imports_job")
-async def exam_imports_job(timestamp: int | None = None) -> None:
-    """Every 30 min: import `cutoffs/*.csv` and `weightage/*.csv` from the library inbox
-    (Task 6). Cutoffs need an official `source_url`; weightage stays `analysis (unverified)`.
-    """
-    settings = _get_settings()
-    session_factory = make_session_factory("app", settings)
-    async with session_factory() as session:
-        n_cut, n_weight = await import_inbox_files(
-            session, settings.data_dir / "library-inbox", _official_domains()
-        )
-        await session.commit()
-    if n_cut or n_weight:
-        logger.info("exam imports: %d cutoffs, %d weights", n_cut, n_weight)
 
 
 # Nightly at 20:30 UTC = 02:00 in Asia/Kolkata, inside the night window.
