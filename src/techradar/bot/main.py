@@ -240,11 +240,13 @@ async def post_init(application: Application) -> None:
             pw = ""
 
         connector = PsycopgConnector(
-            host=settings.db_host,
-            port=settings.db_port,
-            user="tr_app",
-            password=pw,
-            database=settings.db_name,
+            kwargs={
+                "host": settings.db_host,
+                "port": settings.db_port,
+                "dbname": settings.db_name,
+                "user": "tr_app",
+                "password": pw,
+            }
         )
         proc_app = App(connector=connector)
         application.bot_data["procrastinate_app"] = proc_app

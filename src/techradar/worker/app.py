@@ -14,12 +14,16 @@ try:
 except Exception:
     password = ""
 
+# psycopg_pool.AsyncConnectionPool takes connection settings only inside `kwargs`
+# (the libpq names, so `dbname`, not `database`); passed loose they raise TypeError.
 connector = PsycopgConnector(
-    host=settings.db_host,
-    port=settings.db_port,
-    user="tr_app",
-    password=password,
-    database=settings.db_name,
+    kwargs={
+        "host": settings.db_host,
+        "port": settings.db_port,
+        "dbname": settings.db_name,
+        "user": "tr_app",
+        "password": password,
+    }
 )
 
 app = App(connector=connector)
