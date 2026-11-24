@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from datetime import time as day_time
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,7 @@ from procrastinate import RetryStrategy
 from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
+from techradar.alerts.watcher import ChangeEvent, run_exam_poll
 from techradar.briefing.compose import run_briefing
 from techradar.briefing.takes import save_take
 from techradar.db.engine import make_session_factory
@@ -643,5 +644,31 @@ async def grammar_set_job() -> None:
             now=_local_now(),
             owner_chat_id=settings.telegram_owner_chat_id,
             limit=10,
+        )
+        await session.commit()
+
+
+async def _exam_change_events(since: datetime) -> list[ChangeEvent]:
+    """Pages that changed after `since`, from the changedetection service.
+
+    Owner: the service, its image and the exam hosts on the Squid allowlist are not set up, so
+    there is no API client yet and this returns nothing. The job below is wired and safe: an
+    event is only alerted when its watch_uuid is a configured exam_watches row.
+    """
+    return []
+
+
+@app.periodic(cron="*/30 * * * *")
+@app.task(queue="io", queueing_lock="exam_poll_queued", name="exam_poll_job")
+async def exam_poll_job() -> None:
+    """Alert the owner when an official exam page changed (title and URL are the owner's own)."""
+    settings = _get_settings()
+    now = _local_now()
+    events = await _exam_change_events(now - timedelta(hours=2))
+    if not events:
+        return
+    async with make_session_factory("app", settings)() as session:
+        await run_exam_poll(
+            session, now=now, events=events, owner_chat_id=settings.telegram_owner_chat_id
         )
         await session.commit()

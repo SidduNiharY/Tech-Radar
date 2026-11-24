@@ -147,3 +147,18 @@ async def test_grammar_and_vocab_jobs_run_and_commit(monkeypatch: pytest.MonkeyP
     await tasks.vocab_job()
     assert grammar.await_args.kwargs["limit"] == 10 and vocab.await_args.kwargs["limit"] == 5
     assert session.commit.await_count == 2
+
+
+async def test_exam_poll_job_alerts_only_when_events_arrive(monkeypatch: pytest.MonkeyPatch):
+    session = _patch(monkeypatch)
+    run = AsyncMock()
+    monkeypatch.setattr(tasks, "run_exam_poll", run)
+    assert tasks.exam_poll_job.queue == "io" and tasks.exam_poll_job.queueing_lock
+    await tasks.exam_poll_job()  # no changedetection client yet: nothing to poll
+    run.assert_not_awaited()
+    event = SimpleNamespace(watch_uuid="u")
+    monkeypatch.setattr(tasks, "_exam_change_events", AsyncMock(return_value=[event]))
+    await tasks.exam_poll_job()
+    assert run.await_args.kwargs["events"] == [event]
+    assert run.await_args.kwargs["owner_chat_id"] == 42
+    session.commit.assert_awaited_once()

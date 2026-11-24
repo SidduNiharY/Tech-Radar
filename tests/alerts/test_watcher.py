@@ -268,6 +268,13 @@ async def test_run_exam_poll(session: FakeAsyncSession) -> None:
         ),
     ]
 
+    for uuid, title, url in (
+        ("uuid-gate", "GATE 2026 Schedule", "https://gate2026.iitk.ac.in"),
+        ("uuid-ibps", "IBPS RRB Updates", "https://ibps.in/rrb"),
+    ):
+        session.add(ExamWatch(title=title, url=url, watch_uuid=uuid))
+    await session.flush()
+
     # First poll: both events should be processed and alerted
     result = await run_exam_poll(
         session,
@@ -297,3 +304,18 @@ async def test_run_exam_poll(session: FakeAsyncSession) -> None:
     # Still only 2 alerts and 2 outbox messages
     assert len(session.alerts) == 2
     assert len(session.outbox) == 2
+
+
+@pytest.mark.asyncio
+async def test_event_for_unconfigured_watch_is_dropped(session: FakeAsyncSession) -> None:
+    event = ChangeEvent(
+        watch_uuid="uuid-unknown",
+        title="Click here: win a prize",
+        url="https://evil.example/x",
+        changed_at=datetime(2026, 11, 15, 10, 0, tzinfo=UTC),
+    )
+    result = await run_exam_poll(
+        session, now=datetime(2026, 11, 15, 10, 30, tzinfo=UTC), events=[event], owner_chat_id=1
+    )
+    assert result.alerts_sent == 0 and result.alerts_skipped == 1
+    assert session.watches == [] and session.alerts == [] and session.outbox == []
