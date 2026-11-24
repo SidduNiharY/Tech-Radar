@@ -334,6 +334,52 @@ async def test_chapter_is_given_up_after_three_attempts(
     assert len(await _ready_messages(session, doc.id)) == 1
 
 
+class _RaisingCompleter(FakeCompleter):
+    """The model call itself fails (Ollama down, a timeout) on the given call numbers."""
+
+    def __init__(self, responses: list[str], fail_on: set[int]) -> None:
+        super().__init__(responses)
+        self._fail_on = fail_on
+        self.attempts = 0
+
+    async def complete(self, *args, **kwargs):
+        self.attempts += 1
+        if self.attempts in self._fail_on:
+            raise ConnectionError("ollama unreachable")
+        return await super().complete(*args, **kwargs)
+
+
+async def test_a_model_call_that_raises_is_retried_next_run(
+    session: AsyncSession, indexed_doc, tmp_path: Path
+):
+    # It used to end the job with the exception: no retry was queued and the doc stayed
+    # `processing`. Now it is a failed attempt like a bad answer: the run goes on, asks
+    # for another run, and the chapter is tried again.
+    fake = _RaisingCompleter([SUMMARY, SUMMARY, SUMMARY] + [_question(i) for i in range(15)], {2})
+    assert await _run(session, fake, indexed_doc, tmp_path) == _counts(
+        summarized=2, failed=1, more=1
+    )
+    assert read_attempts(tmp_path / "library", indexed_doc.chapters[1].id) == 1
+    assert await _run(session, fake, indexed_doc, tmp_path) == _counts(summarized=1, skipped=2)
+    doc = await session.get(LibraryDoc, indexed_doc.doc.id)
+    assert doc is not None and doc.status == "ready"
+
+
+async def test_a_model_that_always_raises_is_given_up_after_three_attempts(
+    session: AsyncSession, indexed_doc, tmp_path: Path
+):
+    fake = _RaisingCompleter([_question(i) for i in range(15)], set(range(1, 10)))
+    for _ in range(2):
+        assert (await _run(session, fake, indexed_doc, tmp_path))["more"] == 1
+    counts = await _run(session, fake, indexed_doc, tmp_path)
+    assert counts["given_up"] == 3 and counts["more"] == 0
+    assert all(read_attempts(tmp_path / "library", c.id) == 3 for c in indexed_doc.chapters)
+    doc = await session.get(LibraryDoc, indexed_doc.doc.id)
+    assert doc is not None and doc.status == "ready"
+    [msg] = await _ready_messages(session, doc.id)
+    assert msg.text == render_ready_partial("A Book", 0, 3)
+
+
 async def test_doc_with_no_chapters_is_not_made_ready(session: AsyncSession, tmp_path: Path):
     d = await _make_doc(session, 0)
     fake = FakeCompleter([])

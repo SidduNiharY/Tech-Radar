@@ -101,3 +101,30 @@ def test_symlinked_original_is_rejected_before_any_check(tmp_path, monkeypatch):
     res = gate(_job())
     assert res.status == "rejected" and not called
     assert res.intake is not None and res.intake.verdict == "reject"
+
+
+def test_one_file_check_cache_serves_every_job(tmp_path, monkeypatch):
+    # A video's segment jobs reuse its type, ffprobe, AV and YARA checks: the gate keeps
+    # one FileCheckCache for all the jobs it runs (intake/gateway.py).
+    from techradar.intake.gateway import FileCheckCache
+
+    caches: list = []
+
+    def fake_gate_job(job, raw_dir, quarantine_dir, **kw):
+        caches.append(kw.get("file_checks"))
+        return ParseResult(job_id=job.job_id, kind=job.kind, status="empty")
+
+    monkeypatch.setattr(main_mod, "gate_job", fake_gate_job)
+    library = tmp_path / "library"
+    (library / "originals").mkdir(parents=True)
+    gate = build_gate(
+        tmp_path / "raw",
+        tmp_path / "q",
+        av=FakeAv(),
+        allowed_hosts=frozenset(),
+        limits={},
+        library_dir=library,
+    )
+    gate(_job(job_id="1" * 32))
+    gate(_job(job_id="2" * 32))
+    assert isinstance(caches[0], FileCheckCache) and caches[0] is caches[1]

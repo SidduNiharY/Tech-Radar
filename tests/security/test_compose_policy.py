@@ -218,7 +218,7 @@ def _mounts(svc: dict) -> tuple[set[str], set[str]]:
 def test_bot_mounts_only_the_quarantine_folder(compose_data):
     # /quarantine Delete unlinks the held copy (remove_held_file), so the bot needs rw on
     # data/quarantine and nothing else under /data. The originals of deleted held docs are
-    # removed by worker-bulk (purge_deleted_originals), never by the bot.
+    # removed by worker-bulk (purge_deleted_held_docs), never by the bot.
     svc = compose_data["services"]["bot"]
     rw, ro = _mounts(svc)
     assert rw == {"/data/quarantine"}
@@ -258,3 +258,11 @@ def test_quarantine_mounts_are_only_where_the_code_uses_them(compose_data):
         if any(str(v).split(":")[1] == "/data/quarantine" for v in svc.get("volumes", []))
     }
     assert holders == {"parser", "worker", "bot"}
+
+
+def test_parser_runs_under_an_init_process(compose_data):
+    # The parser starts ffmpeg, ffprobe and OCR children for each job; an init process
+    # (tini) reaps any that outlive their job, so zombies never pile up (SEC-06).
+    svc = compose_data["services"]["parser"]
+    assert svc.get("init") is True
+    assert svc["network_mode"] == "none" and svc["read_only"] is True

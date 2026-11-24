@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     allow_cloud_llm: bool = False
     ollama_base_url: str = "http://ollama:11434"
     https_proxy: str = "http://squid:3128"
+    # The compose mount of infra/squid/allowlist.txt (read-only); the fetcher image has no
+    # infra/ folder. Missing or unreadable: the fetcher logs an error and exits (SEC-05).
+    squid_allowlist: Path = Path("/etc/squid/allowlist.txt")
     fetch_interval_min: int = 120
     per_domain_delay_s: float = 5.0
     max_fetch_bytes: int = 5_000_000

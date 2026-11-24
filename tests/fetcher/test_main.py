@@ -158,3 +158,61 @@ async def test_run_cycle_fetches_due_feeds_and_raw_items(
 
     job_files = list(jobs_dir.glob("*.job.json"))
     assert len(job_files) == 3
+
+
+# --- the Squid allowlist (SEC-05) ----------------------------------------------------
+
+
+def _settings(tmp_path: Path, allowlist: Path):
+    from techradar.settings import Settings
+
+    return Settings(
+        telegram_owner_chat_id=1,
+        secrets_dir=tmp_path / "secrets",
+        data_dir=tmp_path / "data",
+        squid_allowlist=allowlist,
+    )
+
+
+def test_allowlist_path_defaults_to_the_compose_mount():
+    # Not a path relative to /app: the fetcher image has no infra/ folder.
+    import yaml
+
+    from techradar.settings import Settings
+
+    assert Settings(telegram_owner_chat_id=1).squid_allowlist == Path("/etc/squid/allowlist.txt")
+    fetcher = yaml.safe_load(Path("compose.yaml").read_text())["services"]["fetcher"]
+    assert "./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro" in fetcher["volumes"]
+
+
+def test_missing_allowlist_fails_closed_and_loudly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    import techradar.fetcher.main as fetcher_main
+
+    run = AsyncMock()
+    monkeypatch.setattr(fetcher_main, "_run_fetcher", run)
+    monkeypatch.setattr(
+        fetcher_main, "get_settings", lambda: _settings(tmp_path, tmp_path / "missing.txt")
+    )
+    caplog.set_level("ERROR")
+    with pytest.raises(SystemExit) as exc:
+        fetcher_main.main()
+    assert exc.value.code not in (0, None)
+    assert "allowlist" in caplog.text and "missing.txt" in caplog.text
+    run.assert_not_called()  # nothing is fetched, not even with an empty allowlist
+
+
+def test_main_fetches_with_the_allowlist_from_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import techradar.fetcher.main as fetcher_main
+
+    allowlist = tmp_path / "allowlist.txt"
+    allowlist.write_text("# comment\npib.gov.in\n.rbi.org.in\n", encoding="utf-8")
+    run = AsyncMock()
+    monkeypatch.setattr(fetcher_main, "_run_fetcher", run)
+    monkeypatch.setattr(fetcher_main, "get_settings", lambda: _settings(tmp_path, allowlist))
+    fetcher_main.main()
+    allowed = run.await_args.args[0]
+    assert allowed == frozenset({"pib.gov.in", ".rbi.org.in"})

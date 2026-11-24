@@ -44,7 +44,15 @@ from typing import Literal
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import Chunk, LibraryChapter, LibraryDoc, LibraryPart, QuarantineItem
+from techradar.db.models import (
+    BookEval,
+    Chunk,
+    LibraryChapter,
+    LibraryDoc,
+    LibraryPart,
+    QuarantineItem,
+    StarterPackItem,
+)
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.schemas.pipeline import ParseResult
 
@@ -532,7 +540,7 @@ async def delete_item(
     """`qdel:<id>`: delete the held file and mark the row deleted. Flushes only.
 
     Runs in the bot, which mounts only `data/quarantine`: a held library doc's original in
-    `library/originals` is removed later by worker-bulk (`purge_deleted_originals`).
+    `library/originals` is removed later by worker-bulk (`purge_deleted_held_docs`).
     """
     item = (
         await session.execute(
@@ -552,16 +560,35 @@ async def delete_item(
     return "deleted"
 
 
-async def purge_deleted_originals(session: AsyncSession, *, library_dir: Path) -> int:
-    """Delete the originals of held library docs whose every held copy is deleted.
+def _held_items_of(doc: LibraryDoc):  # type: ignore[no-untyped-def]
+    """Held copies of a doc are named after its original (`<sha256>.<ext>`)."""
+    name = Path(doc.original_path).name
+    return (
+        QuarantineItem.origin == doc.origin,
+        QuarantineItem.path.endswith(f"/{name}", autoescape=True),
+    )
+
+
+async def purge_deleted_held_docs(session: AsyncSession, *, library_dir: Path) -> list[int]:
+    """Remove every trace of a held library doc once nothing of it can be released.
 
     Runs in worker-bulk (rw on /data/library), so the bot never needs write access to the
-    library. A doc qualifies only while it is still `quarantined`, has at least one deleted
-    (never released) held copy, and has no held copy left that the owner could still release
-    (a release re-reads the original). A copy is deleted by /quarantine Delete or when
-    retention expires it; either way nothing of the doc can be read again. The file is
-    removed by `remove_original` (only `originals/<sha256>.<ext>`, a regular file, no link
-    followed). Returns how many files were deleted; touches no rows.
+    library. A doc qualifies only while it is still `quarantined`, has at least one held
+    copy that was never released, and every such copy is deleted: by /quarantine Delete or
+    because retention expired it. Then:
+
+    1. Its original is deleted by `remove_original` (only `originals/<sha256>.<ext>`, a
+       regular file; `originals` is opened with O_NOFOLLOW, so no link is followed). If
+       that is refused (a link, a stored path of another shape), the doc and its rows are
+       kept and it is logged.
+    2. Its rows go: chapters, parts, book evals, its library chunks, its held-item rows
+       (released ones too, so a copy of the same bytes added later inherits no release),
+       and the doc itself. A starter pack item keeps its status and loses the link, so it
+       is not downloaded again.
+
+    Flushes only; the caller commits. A crash between the file and the commit leaves the
+    rows, and the next run finds the original gone and removes them. Returns the ids of
+    the docs removed.
     """
     docs = (
         (
@@ -576,17 +603,13 @@ async def purge_deleted_originals(session: AsyncSession, *, library_dir: Path) -
         .scalars()
         .all()
     )
-    deleted = 0
+    purged: list[int] = []
     for doc in docs:
-        name = Path(doc.original_path).name
+        held = _held_items_of(doc)
         items = (
             (
                 await session.execute(
-                    select(QuarantineItem).where(
-                        QuarantineItem.origin == doc.origin,
-                        QuarantineItem.path.endswith(f"/{name}", autoescape=True),
-                        QuarantineItem.released_at.is_(None),
-                    )
+                    select(QuarantineItem).where(*held, QuarantineItem.released_at.is_(None))
                 )
             )
             .scalars()
@@ -594,9 +617,25 @@ async def purge_deleted_originals(session: AsyncSession, *, library_dir: Path) -
         )
         if not items or any(i.deleted_at is None for i in items):
             continue
-        outcome = remove_original(library_dir, doc.original_path)
-        if outcome == "deleted":
-            deleted += 1
-        elif outcome == "refused":
-            logger.warning("original of held doc %s was not deleted (refused)", doc.id)
-    return deleted
+        if remove_original(library_dir, doc.original_path) == "refused":
+            logger.warning("held doc %s kept: its original was not deleted (refused)", doc.id)
+            continue
+        doc_id = doc.id
+        await session.execute(delete(BookEval).where(BookEval.doc_id == doc_id))
+        await session.execute(
+            delete(Chunk).where(Chunk.doc_kind == "library", Chunk.doc_id == doc_id)
+        )
+        await session.execute(delete(LibraryChapter).where(LibraryChapter.doc_id == doc_id))
+        await session.execute(delete(LibraryPart).where(LibraryPart.doc_id == doc_id))
+        await session.execute(
+            update(StarterPackItem)
+            .where(StarterPackItem.doc_id == doc_id)
+            .values(doc_id=None)
+            .execution_options(synchronize_session=False)
+        )
+        await session.execute(delete(QuarantineItem).where(*held))
+        await session.delete(doc)
+        await session.flush()
+        purged.append(doc_id)
+        logger.info("held library doc %s removed (deleted or expired)", doc_id)
+    return purged
