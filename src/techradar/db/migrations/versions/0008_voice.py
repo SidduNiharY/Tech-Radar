@@ -139,6 +139,7 @@ def upgrade() -> None:
     op.create_table(
         "story_drafts",
         sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
+        sa.Column("chat_id", sa.BigInteger(), nullable=False),
         sa.Column("story_id", sa.BigInteger(), nullable=True),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("feedback", sa.Text(), nullable=True),

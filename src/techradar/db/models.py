@@ -974,6 +974,7 @@ class StoryDraft(Base):
     __table_args__ = {"schema": "techradar"}
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     story_id: Mapped[int | None] = mapped_column(ForeignKey("techradar.stories.id"), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)

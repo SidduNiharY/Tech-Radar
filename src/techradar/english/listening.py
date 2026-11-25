@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from techradar.schemas.pipeline import NoLinks
+
 
 class KeyPoints(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    points: list[str] = Field(min_length=3, max_length=6)
+    points: list[NoLinks] = Field(min_length=3, max_length=6)
 
 
 class Coverage(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     covered: list[int]
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict
@@ -95,3 +95,21 @@ def top_rule(issues: Sequence[GrammarIssue]) -> GrammarRule | None:
         return None
     counts = Counter(mapped_rules)
     return counts.most_common(1)[0][0]
+
+
+class GrammarChecker(Protocol):
+    """What the voice and writing code need from LanguageTool; tests pass a fake."""
+
+    async def check(self, text: str) -> list[GrammarIssue]: ...
+
+
+class LanguageToolClient:
+    """The LanguageTool container (owner-only, `tools` network) behind `GrammarChecker`."""
+
+    def __init__(self, client: httpx.AsyncClient, base_url: str, language: str = "en-GB") -> None:
+        self._client = client
+        self._base_url = base_url
+        self._language = language
+
+    async def check(self, text: str) -> list[GrammarIssue]:
+        return await check_grammar(self._client, self._base_url, text, self._language)

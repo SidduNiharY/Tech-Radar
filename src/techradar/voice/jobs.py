@@ -13,7 +13,7 @@ from techradar.db.models import (
     VoiceMetrics,
     VoiceSession,
 )
-from techradar.english.grammar_check import check_grammar
+from techradar.english.grammar_check import GrammarChecker
 from techradar.voice.audio import compute_peaks, decode_audio
 from techradar.voice.feedback import (
     choose_fixes,
@@ -44,8 +44,7 @@ async def analyse_voice(
     completer: Any,
     speaker: Any | None = None,
     outbox: Any | None = None,
-    lt_client: Any | None = None,
-    lt_url: str = "http://languagetool:8010",
+    grammar: GrammarChecker | None = None,
     voice_dir: Path | None = None,
     free_gpu_fn: Any | None = None,
 ) -> None:
@@ -101,8 +100,8 @@ async def analyse_voice(
 
     # 4. Grammar
     issues: list[Any] = []
-    if lt_client is not None:
-        issues = await check_grammar(lt_client, lt_url, transcript.text)
+    if grammar is not None:
+        issues = await grammar.check(transcript.text)
 
     # 5. Phonemes / Pronunciation
     word_scores = score_words(wav, transcript.words, phoneme_model)
@@ -133,7 +132,7 @@ async def analyse_voice(
 
     if speaker is not None and voice_dir is not None:
         out_voice_path = voice_dir / "out" / f"reply_{voice_row.id}.ogg"
-        speaker.speak(fb.summary, out_voice_path)
+        await anyio.to_thread.run_sync(speaker.speak, fb.summary, out_voice_path)
 
     if outbox is not None:
         await outbox.send_text(

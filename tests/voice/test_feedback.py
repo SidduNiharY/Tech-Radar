@@ -71,3 +71,44 @@ def test_render_voice_report_lines() -> None:
     assert "Fluency: 140.0 words/min" in lines[1]
     assert "Grammar: 0 issues · clean" in lines[2]
     assert "Next drill: Practice varied sentence structures." in lines[-1]
+
+
+def _metrics() -> SpeechMetrics:
+    return SpeechMetrics(
+        words_per_min=90.0,
+        filler_count=0,
+        fillers_per_min=0.0,
+        filler_breakdown={},
+        long_pauses=0,
+        avg_sentence_words=10.0,
+        type_token_ratio=0.8,
+        overused=[],
+    )
+
+
+async def test_phrase_feedback_uses_complete_json_and_wraps_inputs() -> None:
+    from techradar.voice.feedback import phrase_feedback
+    from tests.fakes import FakeCompleter
+
+    completer = FakeCompleter(['{"summary": "Good.", "drill": "Read aloud."}'])
+    fb = await phrase_feedback(completer, [Fix(kind="filler", detail="d", example="e")], _metrics())
+    assert fb.drill == "Read aloud."
+    assert "<<UNTRUSTED " in completer.calls[0]["messages"][1]["content"]
+
+
+async def test_phrase_feedback_survives_a_model_failure() -> None:
+    from techradar.voice.feedback import phrase_feedback
+    from tests.fakes import FakeCompleter
+
+    fix = Fix(kind="pace", detail="Pace is slow", example="e")
+    fb = await phrase_feedback(FakeCompleter([]), [fix], _metrics())
+    assert "Pace is slow" in fb.summary
+
+
+def test_voice_feedback_refuses_links_and_extra_fields() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        VoiceFeedback(summary="see https://evil.example", drill="x")
+    with pytest.raises(ValueError):
+        VoiceFeedback.model_validate({"summary": "a", "drill": "b", "extra": 1})
