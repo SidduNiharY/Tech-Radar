@@ -234,7 +234,14 @@ async def test_ready_message_sent_once_and_doc_ready(
     [msg] = await _ready_messages(session, doc.id)
     assert msg.chat_id == OWNER
     assert msg.text == render_ready("A Book", 3)
-    assert msg.buttons == [[{"text": "Chapters", "data": f"chap:{doc.id}"}]]
+    from techradar.feedback.signals import TargetKind, feedback_buttons
+
+    feedback_rows = [
+        [{"text": b.text, "data": b.data} for b in row]
+        for row in feedback_buttons(TargetKind.CHAPTER_SUMMARY, doc.id)
+    ]
+    # Chapters first, then the Phase 11 feedback row on the book's summaries.
+    assert msg.buttons == [[{"text": "Chapters", "data": f"chap:{doc.id}"}], *feedback_rows]
 
     for ch in indexed_doc.chapters:
         assert ch.summary_path == (

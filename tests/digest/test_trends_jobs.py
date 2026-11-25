@@ -54,7 +54,11 @@ pytestmark_db = pytest.mark.db
 
 async def _processed_item(session: AsyncSession, n: int, entities: list[str], at: datetime) -> None:
     src = Source(
-        name=f"trend-{n}", url=f"https://t{n}.example/f.xml", host=f"t{n}.example", section="tech"
+        name=f"trend-{n}",
+        url=f"https://t{n}.example/f.xml",
+        host=f"t{n}.example",
+        section="tech",
+        trust_tier="news",
     )
     session.add(src)
     await session.flush()

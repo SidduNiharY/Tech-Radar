@@ -224,7 +224,8 @@ async def test_silent_note_still_gets_a_deletion_time(session: Any, tmp_path: Pa
             probe=lambda _p: None,  # the test bytes are not a real Ogg file
         )
     assert row.status == "no_speech" and row.delete_after == NOW + timedelta(hours=24)
-    assert await cleanup_voice(session, now=NOW + timedelta(hours=25), voice_dir=voice_dir) == 1
+    # >= 1: other db tests may leave due notes; this note's file is checked below
+    assert await cleanup_voice(session, now=NOW + timedelta(hours=25), voice_dir=voice_dir) >= 1
     assert not audio.exists()
 
 

@@ -137,7 +137,7 @@ async def test_compute_mastery_levels_a_chapter(session) -> None:
         sha256="m" * 64,
         title="Polity Book",
         kind="pdf",
-        origin="test",
+        origin="library",
         original_path="polity.pdf",
         size_bytes=1,
         status="ready",

@@ -103,6 +103,16 @@ async def _wipe(settings: Settings) -> None:
     tables = ", ".join(f"techradar.{t}" for t in PIPELINE_TABLES)
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+        # Migration 0005 seeds source 0 ('manual'), which owner links and files rely on; the
+        # wipe must leave the database as a fresh migrate would.
+        await conn.execute(
+            text(
+                "INSERT INTO techradar.sources "
+                "(id, name, kind, url, host, section, trust_tier, enabled) "
+                "VALUES (0, 'manual', 'manual', 'manual://inbox', 'manual', 'inbox', 'manual', "
+                "true) ON CONFLICT (id) DO NOTHING"
+            )
+        )
     await engine.dispose()
 
 
