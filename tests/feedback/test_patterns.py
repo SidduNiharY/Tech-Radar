@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+import pytest
 
 from techradar.db.models import PreferenceRule
 from techradar.feedback.patterns import (
     Mode,
     StyleProposal,
+    confusion_candidates,
     edit_candidates,
     find_patterns,
     frequency_candidates,
     mistakes_candidates,
+    pairs_candidates,
     sequence_candidates,
+    source_candidates,
     time_candidates,
 )
+
+NOW = datetime(2026, 11, 15, 12, 0, 0, tzinfo=UTC)
 
 
 def skips(skip_count: int, of: int, topic: str = "crypto") -> list[dict[str, Any]]:
@@ -111,33 +119,110 @@ def test_time_candidates_median():
     assert cands[0].proposal.value == "45"
 
 
-class FakePatternSession:
-    def __init__(self, active_rules: list[PreferenceRule] | None = None) -> None:
-        self.active_rules = active_rules or []
-
-    async def execute(self, stmt: Any) -> Any:
-        class Res:
-            def __init__(self, items: list[Any]) -> None:
-                self.items = items
-
-            def scalars(self) -> Any:
-                return self
-
-            def all(self) -> list[Any]:
-                return self.items
-
-        return Res(self.active_rules)
+def test_confusion_needs_five_pairwise_alike_asks():
+    same = [(i, f"what is a repo rate {i}", [1.0, 0.0]) for i in range(1, 6)]
+    cands = confusion_candidates(same)
+    assert len(cands) == 1 and cands[0].proposal.kind == "foundation_page"
+    assert cands[0].evidence.ids == [1, 2, 3, 4, 5] and cands[0].proposal.subject == "repo"
+    assert confusion_candidates(same[:4]) == []
+    mixed = [*same[:4], (9, "other", [0.0, 1.0])]
+    assert confusion_candidates(mixed) == []
 
 
-async def test_candidate_dropped_when_rule_active():
-    """Candidates whose proposals are already active are filtered out."""
-    rule = PreferenceRule(
-        mode=Mode.GATE.value,
-        field="examples",
-        value="one",
-        evidence={},
-        status="active",
+def test_source_rule_needs_five_negative_signals():
+    rows = [{"id": i, "signal": "down", "source": "bad.example"} for i in range(1, 6)]
+    cands = source_candidates(rows)
+    assert len(cands) == 1 and cands[0].proposal.key == "source:bad.example"
+    assert source_candidates(rows[:4]) == []
+
+
+def test_pairs_rule_maps_variants_to_valid_style_rules():
+    from techradar.feedback.rules import StyleRule
+
+    rows = [{"id": i, "mode": "gate", "chosen": "a", "variant_a": "detailed"} for i in range(5)]
+    c = pairs_candidates(rows)[0]
+    assert c.evidence.table == "preference_pairs"
+    StyleRule(mode=c.proposal.mode, field=c.proposal.field, value=c.proposal.value)  # valid
+
+
+@pytest.mark.db
+async def test_candidate_dropped_when_rule_active(session):
+    from sqlalchemy import select
+
+    from techradar.db.models import ActionLog, Edit
+
+    for i in range(5):
+        session.add(
+            Edit(
+                doc_path=f"n{i}.md",
+                before_hash="a",
+                after_hash="b",
+                length_change=-10,
+                sections_removed=["Background"],
+                words_replaced=0,
+                at=NOW,
+            )
+        )
+    await session.flush()
+    found = await find_patterns(session, now=NOW)
+    edit_found = [c for c in found if c.kind == "edit"]
+    assert len(edit_found) == 1 and edit_found[0].evidence.count == 5
+    session.add(
+        PreferenceRule(
+            mode=None, field="skip_section", value="Background", evidence={}, status="active"
+        )
     )
-    session = FakePatternSession(active_rules=[rule])
-    patterns = await find_patterns(session)
-    assert patterns == []
+    await session.flush()
+    assert [c for c in await find_patterns(session, now=NOW) if c.kind == "edit"] == []
+    assert (await session.execute(select(ActionLog))).scalars().all() == []  # counting only
+
+
+@pytest.mark.db
+async def test_nightly_job_infers_skips_and_lowers_a_bad_source_once(session):
+    from sqlalchemy import select
+
+    from techradar.db.models import Feedback, ImprovementLog, Item, RawItem, Source, Weight
+    from techradar.feedback.jobs import run_nightly_patterns
+
+    src = Source(
+        name="t-pat", url="https://t.example/f", host="t.example", section="tech", trust_tier="news"
+    )
+    session.add(src)
+    await session.flush()
+    raw = RawItem(source_id=src.id, url="https://t.example/a", url_hash="p" * 64, kind="feed")
+    session.add(raw)
+    await session.flush()
+    session.add(
+        Item(
+            raw_item_id=raw.id,
+            title="t",
+            url="https://bad.example/a",
+            domain="bad.example",
+            lang="en",
+            content_hash="c" * 64,
+            cluster_id=777,
+            status="written",
+        )
+    )
+    for i in range(5):
+        session.add(
+            Feedback(
+                target_kind="digest_item",
+                target_id=777,
+                signal=("down", "wrong", "wrong_source", "down", "wrong")[i],
+                actor="telegram",
+                day=NOW.date() - timedelta(days=i),
+                at=NOW - timedelta(days=i),
+            )
+        )
+    await session.flush()
+    for _ in range(2):  # the second night changes nothing
+        await run_nightly_patterns(session, None, now=NOW, owner_chat_id=42)
+    w = (
+        await session.execute(select(Weight).where(Weight.key == "source:bad.example"))
+    ).scalar_one()
+    assert w.value == pytest.approx(0.7)
+    logs = (
+        await session.execute(select(ImprovementLog).where(ImprovementLog.key == w.key))
+    ).scalars()
+    assert [r.automatic for r in logs] == [True]

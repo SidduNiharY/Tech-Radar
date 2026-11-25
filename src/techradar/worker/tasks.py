@@ -23,6 +23,7 @@ from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
+from techradar.feedback.jobs import run_nightly_patterns
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
@@ -1048,3 +1049,30 @@ async def econ_collect_job(timestamp: int | None = None) -> None:
         stored = await collect_official(session, official)
         await session.commit()
     logger.info("economy series updated from official facts: %d", stored)
+
+
+# --- Phase 11 ---------------------------------------------------------------------
+# Feedback and self-improvement. The bodies are in techradar/feedback/. Periodic jobs take the
+# `timestamp` procrastinate passes.
+
+
+@app.periodic(cron="0 19 * * *")  # 19:00 UTC = 00:30 IST
+@app.task(queue=NIGHT_QUEUE, queueing_lock="find_patterns_queued", name="find_patterns_job")
+@night_only(task_name="find_patterns_job")  # the night queue serves night jobs only
+async def find_patterns_job(timestamp: int | None = None) -> None:
+    """Nightly: infer skips, then find patterns in plain code (no model writes anything).
+
+    Outside 01:00-05:00 `night_only` queues it for the next window start.
+    """
+    settings = _get_settings()
+    _, embedder = _exam_models()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_nightly_patterns(
+            session,
+            embedder,
+            now=datetime.now(UTC),
+            owner_chat_id=settings.telegram_owner_chat_id,
+        )
+        await session.commit()
+    logger.info("patterns: %s", result.model_dump())
