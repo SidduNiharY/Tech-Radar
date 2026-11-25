@@ -5,10 +5,12 @@ checker, completer), so it runs here with fakes. The real engines (faster-whispe
 Kokoro) are loaded by `voice.engines` inside the `voice-worker` container once approved; until
 then the worker fails the note through `voice.retention.mark_voice_unavailable`.
 
-Before anything decodes the stored note, `probe` (`voice.intake.voice_file_problem`) checks it is
-a real Ogg voice note within the limits. Every path that touches the row sets `delete_after`, so
-audio never stays for good unless the owner taps Keep. Deletion itself is `voice.retention`
-(numpy-free, re-exported here).
+The stored note is opened once (`voice.intake.private_voice_copy`: a hash name in `voice/in`, no
+link, one link count, within the limit, bytes matching the name) and copied to a private temp
+file. `probe` (`voice.intake.voice_file_problem`), decoding and transcription all read that copy
+only, so the file checked is the file decoded; the copy is deleted afterwards. Every path that
+touches the row sets `delete_after`, so audio never stays for good unless the owner taps Keep.
+Deletion itself is `voice.retention` (numpy-free, re-exported here).
 
 SEC: SEC-15, SEC-17, SEC-18, SEC-57.
 """
@@ -31,6 +33,7 @@ from techradar.db.models import (
     VoiceSession,
 )
 from techradar.english.grammar_check import GrammarChecker, GrammarIssue
+from techradar.intake.owner_files import UnsafeFile
 from techradar.llm.client import Completer
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.voice.audio import compute_peaks, decode_audio
@@ -39,7 +42,12 @@ from techradar.voice.feedback import (
     phrase_feedback,
     render_voice_report,
 )
-from techradar.voice.intake import NOT_VOICE_REPLY, voice_file_problem
+from techradar.voice.intake import (
+    NOT_VOICE_REPLY,
+    private_voice_copy,
+    remove_voice_copy,
+    voice_file_problem,
+)
 from techradar.voice.metrics import compute_metrics
 from techradar.voice.pronounce import PhonemeModel, score_words
 from techradar.voice.retention import (  # noqa: F401  (re-exported for callers and tests)
@@ -89,10 +97,6 @@ class EnqueueOutbox:
         )
 
 
-def _file_exists(path_str: str) -> bool:
-    return Path(path_str).exists()
-
-
 async def analyse_voice(
     session: AsyncSession,
     session_id: int,
@@ -103,17 +107,18 @@ async def analyse_voice(
     speaker: Speaker | None = None,
     outbox: VoiceOutbox | None = None,
     grammar: GrammarChecker | None = None,
-    voice_dir: Path | None = None,
+    voice_dir: Path,
     free_gpu_fn: Callable[[], Awaitable[Any]] | None = None,
     now: datetime | None = None,
     probe: Callable[[Path], str | None] = voice_file_problem,
 ) -> None:
     """Free the GPU, then check, transcribe, measure, score, phrase and report one voice note.
 
-    `probe` checks the stored file before anything decodes it (a regular Ogg file within the
-    limits, ffprobe with the `ogg` demuxer and `-protocol_whitelist file`); anything else is
-    refused. Whatever happens, the row gets a `delete_after` 24 hours out, so audio never stays
-    for good unless the owner taps Keep.
+    The stored note is read once into a private copy; `probe` checks that copy before anything
+    decodes it (a regular Ogg file within the limits, ffprobe with the `ogg` demuxer and
+    `-protocol_whitelist file`), and decoding and transcription read the same copy. Anything
+    else is refused. Whatever happens, the row gets a `delete_after` 24 hours out, so audio
+    never stays for good unless the owner taps Keep.
     """
     if free_gpu_fn is not None:
         await free_gpu_fn()
@@ -133,30 +138,52 @@ async def analyse_voice(
         if text is not None and outbox is not None:
             await outbox.send_text(text)
 
-    if not voice_row.audio_path or not await anyio.to_thread.run_sync(
-        _file_exists, voice_row.audio_path
-    ):
+    if not voice_row.audio_path:
         await finish("failed", FAILED_TEXT)
         return
 
-    audio_path = Path(voice_row.audio_path)
-    # The file must still be a real Ogg voice note before anything decodes it (SEC-57).
+    # One open of the stored note (SEC-57): everything below reads the private copy only.
     try:
-        problem = await anyio.to_thread.run_sync(probe, audio_path)
-    except Exception:  # e.g. swapped for a link between the checks: refuse, never decode
-        logger.warning("voice note %s could not be checked", session_id, exc_info=True)
-        problem = "unreadable"
-    if problem is not None:
-        logger.warning("voice note %s refused before decoding: %s", session_id, problem)
-        await finish("failed", NOT_VOICE_REPLY)
+        copy = await anyio.to_thread.run_sync(private_voice_copy, voice_dir, voice_row.audio_path)
+    except UnsafeFile as err:
+        if isinstance(err.__cause__, FileNotFoundError):
+            await finish("failed", FAILED_TEXT)
+        else:
+            logger.warning("voice note %s refused before reading: %s", session_id, err)
+            await finish("failed", NOT_VOICE_REPLY)
+        return
+    except Exception:
+        logger.exception("voice note %s could not be read", session_id)
+        await finish("failed", FAILED_TEXT)
         return
 
     try:
-        wav = await anyio.to_thread.run_sync(decode_audio, audio_path)
-        voice_row.peaks = compute_peaks(wav, n=800)
+        # The copy must be a real Ogg voice note before anything decodes it.
+        try:
+            problem = await anyio.to_thread.run_sync(probe, copy)
+        except Exception:
+            logger.warning("voice note %s could not be checked", session_id, exc_info=True)
+            problem = "unreadable"
+        if problem is not None:
+            logger.warning("voice note %s refused before decoding: %s", session_id, problem)
+            await finish("failed", NOT_VOICE_REPLY)
+            return
 
-        transcript = await anyio.to_thread.run_sync(transcriber.transcribe, audio_path)
-        voice_row.transcript = transcript.model_dump()
+        try:
+            wav = await anyio.to_thread.run_sync(decode_audio, copy)
+            voice_row.peaks = compute_peaks(wav, n=800)
+
+            transcript = await anyio.to_thread.run_sync(transcriber.transcribe, copy)
+            voice_row.transcript = transcript.model_dump()
+        except Exception:
+            logger.exception("voice analysis %s failed", session_id)
+            await session.rollback()
+            await finish("failed", FAILED_TEXT)
+            return
+    finally:
+        await anyio.to_thread.run_sync(remove_voice_copy, copy)
+
+    try:
         if no_speech(transcript):
             await finish("no_speech", NO_SPEECH_TEXT)
             return
@@ -203,7 +230,7 @@ async def analyse_voice(
         report = render_voice_report(voice_row.duration_s, m, issues, word_scores, fixes, fb)
 
         out_path: Path | None = None
-        if speaker is not None and voice_dir is not None:
+        if speaker is not None:
             out_path = await anyio.to_thread.run_sync(
                 speaker.speak, fb.summary, reply_path(voice_dir, voice_row.id)
             )

@@ -8,9 +8,14 @@ deferred on the `voice` queue, so the job always finds its row. Every note gets
 `delete_after = now + 24 h` at intake, so a note that is never analysed is still deleted; the
 analysis sets it again when it finishes.
 
-Before decoding, the analysis runs `voice_file_problem`: a regular file (not a link), within
-the size limit, `OggS`, and `ffprobe` (`-protocol_whitelist file`, demuxer `ogg`) must report
-an `ogg` container with an audio stream and a duration within the limit (SEC-57).
+The analysis opens the stored note once (`private_voice_copy`): only a hash name directly in
+`voice/in`, opened relative to the folder with O_NOFOLLOW, a regular file with one link, within
+the size limit, whose bytes still hash to its name. Those bytes go to a private worker-only
+temp file (O_EXCL, 0o600), and everything after that (the `voice_file_problem` check, decoding,
+transcription) reads that copy only, so the file that was checked is the file that is decoded,
+whatever happens to `voice/in` meanwhile. `voice_file_problem`: a regular file (not a link),
+within the size limit, `OggS`, and `ffprobe` (`-protocol_whitelist file`, demuxer `ogg`) must
+report an `ogg` container with an audio stream and a duration within the limit (SEC-57).
 
 SEC: SEC-15, SEC-26, SEC-57.
 """
@@ -19,7 +24,9 @@ from __future__ import annotations
 
 import inspect
 import os
+import shutil
 import stat
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,8 +38,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import VoiceNotice, VoiceSession
 from techradar.intake.media import MediaProbeError, probe_media
-from techradar.intake.owner_files import write_private
-from techradar.voice.retention import RETENTION
+from techradar.intake.owner_files import UnsafeFile, read_private, write_private
+from techradar.voice.retention import RETENTION, VOICE_NAME_RE
 from techradar.worker.names import ANALYSE_VOICE
 
 MAX_VOICE_SECONDS: int = 300
@@ -152,3 +159,51 @@ def voice_file_problem(
     if info.duration_s > max_s + 1:
         return "too long"
     return None
+
+
+COPY_NAME = "note.ogg"
+COPY_MODE = 0o600
+
+
+def private_voice_copy(
+    voice_dir: Path,
+    audio_path: str,
+    *,
+    max_bytes: int = MAX_VOICE_BYTES,
+    work_root: Path | None = None,
+) -> Path:
+    """Open the stored note once and copy it to a private temp file; return the copy's path.
+
+    `audio_path` must be `<sha256>.ogg` directly in `voice_dir/in`; `read_private` opens it
+    relative to that folder with O_NOFOLLOW, requires a regular file with one link within
+    `max_bytes`, and checks the bytes still hash to the name. The copy is created O_EXCL with
+    mode 0o600 inside a fresh 0o700 folder (`tempfile.mkdtemp`); remove it with
+    `remove_voice_copy`. Raises UnsafeFile for anything else.
+    """
+    p = Path(audio_path)
+    in_dir = voice_dir / "in"
+    if p.parent != in_dir or not VOICE_NAME_RE.fullmatch(p.name):
+        raise UnsafeFile("not a stored voice note")
+    data, _st = read_private(in_dir, p.name, max_bytes)
+    work = Path(tempfile.mkdtemp(prefix="voice-", dir=work_root))
+    try:
+        fd = os.open(
+            work / COPY_NAME, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, COPY_MODE
+        )
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+            os.fchmod(fd, COPY_MODE)  # the umask never changes it
+        finally:
+            os.close(fd)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    return work / COPY_NAME
+
+
+def remove_voice_copy(copy: Path) -> None:
+    """Delete a copy made by `private_voice_copy` (its whole private folder)."""
+    if copy.name == COPY_NAME and copy.parent.name.startswith("voice-"):
+        shutil.rmtree(copy.parent, ignore_errors=True)
