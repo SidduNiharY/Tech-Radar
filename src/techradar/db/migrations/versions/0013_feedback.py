@@ -273,6 +273,20 @@ def upgrade() -> None:
         schema=SCHEMA,
     )
 
+    # Permissions: the same as the other phases (tr_app reads and writes, tr_ro reads).
+    stmts = ["DO $$ BEGIN", "IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_app') THEN"]
+    stmts += [
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON {SCHEMA}.{t} TO tr_app;" for t in NEW_TABLES
+    ]
+    stmts += [
+        f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {SCHEMA} TO tr_app;",
+        "END IF;",
+        "IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tr_ro') THEN",
+    ]
+    stmts += [f"GRANT SELECT ON {SCHEMA}.{t} TO tr_ro;" for t in NEW_TABLES]
+    stmts += ["END IF;", "END $$;"]
+    op.execute("\n".join(stmts))
+
 
 def downgrade() -> None:
     for table in reversed(NEW_TABLES):

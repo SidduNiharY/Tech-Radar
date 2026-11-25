@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -23,6 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from techradar.bot.book_ask import valid_id
 from techradar.bot.render import render_answer
 from techradar.db.models import Answer as AnswerModel
+from techradar.feedback.actions import note_ask
+from techradar.feedback.signals import TargetKind, feedback_buttons
 from techradar.llm.roles import Role
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.rag.answer import LOW_CONFIDENCE, Answer, answer_question
@@ -74,7 +77,10 @@ async def _deliver(
         await session.flush()
         buttons = None
         if answer.status == "answered":
-            buttons = [[Button(text="Save to vault", data=f"save_answer:{row.id}")]]
+            buttons = [
+                [Button(text="Save to vault", data=f"save_answer:{row.id}")],
+                *feedback_buttons(TargetKind.ANSWER, row.id),  # --- Phase 11 ---
+            ]
         await enqueue_message(
             session,
             chat_id=chat_id,
@@ -101,6 +107,12 @@ async def run_ask(
         logger.warning("ask job dropped: invalid arguments")
         return
     scope = _scope(doc_id)
+    if chat_id == owner_chat_id:  # --- Phase 11: an ask, or a follow-up within 10 minutes ---
+        async with session_factory() as session:
+            await note_ask(
+                session, chat_id=chat_id, question=question, mode=None, now=datetime.now(UTC)
+            )
+            await session.commit()
     answer = await answer_question(question, deps, **scope)
     if answer.status == "needs_review" and "too_long" not in answer.flags:
         # one more try, searching with rewritten queries and the neighbouring chunks

@@ -11,6 +11,7 @@ from sqlalchemy import DateTime, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Chunk, Flashcard
+from techradar.feedback.signals import TargetKind, feedback_buttons
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.practice.fsrs import Card, Rating, schedule_card
 
@@ -214,6 +215,7 @@ def render_card_back(
 
     if has_source:
         buttons.append([Button(text="Show source", data=f"src:{c.id}")])
+    buttons += feedback_buttons(TargetKind.CARD, c.id)  # --- Phase 11 ---
 
     return text, buttons
 

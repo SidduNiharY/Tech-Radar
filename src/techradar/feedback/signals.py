@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Literal
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Feedback
+from techradar.feedback.weights import STEP
 from techradar.messaging.outbox import Button
 
 FeedbackResult = Literal["recorded", "duplicate", "ignored", "rate_limited"]
+RATE_LIMIT_PER_HOUR = 120
 
 
 class Signal(StrEnum):
@@ -155,54 +159,62 @@ async def record_feedback(
     owner_id: int,
     now: datetime,
 ) -> FeedbackResult:
-    """Record user feedback under owner-only and rate-limiting constraints."""
+    """Record one piece of the owner's feedback (SEC-26, SEC-49).
+
+    ignored: a Telegram tap from any chat but the owner's, or a signal the target has no button
+    for. duplicate: the same target, signal and day again. rate_limited: 120 events in an hour.
+    The owner check comes first and touches no data.
+    """
     if actor == "telegram" and chat_id != owner_id:
         return "ignored"
+    if signal not in BUTTONS.get(kind, []):
+        return "ignored"
 
-    # Rate limiting: at most 120 feedback events in the last hour
     hour_ago = now - timedelta(hours=1)
-    rate_stmt = select(func.count()).select_from(Feedback).where(Feedback.at >= hour_ago)
-    cnt = (await session.execute(rate_stmt)).scalar() or 0
-    if cnt >= 120:
+    cnt = (
+        await session.execute(
+            select(func.count()).select_from(Feedback).where(Feedback.at >= hour_ago)
+        )
+    ).scalar() or 0
+    if cnt >= RATE_LIMIT_PER_HOUR:
         return "rate_limited"
-
-    # Duplicate check: same target, signal and day
-    today = now.date()
-    dup_stmt = select(Feedback).where(
-        Feedback.target_kind == kind.value,
-        Feedback.target_id == target_id,
-        Feedback.signal == signal.value,
-        Feedback.day == today,
-    )
-    existing = (await session.execute(dup_stmt)).scalar_one_or_none()
-    if existing is not None:
-        return "duplicate"
 
     row = Feedback(
         target_kind=kind.value,
         target_id=target_id,
         signal=signal.value,
         actor=actor,
-        day=today,
+        day=now.date(),
         at=now,
     )
-    session.add(row)
-    await session.flush()
+    try:
+        async with session.begin_nested():  # the unique index decides, even for racing taps
+            session.add(row)
+            await session.flush()
+    except IntegrityError:
+        return "duplicate"
 
-    # Apply weight adjustment if signal is weight-bearing
-    from techradar.feedback.weights import STEP, apply_signal
+    if kind is TargetKind.DIGEST_ITEM and signal.value in STEP:
+        from techradar.feedback.weights import apply_digest_signal
 
-    if signal.value in STEP:
-        delta = STEP[signal.value]
-        # In basic mode, we pass target as a topic key if target_kind is digest/topic
-        topic_key = f"target:{kind.value}:{target_id}"
-        await apply_signal(
-            session,
-            topics=[topic_key],
-            source=None,
-            delta=delta,
-            exam_topic=False,
-            now=now,
-        )
-
+        await apply_digest_signal(session, target_id, STEP[signal.value], now)
     return "recorded"
+
+
+_CODE_TO_KIND = {code: kind for kind, code in TARGET_CODES.items()}
+
+
+def parse_feedback_callback(
+    action: str, args: Sequence[int]
+) -> tuple[TargetKind, Signal, int] | None:
+    """`fb_<signal>:<code>:<target id>` to (kind, signal, id); None for anything else."""
+    if not action.startswith("fb_") or len(args) != 2:
+        return None
+    try:
+        signal = Signal(action[3:])
+    except ValueError:
+        return None
+    kind = _CODE_TO_KIND.get(args[0])
+    if kind is None or signal not in BUTTONS[kind] or args[1] < 0:
+        return None
+    return kind, signal, args[1]

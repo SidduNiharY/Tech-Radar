@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 from techradar.db.models import MCQ, LibraryChapter, LibraryDoc
+from techradar.feedback.actions import log_action
 from techradar.messaging.outbox import Button
 from techradar.pipeline.review import decide, next_review_item, render_review
 from techradar.practice.chapter_cards import render_chapter_list
@@ -110,6 +111,7 @@ async def _answer(
                 return
             options = list(mcq.options)
             outcome = await record_answer(session, mcq_id, chosen, now)
+            await log_action(session, "quiz_answer", f"mcq:{mcq_id}", now=now)  # Phase 11
             await session.commit()
     except IntegrityError:  # two taps at once: the unique (mcq, day) row keeps one attempt
         await query.answer("Already answered.")
@@ -127,6 +129,7 @@ async def _rate(query: Any, session_factory: Any, card_id: int, rating: int, now
         return
     async with session_factory() as session:
         outcome = await rate_card(session, card_id, rating, now)  # type: ignore[arg-type]
+        await log_action(session, "card_review", f"card:{card_id}", now=now)  # Phase 11
         await session.commit()
     await query.answer({"rated": "Saved.", "already_rated": "Already rated."}.get(outcome, "Gone."))
 

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from techradar.db.models import Chunk, LibraryChapter, LibraryDoc
+from techradar.feedback.signals import TargetKind, feedback_buttons
 from techradar.library.evals import make_book_evals, pick_spread
 from techradar.llm.client import Completer, LLMOutputError, complete_json
 from techradar.llm.roles import Role
@@ -814,7 +815,11 @@ async def summarize_doc(
             owner_chat_id,
             text,
             purpose="library_ready",
-            buttons=[[chapters_button(doc_id)]],
+            # --- Phase 11: feedback on the summaries (target: the book) ---
+            buttons=[
+                [chapters_button(doc_id)],
+                *feedback_buttons(TargetKind.CHAPTER_SUMMARY, doc_id),
+            ],
             ref_id=doc_id,
         )
         await save()

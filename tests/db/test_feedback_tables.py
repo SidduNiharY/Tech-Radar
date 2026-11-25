@@ -48,3 +48,37 @@ async def test_weights_primary_key(session: AsyncSession):
     session.add(w2)
     with pytest.raises(IntegrityError):
         await session.flush()
+
+
+def test_migration_0013_grants_the_feedback_tables() -> None:
+    from pathlib import Path
+
+    src = Path("src/techradar/db/migrations/versions/0013_feedback.py").read_text()
+    upgrade, downgrade = src.split("def downgrade", 1)
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE" in upgrade and "TO tr_app" in upgrade
+    assert "GRANT SELECT ON" in upgrade and "TO tr_ro" in upgrade
+    assert "drop_table" in downgrade
+
+
+@pytest.fixture
+async def ro_conn(db_settings):
+    from techradar.db.engine import make_engine
+
+    engine = make_engine("ro", db_settings)
+    async with engine.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
+        yield conn
+    await engine.dispose()
+
+
+async def test_ro_cannot_write_rules(ro_conn) -> None:
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    with pytest.raises(DBAPIError, match="permission denied"):
+        await ro_conn.execute(
+            text(
+                "INSERT INTO techradar.preference_rules (field, value, evidence, status) "
+                "VALUES ('length', 'short', '{}', 'active')"
+            )
+        )

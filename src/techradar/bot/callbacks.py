@@ -15,6 +15,7 @@ from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
 from techradar.bot.drill import answer_drill
+from techradar.bot.feedback_callbacks import handle_feedback_callback, is_feedback_action
 from techradar.bot.planner_commands import handle_checkin_tap
 from techradar.bot.practice_callbacks import (
     PRACTICE_ACTIONS,
@@ -25,6 +26,7 @@ from techradar.bot.practice_callbacks import (
 from techradar.bot.predict import handle_outcome_button
 from techradar.db.models import TopicSource
 from techradar.exams.sources import decide_source
+from techradar.feedback.actions import log_action
 from techradar.library.quarantine import DELETE_MESSAGES, delete_item, release_prompt
 from techradar.messaging.outbox import parse_callback
 from techradar.tickets import create_ticket, run_confirmed, tg_session_id, token_for
@@ -59,6 +61,11 @@ async def handle_callback_query(
             await _quarantine_callback(query, context.application.bot_data, action, args[0])
         else:
             await query.answer("Invalid request.")
+        return
+
+    # --- Phase 11: feedback taps, `fb_<signal>:<kind code>:<id>` ---
+    if is_feedback_action(action):
+        await handle_feedback_callback(query, context.application.bot_data, action, args)
         return
 
     if action in PRACTICE_ACTIONS:  # --- Phase 3 ---
@@ -110,6 +117,11 @@ async def handle_callback_query(
 
     if action == "save_answer" and len(args) == 1:
         procrastinate_app = context.application.bot_data.get("procrastinate_app")
+        factory = context.application.bot_data.get("session_factory")
+        if factory is not None:  # --- Phase 11: saving an answer is a `save` action ---
+            async with factory() as s:
+                await log_action(s, "save", f"answer:{args[0]}", now=datetime.now(UTC))
+                await s.commit()
         if procrastinate_app:
             await procrastinate_app.configure_task(name=SAVE_ANSWER).defer_async(answer_id=args[0])
         await query.answer("Saving to vault...")
