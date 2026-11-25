@@ -76,7 +76,7 @@ class ParseJob(BasePipelineModel):
     source_id: int
     raw_item_id: int | None = None
     origin: Origin = "fetch"
-    purpose: Literal["news", "library", "clipping", "pyq"] = "news"  # pyq: Phase 8 papers
+    purpose: Literal["news", "library", "clipping", "pyq", "mock"] = "news"  # Phase 8: pyq, mock
     # For purpose="library", raw_name is relative to /data/library/originals.
     mode: Literal["full", "probe", "part", "media"] = "full"
     page_start: int | None = None
@@ -145,7 +145,7 @@ class ParseResult(BasePipelineModel):
     job_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
     kind: JobKind
     status: ParseStatus
-    purpose: Literal["news", "library", "clipping", "pyq"] = "news"  # pyq: Phase 8 papers
+    purpose: Literal["news", "library", "clipping", "pyq", "mock"] = "news"  # Phase 8: pyq, mock
     doc: CleanDoc | None = None
     entries: Annotated[list[FeedEntry], Field(max_length=200)] = Field(default_factory=list)
     intake: IntakeVerdict | None = None

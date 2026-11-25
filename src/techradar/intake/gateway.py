@@ -15,6 +15,7 @@ from typing import Any
 
 from techradar.intake.av import AvResult, AvScanner, check_av
 from techradar.intake.filetype import check_size, check_source, check_type, detect_file_mime
+from techradar.intake.imagecheck import check_image
 from techradar.intake.links import check_links, extract_links
 from techradar.intake.media import media_steps
 from techradar.intake.office import check_office, epub_xml_safe, office_xml_safe
@@ -289,6 +290,8 @@ def structure_steps(
         return [zip_step, epub_xml_safe(raw_path)]
     if job.kind in TEXT_KINDS:
         return []  # parsed as text with their own safe parsers (phase 2)
+    if job.kind == "image":  # Phase 8: pixel size from the header; decoded only in the child
+        return [check_image(data)]
     return [
         IntakeStep(
             name="structure", outcome="reject", detail=f"no structure check for kind {job.kind}"

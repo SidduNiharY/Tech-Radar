@@ -5,6 +5,7 @@ fetch:
 telegram:
   page: 5000000
   pdf: 20000000
+  image: 5000000  # Phase 8: mock-test screenshots
 clipping:
   md: 2000000
 library:

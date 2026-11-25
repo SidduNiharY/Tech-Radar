@@ -343,7 +343,7 @@ def build_pyq_rows(paper_text: str, key_text: str) -> tuple[list[PyqRow], int]:
     return rows, left_out
 
 
-def _read_nofollow(dir_path: Path, name: str, cap: int) -> bytes | None:
+def read_nofollow(dir_path: Path, name: str, cap: int) -> bytes | None:
     """A regular file's bytes (at most cap), never through a link; None if absent or bad."""
     try:
         dfd = os.open(dir_path, os.O_RDONLY | os.O_DIRECTORY)
@@ -370,7 +370,7 @@ def _result_name(job_id: str) -> str:
 
 def read_result(clean_dir: Path, job_id: str) -> ParseResult | None:
     """The parser's result for job_id; an unreadable or foreign one counts as an error."""
-    data = _read_nofollow(clean_dir, _result_name(job_id), MAX_RESULT_BYTES)
+    data = read_nofollow(clean_dir, _result_name(job_id), MAX_RESULT_BYTES)
     if data is None:
         if os.path.lexists(clean_dir / _result_name(job_id)):
             return ParseResult(job_id=job_id, kind="pdf", status="error", purpose="pyq")
@@ -474,7 +474,7 @@ async def collect_pyq_results(
     """
     settled = 0
     for name in _records(records_dir, max_pairs):
-        data = _read_nofollow(records_dir, name, MAX_RECORD_BYTES)
+        data = read_nofollow(records_dir, name, MAX_RECORD_BYTES)
         try:
             pair = PyqPair.model_validate_json(data or b"")
         except ValidationError:

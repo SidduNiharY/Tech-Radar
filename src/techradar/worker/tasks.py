@@ -22,6 +22,7 @@ from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.inbox import csv_handler, exam_official_domains, run_csv_inbox
+from techradar.exams.mock_intake import collect_mock_results
 from techradar.exams.pyq_intake import PYQ_RECORDS_DIR, collect_pyq_results, queue_gate_papers
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
@@ -1100,3 +1101,28 @@ async def exam_inbox_job(timestamp: int | None = None) -> None:  # periodic: get
             session, records, settings.data_dir / "clean", time.time(), send=send
         )
     logger.info("exam inbox: %d files, %d pairs queued, %d pairs settled", files, pairs, stored)
+
+
+@app.periodic(cron="*/2 * * * *")
+@app.task(queue="llm", queueing_lock="mock_collect_queued", name="mock_collect_job")
+async def mock_collect_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
+    """Task 5: answer mock scorecards the parser sandbox has read (regex first, then the
+    local worker model, whose numbers must appear in the OCR text)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+
+        async def send(text: str) -> None:
+            await enqueue_message(
+                session, chat_id=settings.telegram_owner_chat_id, text=text, purpose="mock"
+            )
+
+        handled = await collect_mock_results(
+            session,
+            settings.data_dir / "clean",
+            _exam_models()[0],
+            today=_local_now().date(),
+            category=settings.exam_category,
+            send=send,
+        )
+    logger.info("mock scorecards answered: %d", handled)

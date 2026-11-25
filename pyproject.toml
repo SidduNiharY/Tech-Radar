@@ -139,3 +139,9 @@ type = "forbidden"
 source_modules = ["techradar.rag"]
 forbidden_modules = ["httpx", "subprocess"]
 
+[[tool.importlinter.contracts]]
+name = "Contract 8: exams never decode files (Phase 8 Task 5, SEC-06)"
+type = "forbidden"
+source_modules = ["techradar.exams"]
+forbidden_modules = ["docling", "rapidocr", "techradar.parser"]
+
