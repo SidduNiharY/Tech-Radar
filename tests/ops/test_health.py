@@ -115,9 +115,9 @@ async def test_run_health_checks_alerts_once_per_window(session):
         "ollama_ok": True,
         "backup_status": {"ok": True, "at": NOW.isoformat()},
     }
-    # Other db tests leave committed sources behind; make every one fresh, so only the disk
+    # Other db tests leave committed sources behind; switch every feed off, so only the disk
     # check fires (rolled back with the session).
-    await session.execute(update(Source).values(last_fetched_at=NOW))
+    await session.execute(update(Source).values(enabled=False))
     assert await run_health_checks(session, now=NOW, **kwargs) == ["disk"]
     assert await run_health_checks(session, now=NOW + timedelta(hours=1), **kwargs) == []
     assert await run_health_checks(session, now=NOW + timedelta(hours=7), **kwargs) == ["disk"]
@@ -133,3 +133,28 @@ def test_health_fetch_ignored_if_no_sources_enabled():
         now=NOW,
     )
     assert not any(k == "fetch" for k, _ in r.problems)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_the_manual_source_never_raises_the_fetch_alert(session):
+    """Source 0 ('manual', seeded by migration 0005) holds owner links/files and is never
+    fetched; it must not count as a stale feed."""
+    from sqlalchemy import update
+
+    from techradar.db.models import Source
+    from techradar.ops.health import run_health_checks
+
+    await session.execute(update(Source).values(enabled=False))
+    await session.execute(
+        update(Source).where(Source.id == 0).values(enabled=True, last_fetched_at=None)
+    )
+    sent = await run_health_checks(
+        session,
+        now=NOW,
+        owner_chat_id=4242,
+        disk_free_pct=50.0,
+        ollama_ok=True,
+        backup_status={"ok": True, "at": NOW.isoformat()},
+    )
+    assert "fetch" not in sent

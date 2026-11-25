@@ -81,6 +81,11 @@ def read_backup_status(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+# Enabled feeds only: the seeded source 0 ('manual', migration 0005) holds the owner's own
+# links and files and is never fetched, so it must not raise "No news fetched".
+_FEEDS = (Source.enabled.is_(True), Source.kind != "manual")
+
+
 async def run_health_checks(
     session: AsyncSession,
     *,
@@ -96,14 +101,10 @@ async def run_health_checks(
     them. Returns the keys that were sent. The caller commits.
     """
     enabled = int(
-        (
-            await session.execute(select(func.count(Source.id)).where(Source.enabled.is_(True)))
-        ).scalar_one()
+        (await session.execute(select(func.count(Source.id)).where(*_FEEDS))).scalar_one()
     )
     last_fetch = (
-        await session.execute(
-            select(func.max(Source.last_fetched_at)).where(Source.enabled.is_(True))
-        )
+        await session.execute(select(func.max(Source.last_fetched_at)).where(*_FEEDS))
     ).scalar_one()
     report = check_health(
         disk_free_pct=disk_free_pct,

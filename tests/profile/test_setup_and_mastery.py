@@ -125,6 +125,7 @@ async def test_build_profile_uses_only_active_rules_of_the_mode(session) -> None
 async def test_compute_mastery_levels_a_chapter(session) -> None:
     from techradar.db.models import (
         MCQ,
+        Chunk,
         Flashcard,
         LibraryChapter,
         LibraryDoc,
@@ -150,8 +151,23 @@ async def test_compute_mastery_levels_a_chapter(session) -> None:
     )
     session.add(ch)
     await session.flush()
+    chunk = Chunk(  # a chapter MCQ points at its source chunk (ck_mcqs_single_source)
+        doc_path=f"library/{doc.id}/01.md",
+        doc_kind="library",
+        title=doc.title,
+        ordinal=100,
+        text="Article 14 guarantees equality before law.",
+        lang="en",
+        content_hash="c" * 64,
+        doc_id=doc.id,
+        chapter_id=ch.id,
+        page=1,
+    )
+    session.add(chunk)
+    await session.flush()
     for i in range(10):
         mcq = MCQ(
+            chunk_id=chunk.id,
             chapter_id=ch.id,
             question=f"q{i}",
             options=["a", "b", "c", "d"],
