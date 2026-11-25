@@ -1,0 +1,5 @@
+# Extra packages the weekly release digest follows besides the lockfiles (uv.lock, pnpm-lock.yaml).
+# Each entry: ecosystem (pypi | npm | maven), name, and the version you use today.
+# Example:
+#   - {ecosystem: maven, name: "org.springframework.boot:spring-boot", version: "3.4.0"}
+packages: []

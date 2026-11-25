@@ -2,6 +2,7 @@
 
 from techradar.digest.releases import (
     ReleaseItem,
+    TrackedPackage,
     Update,
     compare,
     format_release_digest,
@@ -10,6 +11,82 @@ from techradar.digest.releases import (
     parse_uv_lock,
     render_digest,
 )
+
+
+class FakeLatest:
+    def __init__(self, table: dict[tuple[str, str], str]) -> None:
+        self.table = table
+
+    async def latest(self, ecosystem: str, name: str) -> str | None:
+        return self.table.get((ecosystem, name))
+
+
+async def test_build_digest_from_locks_and_tracked() -> None:
+    from techradar.digest.releases import build_digest
+
+    uv = (
+        '[[package]]\nname = "fastapi"\nversion = "0.162.1"\n\n'
+        '[[package]]\nname = "x"\nversion = "1.0.0"\n'
+    )
+    pnpm = (
+        "importers:\n  .:\n    dependencies:\n      next:\n"
+        "        specifier: 16.0.0\n        version: 16.0.0\n"
+    )
+    source = FakeLatest(
+        {
+            ("pypi", "fastapi"): "0.163.0",
+            ("pypi", "x"): "1.1.0rc1",  # pre-release: no alert
+            ("npm", "next"): "17.0.0",
+            ("maven", "org.x:lib"): "2.0.0",
+        }
+    )
+    tracked = [TrackedPackage(ecosystem="maven", name="org.x:lib", version="1.0.0")]
+    text = await build_digest(uv, pnpm, tracked, source)
+    lines = text.splitlines()
+    assert lines[0] == "🆕 Releases this week:"
+    assert lines[1:] == [
+        "• next 17.0.0 (you have 16.0.0, major)",
+        "• org.x:lib 2.0.0 (you have 1.0.0, major)",
+        "• fastapi 0.163.0 (you have 0.162.1, minor)",
+    ]
+
+
+async def test_build_digest_nothing_to_say_is_empty() -> None:
+    from techradar.digest.releases import NullLatestSource, build_digest
+
+    uv = '[[package]]\nname = "fastapi"\nversion = "0.162.1"\n'
+    assert await build_digest(uv, "", [], NullLatestSource()) == ""
+
+
+async def test_source_errors_skip_the_package() -> None:
+    from techradar.digest.releases import build_digest
+
+    class Boom:
+        async def latest(self, ecosystem: str, name: str) -> str | None:
+            raise RuntimeError("registry down")
+
+    uv = '[[package]]\nname = "fastapi"\nversion = "0.162.1"\n'
+    assert await build_digest(uv, "", [], Boom()) == ""
+
+
+def test_load_tracked(tmp_path) -> None:
+    from techradar.digest.releases import load_tracked
+
+    p = tmp_path / "tracked.yaml"
+    p.write_text(
+        "packages:\n  - {ecosystem: maven, name: 'org.x:lib', version: '1.0'}\n"
+        "  - {ecosystem: bad}\n"
+    )
+    assert [t.name for t in load_tracked(p)] == ["org.x:lib"]
+    assert load_tracked(tmp_path / "missing.yaml") == []
+
+
+def test_real_tracked_yaml_loads() -> None:
+    from pathlib import Path
+
+    from techradar.digest.releases import load_tracked
+
+    load_tracked(Path(__file__).resolve().parents[2] / "infra/digest/tracked.yaml")
 
 
 def test_compare_kinds_and_order() -> None:

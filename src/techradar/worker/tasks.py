@@ -1093,3 +1093,37 @@ async def bench_job(role: str, tag: str) -> None:
         test_id = await store_result(session, bench_role, tag, result)
         await session.commit()
     logger.info("bench %s %s: passed=%s test_id=%d", role, tag, result.passed, test_id)
+
+
+def _read_text_or_empty(path: Path) -> str:
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+@app.periodic(cron="30 3 * * 0")  # Sundays 03:30 UTC = 09:00 IST
+@app.task(queue="io", queueing_lock="digest_queued", name="digest_job")
+async def digest_job(timestamp: int | None = None) -> None:
+    """Weekly: tell the owner which pinned packages have a newer stable release.
+
+    WIRING(owner): the registry lookups need the internet through the fetcher and three new
+    Squid domains, so until a real `LatestSource` is wired this uses `NullLatestSource` and
+    sends nothing. Lock files missing from the container are read as empty.
+    """
+    from techradar.digest.releases import NullLatestSource, build_digest, load_tracked
+
+    settings = _get_settings()
+    text = await build_digest(
+        _read_text_or_empty(Path("uv.lock")),
+        _read_text_or_empty(Path("apps/web/pnpm-lock.yaml")),
+        load_tracked(Path("infra/digest/tracked.yaml")),
+        NullLatestSource(),
+    )
+    if not text:
+        logger.info("release digest: nothing to send")
+        return
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        await enqueue_message(
+            session, settings.telegram_owner_chat_id, text, purpose="release_digest"
+        )
+        await session.commit()
+    logger.info("release digest sent")
