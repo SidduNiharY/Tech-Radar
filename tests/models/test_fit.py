@@ -2,7 +2,33 @@
 
 import pytest
 
-from techradar.models.fit import estimate_fit, estimate_vram_and_fit, kv_estimate
+from techradar.db.models import ModelTest
+from techradar.models.fit import (
+    choose_fit,
+    estimate_fit,
+    estimate_vram_and_fit,
+    fit_for_tag,
+    kv_estimate,
+)
+
+
+def test_measured_beats_estimate() -> None:
+    gb = 2**30
+    assert choose_fit("split", 3 * gb).model_dump() == {"fit": "split", "source": "measured"}
+    assert choose_fit(None, 3 * gb).model_dump() == {"fit": "fits", "source": "estimate"}
+    assert choose_fit("bogus", 16 * gb).model_dump() == {
+        "fit": "mostly_ram",
+        "source": "estimate",
+    }
+
+
+@pytest.mark.db
+async def test_fit_for_tag_uses_latest_measured(session) -> None:
+    gb = 2**30
+    assert (await fit_for_tag(session, "no-such:tag", 3 * gb)).source == "estimate"
+    session.add(ModelTest(role="worker", tag="fit-t:1", metrics={"fit": "split"}, passed=True))
+    await session.flush()
+    assert (await fit_for_tag(session, "fit-t:1", 3 * gb)).fit == "split"
 
 
 def test_kv_estimate() -> None:

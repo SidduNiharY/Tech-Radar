@@ -1,0 +1,6 @@
+# Format of evals/sets/json_extract.yaml (your real set: 50 articles, kept private).
+version: 1
+suite: json_extract
+items:
+  - id: "json-001"
+    article: "PostgreSQL 18 adds asynchronous I/O, which speeds up large scans on Linux."

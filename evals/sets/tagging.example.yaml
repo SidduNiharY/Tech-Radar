@@ -1,0 +1,7 @@
+# Format of evals/sets/tagging.yaml (your real set: 100 labelled items, kept private).
+version: 1
+suite: tagging
+items:
+  - id: "tag-001"
+    text: "Rust 1.90 stabilises async closures and a faster linker."
+    tags: ["rust", "programming-languages"]

@@ -1,12 +1,16 @@
 """Weekly release digest parser, comparison, and formatting."""
 
+import logging
 import tomllib
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, Literal, Protocol
 
 import packaging.version
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 class ReleaseItem(BaseModel):
@@ -216,6 +220,88 @@ def parse_pnpm_lock(text: str) -> dict[str, str]:
     _extract_deps(raw.get("devDependencies"))
 
     return result
+
+
+ECOSYSTEMS = ("pypi", "npm", "maven")
+
+
+class TrackedPackage(BaseModel):
+    """An extra package from `infra/digest/tracked.yaml`, with the version in use today."""
+
+    ecosystem: Literal["pypi", "npm", "maven"]
+    name: str = Field(min_length=1, max_length=200)
+    version: str = Field(min_length=1, max_length=64)
+
+
+class LatestSource(Protocol):
+    """Where the newest release of a package comes from.
+
+    WIRING(owner, internet stage): the real source asks the fetcher (job kind `json`, through the
+    sandbox and Squid) for pypi.org/pypi/<name>/json (`info.version`), registry.npmjs.org/<name>
+    (`dist-tags.latest`) and search.maven.org, and passes the payload through
+    `parse_release_payload`. It needs `pypi.org`, `registry.npmjs.org` and `search.maven.org` on
+    `infra/squid/allowlist.txt` (owner decision, SEC-05). Until then `NullLatestSource` is used
+    and no digest is sent.
+    """
+
+    async def latest(self, ecosystem: str, name: str) -> str | None: ...
+
+
+class NullLatestSource:
+    """No registry access: knows no newer version, so the digest stays empty."""
+
+    async def latest(self, ecosystem: str, name: str) -> str | None:
+        return None
+
+
+def load_tracked(path: Path) -> list[TrackedPackage]:
+    """Read `tracked.yaml`; a missing file is empty and a malformed entry is skipped."""
+    if not path.is_file():
+        return []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    entries = raw.get("packages") if isinstance(raw, dict) else None
+    out: list[TrackedPackage] = []
+    for entry in entries if isinstance(entries, list) else []:
+        try:
+            out.append(TrackedPackage.model_validate(entry))
+        except ValidationError:
+            continue
+    return out
+
+
+async def build_digest(
+    uv_lock: str,
+    pnpm_lock: str,
+    tracked: Sequence[TrackedPackage],
+    source: LatestSource,
+) -> str:
+    """The weekly digest text ('' when nothing is newer) from lock texts and tracked extras.
+
+    One failing lookup skips that package only. Majors first, at most 10 in all.
+    """
+    pinned: dict[str, dict[str, str]] = {
+        "pypi": parse_uv_lock(uv_lock),
+        "npm": parse_pnpm_lock(pnpm_lock),
+        "maven": {},
+    }
+    for t in tracked:
+        pinned[t.ecosystem][t.name] = t.version
+
+    updates: list[Update] = []
+    for ecosystem in ECOSYSTEMS:
+        latest: dict[str, str] = {}
+        for name in pinned[ecosystem]:
+            try:
+                version = await source.latest(ecosystem, name)
+            except Exception:
+                logger.warning("release lookup failed: %s %s", ecosystem, name)
+                continue
+            if version:
+                latest[name] = version
+        updates.extend(compare(pinned[ecosystem], latest))
+    priority = {"major": 0, "minor": 1, "patch": 2}
+    updates.sort(key=lambda u: (priority[u.kind], u.name))
+    return render_digest(updates[:10])
 
 
 def compare(pinned: Mapping[str, str], latest: Mapping[str, str]) -> list[Update]:
