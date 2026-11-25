@@ -1556,6 +1556,8 @@ class ModelChange(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False)
     old_tag: Mapped[str] = mapped_column(Text, nullable=False)
     new_tag: Mapped[str] = mapped_column(Text, nullable=False)
+    old_family: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_family: Mapped[str | None] = mapped_column(Text, nullable=True)
     test_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     actor: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
