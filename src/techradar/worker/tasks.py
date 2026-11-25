@@ -22,6 +22,7 @@ from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.inbox import csv_handler, exam_official_domains, run_csv_inbox
+from techradar.exams.pyq_intake import PYQ_RECORDS_DIR, collect_pyq_results, queue_gate_papers
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
 from techradar.library.inbox import load_limits, plan_library_intake
@@ -1061,7 +1062,8 @@ EXAM_INTAKE_PURPOSE = "exam_intake"
 @app.periodic(cron="*/10 * * * *")
 @app.task(queue="io", queueing_lock="exam_inbox_queued", name="exam_inbox_job")
 async def exam_inbox_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
-    """Import settled cutoffs and weightage CSVs; each file then moves to done/ or rejected/."""
+    """Import settled cutoffs and weightage CSVs and queue GATE paper-and-key pairs; each
+    file then moves to done/ or rejected/. Parsed pairs are stored as past questions."""
     settings = _get_settings()
     official = exam_official_domains(Path("infra/sources/official_domains.txt"))
     session_factory = make_session_factory("app", settings)
@@ -1082,4 +1084,19 @@ async def exam_inbox_job(timestamp: int | None = None) -> None:  # periodic: get
             handle=csv_handler(session, official),
             send=send,
         )
-    logger.info("exam inbox: %d files handled", files)
+        # Task 2: gate/<year>/ paper-and-key pairs go to the parser sandbox as `pyq` jobs;
+        # pairs whose two results are in are stored in pyq_questions.
+        records = settings.library_dir / PYQ_RECORDS_DIR
+        pairs = await queue_gate_papers(
+            session,
+            settings.library_inbox,
+            settings.data_dir / "raw",
+            settings.data_dir / "parse-jobs",
+            records,
+            time.time(),
+            send=send,
+        )
+        stored = await collect_pyq_results(
+            session, records, settings.data_dir / "clean", time.time(), send=send
+        )
+    logger.info("exam inbox: %d files, %d pairs queued, %d pairs settled", files, pairs, stored)
