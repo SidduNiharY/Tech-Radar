@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     daily_new_cards: int = 10
     daily_reviews: int = 40
     final30_reviews: int = 80
+    exam_category: str = "General"  # Phase 8: the cutoff category a mock is compared with
     night_start: str = "01:00"
     night_end: str = "05:00"
     # Phase 6: the LanguageTool container (owner-only, `tools` network; no internet).

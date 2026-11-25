@@ -74,7 +74,8 @@ MIME_TO_EXT: dict[str, str] = {
     "text/html": "html",
 }
 
-SKIPPED_DIRS = frozenset({"done", "rejected", "gate"})  # at the inbox root; phase 8 routes gate/
+# At the inbox root. Phase 8 (exams/inbox.py) reads gate/, cutoffs/ and weightage/ itself.
+SKIPPED_DIRS = frozenset({"done", "rejected", "gate", "cutoffs", "weightage"})
 MAX_TITLE_CHARS = 300
 MAX_NAME_CHARS = 120
 MAX_DEPTH = 8  # folders below the inbox root
@@ -120,8 +121,8 @@ def stable_files(inbox: Path, now: float, settle_s: int = 60) -> list[InboxFile]
     """Regular files unchanged for at least `settle_s` seconds, in name order.
 
     Never follows symlinks (files or folders); walks at most MAX_DEPTH folders deep,
-    without recursion. Skips the `done/`, `rejected/` and `gate/` folders at the inbox
-    root, dotfiles and dot-folders, `*.tmp` and Syncthing temp files.
+    without recursion. Skips the SKIPPED_DIRS folders (`done/`, `rejected/` and the exam
+    folders) at the inbox root, dotfiles and dot-folders, `*.tmp` and Syncthing temp files.
     """
     found: list[InboxFile] = []
     stack: list[tuple[Path, int]] = [(inbox, 0)]

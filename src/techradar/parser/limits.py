@@ -20,6 +20,7 @@ from techradar.parser.docx import docx_to_doc
 from techradar.parser.epub import epub_to_chapters
 from techradar.parser.feed import feed_to_entries
 from techradar.parser.html import html_to_doc
+from techradar.parser.image import image_to_doc
 from techradar.parser.media_extract import (
     MediaExtractError,
     extract_audio_segment,
@@ -46,6 +47,7 @@ def address_space_for(job: ParseJob, *, pixel_rebuild: bool = False) -> int:
         or job.kind == "docx"
         or (job.kind == "pdf" and job.mode == "part")
         or job.mode == "media"  # OCR of slide frames
+        or job.kind == "image"  # Phase 8: OCR of a screenshot
     ):
         return MODEL_AS_BYTES
     return LIGHT_AS_BYTES
@@ -135,6 +137,13 @@ def parse_job(
         except Exception:
             return ParseResult(job_id=job.job_id, kind="docx", status="error")
         return ParseResult(job_id=job.job_id, kind="docx", status="ok" if doc else "empty", doc=doc)
+    if job.kind == "image":  # Phase 8: re-encoded, then offline OCR (parser/image.py)
+        try:
+            doc = image_to_doc(raw_path, job.url, max_chars, artifacts_path)
+        except Exception:
+            return ParseResult(job_id=job.job_id, kind="image", status="error")
+        status = "ok" if doc else "empty"
+        return ParseResult(job_id=job.job_id, kind="image", status=status, doc=doc)
     if job.kind == "pdf" and pixel_rebuild:
         return _rebuild_pdf(job, raw_path, max_chars, artifacts_path)
     if job.kind == "pdf" and job.mode == "probe":

@@ -32,6 +32,7 @@ from techradar.bot.english_commands import (
     handle_story,
     story_is_open,
 )
+from techradar.bot.mock_intake import mock_handler
 from techradar.bot.packs_command import packs_reply
 from techradar.bot.planner_commands import handle_planner_command
 from techradar.bot.practice_commands import COMMAND_JOBS, handle_inbox, handle_practice_command
@@ -265,6 +266,10 @@ async def post_init(application: Application) -> None:
     # --- Phase 5 --- (/skill edits skills/<name>.md; the vault must be writable in `bot`)
     application.bot_data["vault_root"] = settings.data_dir / "vault"
     application.bot_data["tz"] = settings.tz  # Phase 8: the day a drill question belongs to
+    # Phase 8: `mock` scorecards are stored in raw/ with a parse job (needs the bot's
+    # ./data/raw and ./data/parse-jobs mounts from Phase 3 Task 3).
+    application.bot_data.setdefault("raw_dir", settings.data_dir / "raw")
+    application.bot_data.setdefault("jobs_dir", settings.data_dir / "parse-jobs")
 
     try:
         from procrastinate import App, PsycopgConnector
@@ -300,6 +305,7 @@ def main() -> None:
     configure_logging(secrets=[token])
 
     app = Application.builder().token(token).post_init(post_init).build()
+    app.add_handler(mock_handler())  # Phase 8: a `mock` scorecard, before the general handler
     app.add_handler(MessageHandler(filters.UpdateType.MESSAGE, handle_message))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
 

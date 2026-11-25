@@ -31,6 +31,9 @@ from techradar.english.jobs import (
 )
 from techradar.english.reflection import save_reflection
 from techradar.exams.final30 import run_formula_sheets
+from techradar.exams.inbox import csv_handler, exam_official_domains, run_csv_inbox
+from techradar.exams.mock_intake import collect_mock_results
+from techradar.exams.pyq_intake import PYQ_RECORDS_DIR, collect_pyq_results, queue_gate_papers
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
 from techradar.jarvis.greeting import run_prepare_greeting
@@ -1341,3 +1344,78 @@ async def cleanup_voice_job(timestamp: int | None = None) -> None:
     async with make_session_factory("app", settings)() as session:
         cleaned = await cleanup_voice(session, voice_dir=settings.data_dir / "voice")
     logger.info("voice recordings deleted: %d", cleaned)
+
+
+# --- Phase 8: exam files from the library inbox (wire/intake) -----------------------
+# cutoffs/*.csv and weightage/*.csv (Task 6) are read the safe way of library/inbox.py
+# (exams/inbox.py); library intake skips these folders.
+
+EXAM_INTAKE_PURPOSE = "exam_intake"
+
+
+@app.periodic(cron="*/10 * * * *")
+@app.task(queue="io", queueing_lock="exam_inbox_queued", name="exam_inbox_job")
+async def exam_inbox_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
+    """Import settled cutoffs and weightage CSVs and queue GATE paper-and-key pairs; each
+    file then moves to done/ or rejected/. Parsed pairs are stored as past questions."""
+    settings = _get_settings()
+    official = exam_official_domains(Path("infra/sources/official_domains.txt"))
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+
+        async def send(text: str) -> None:
+            await enqueue_message(
+                session,
+                chat_id=settings.telegram_owner_chat_id,
+                text=text,
+                purpose=EXAM_INTAKE_PURPOSE,
+            )
+
+        files = await run_csv_inbox(
+            session,
+            settings.library_inbox,
+            time.time(),
+            handle=csv_handler(session, official),
+            send=send,
+        )
+        # Task 2: gate/<year>/ paper-and-key pairs go to the parser sandbox as `pyq` jobs;
+        # pairs whose two results are in are stored in pyq_questions.
+        records = settings.library_dir / PYQ_RECORDS_DIR
+        pairs = await queue_gate_papers(
+            session,
+            settings.library_inbox,
+            settings.data_dir / "raw",
+            settings.data_dir / "parse-jobs",
+            records,
+            time.time(),
+            send=send,
+        )
+        stored = await collect_pyq_results(
+            session, records, settings.data_dir / "clean", time.time(), send=send
+        )
+    logger.info("exam inbox: %d files, %d pairs queued, %d pairs settled", files, pairs, stored)
+
+
+@app.periodic(cron="*/2 * * * *")
+@app.task(queue="llm", queueing_lock="mock_collect_queued", name="mock_collect_job")
+async def mock_collect_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
+    """Task 5: answer mock scorecards the parser sandbox has read (regex first, then the
+    local worker model, whose numbers must appear in the OCR text)."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+
+        async def send(text: str) -> None:
+            await enqueue_message(
+                session, chat_id=settings.telegram_owner_chat_id, text=text, purpose="mock"
+            )
+
+        handled = await collect_mock_results(
+            session,
+            settings.data_dir / "clean",
+            _exam_models()[0],
+            today=_local_now().date(),
+            category=settings.exam_category,
+            send=send,
+        )
+    logger.info("mock scorecards answered: %d", handled)
