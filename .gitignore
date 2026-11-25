@@ -5,6 +5,10 @@ data/
 .venv/
 __pycache__/
 evals/fit/results/*.tmp
+# The owner's real model-bench sets (formats: evals/sets/README.md)
+evals/sets/tagging.yaml
+evals/sets/json_extract.yaml
+evals/sets/mcq_checker.yaml
 apps/web/node_modules/
 infra/host/evidence.pub
 .superpowers/

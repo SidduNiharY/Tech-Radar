@@ -1,0 +1,14 @@
+# Format of evals/sets/mcq_checker.yaml (your real set: 50 MCQs, 25 with a wrong key).
+version: 1
+suite: mcq_checker
+items:
+  - id: "mcq-001"
+    question: "Worst-case time of binary search on n sorted items?"
+    options: {A: "O(n)", B: "O(log n)", C: "O(n log n)", D: "O(1)"}
+    key: "B"
+    key_is_wrong: false
+  - id: "mcq-002"
+    question: "Worst-case time of binary search on n sorted items?"
+    options: {A: "O(n)", B: "O(log n)", C: "O(n log n)", D: "O(1)"}
+    key: "A"
+    key_is_wrong: true

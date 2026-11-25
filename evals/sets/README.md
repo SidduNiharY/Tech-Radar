@@ -47,6 +47,18 @@ items:
 4. **Night A/B Blind Evaluation (`passes_night`):**
    - Owner prefers candidate model in at least 2 out of 3 prompts.
 
+## Role test sets (read by `models/bench_run.py`)
+
+Copy each `*.example.yaml` to the same name without `.example` and fill it in. Every file is
+`version`, `suite` and a list `items` (at most 200 are read).
+
+- `tagging.yaml` (worker): items `{id, text, tags: [..]}`. An item agrees when the model's tag set
+  equals `tags` (case ignored). Metric `tag_agreement`.
+- `json_extract.yaml` (worker): items `{id, article}`. The model must return valid
+  `{summary, entities}` JSON on the first try. Metric `json_first_try`.
+- `mcq_checker.yaml` (checker): items `{id, question, options, key, key_is_wrong}`; use both
+  wrong keys and correct keys. Metrics `wrong_key_catch` and `false_flag`.
+
 ## Files
 
 - `gate_cs.example.yaml`: Sample evaluation suite for GATE Computer Science practice questions.

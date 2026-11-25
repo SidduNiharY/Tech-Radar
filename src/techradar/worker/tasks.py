@@ -1048,3 +1048,48 @@ async def econ_collect_job(timestamp: int | None = None) -> None:
         stored = await collect_official(session, official)
         await session.commit()
     logger.info("economy series updated from official facts: %d", stored)
+
+
+# --- Phase 10 ---------------------------------------------------------------------
+# Models admin and tech extras (plans/2026-11-07-techradar-phase10-models-extras.md). The jobs
+# here only read, score and record; nothing in this block pulls, switches or loads a model.
+
+
+@app.task(queue=NIGHT_QUEUE, lock="bench", name="bench_job")
+@night_only(task_name="bench_job")
+async def bench_job(role: str, tag: str) -> None:
+    """Night: score candidate `tag` for `role` on the local eval sets and store the result.
+
+    One at a time (the `bench` lock) and night-window only, so it never fights the day jobs for
+    the GPU. A missing set or an unsupported role is logged, not retried.
+    """
+    from techradar.llm.roles import Role as BenchRole
+    from techradar.models.bench_run import (
+        BenchDeps,
+        BenchSetError,
+        UnsupportedRole,
+        run_role_test,
+        store_result,
+    )
+
+    settings = _get_settings()
+    base_roles = load_roles(Path("infra/models/roles.yaml"), allow_cloud=False)
+    bench_role = BenchRole(role)
+
+    def completer_for(r: BenchRole, candidate: str) -> LiteLLMCompleter:
+        roles = dict(base_roles)
+        roles[r] = roles[r].model_copy(update={"ollama_tag": candidate})
+        return LiteLLMCompleter(roles, "http://ollama:11434")
+
+    try:
+        result = await run_role_test(
+            bench_role, tag, BenchDeps(completer_for=completer_for, sets_dir=Path("evals/sets"))
+        )
+    except (BenchSetError, UnsupportedRole) as err:
+        logger.warning("bench %s %s skipped: %s", role, tag, err)
+        return
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        test_id = await store_result(session, bench_role, tag, result)
+        await session.commit()
+    logger.info("bench %s %s: passed=%s test_id=%d", role, tag, result.passed, test_id)
