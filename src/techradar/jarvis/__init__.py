@@ -6,10 +6,12 @@ from techradar.jarvis.executor import (
     TicketExecutionError,
 )
 from techradar.jarvis.greeting import (
+    Greeting,
+    Suggestion,
+    choose_suggestions,
     is_quiet_hours,
-    prepare_greeting,
+    render_greeting,
     run_prepare_greeting,
-    suggest_next_actions,
 )
 from techradar.jarvis.intent import (
     IntentClassification,
@@ -18,14 +20,16 @@ from techradar.jarvis.intent import (
 )
 
 __all__ = [
+    "Greeting",
     "IntentClassification",
     "JarvisIntent",
     "SpokenActionExecutor",
     "SpokenTicket",
+    "Suggestion",
     "TicketExecutionError",
+    "choose_suggestions",
     "classify_intent",
     "is_quiet_hours",
-    "prepare_greeting",
+    "render_greeting",
     "run_prepare_greeting",
-    "suggest_next_actions",
 ]
