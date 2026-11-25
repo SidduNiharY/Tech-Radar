@@ -9,6 +9,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from techradar.feedback.patterns import Mode, PatternCandidate
+from techradar.llm.client import complete_json
+from techradar.llm.roles import Role
+from techradar.schemas.pipeline import NoLinks
+from techradar.security.untrusted import wrap_untrusted
 
 StyleField = Literal[
     "length",
@@ -69,9 +73,10 @@ class StyleRule(BaseModel):
                     f"Invalid value '{v}' for field '{field_name}'. Allowed: {allowed}"
                 )
         elif field_name == "skip_section":
-            if v in PROTECTED_SECTIONS:
+            normal = {p.lower() for p in PROTECTED_SECTIONS}
+            if " ".join(v.lower().split()) in normal:
                 raise ValueError(f"Section '{v}' is protected and can never be skipped.")
-            if not re.match(r"^[A-Za-z ]{1,40}$", v):
+            if not re.fullmatch(r"[A-Za-z ]{1,40}", v):
                 raise ValueError(
                     f"Invalid skip_section heading '{v}'. Must be 1-40 letters and spaces."
                 )
@@ -79,17 +84,10 @@ class StyleRule(BaseModel):
 
 
 class Pick(BaseModel):
-    """An approved or selected pattern candidate with human-readable suggestion."""
+    """One chosen candidate and the model's wording of it. The wording is only ever shown."""
 
     candidate_index: int
-    wording: str = Field(max_length=160)
-
-    @field_validator("wording")
-    @classmethod
-    def validate_no_links(cls, v: str) -> str:
-        if re.search(r"https?://|www\.", v):
-            raise ValueError("Suggestion wording must not contain links.")
-        return v
+    wording: NoLinks = Field(max_length=160)
 
 
 class Picks(BaseModel):
@@ -98,40 +96,39 @@ class Picks(BaseModel):
     picks: list[Pick] = Field(default_factory=list, max_length=3)
 
 
+_SAFE_SUBJECT = re.compile(r"[^A-Za-z0-9 :._-]")
+
+
+def _prompt_line(i: int, c: PatternCandidate) -> str:
+    """One candidate for the prompt. Its subject came from content, so it is cleaned first."""
+    subject = _SAFE_SUBJECT.sub("", c.subject)[:80]
+    return f"[{i}] {c.kind}: {subject} (count={c.evidence.count})"
+
+
 async def choose_and_word(
     completer: Any,
     candidates: Sequence[PatternCandidate],
+    role: Role = Role.WORKER,
 ) -> list[Pick]:
-    """Ask model to pick at most 3 pattern candidates and word them as short suggestions."""
+    """Ask the model to pick at most 3 candidates and word each as one short suggestion.
+
+    The model returns only an index and a wording. The stored proposal always comes from the
+    candidate, never from the model, and the wording is never turned into a rule (SEC-48).
+    Candidate subjects can come from news text, so they go between UNTRUSTED markers.
+    """
     if not candidates:
         return []
 
-    # Format candidates between UNTRUSTED markers
-    cands_summary = [
-        f"[{i}] {c.kind}: {c.subject} (count={c.evidence.count})" for i, c in enumerate(candidates)
-    ]
-    user_prompt = (
-        "<<<UNTRUSTED CANDIDATES>>>\n"
-        + "\n".join(cands_summary)
-        + "\n<<<END UNTRUSTED CANDIDATES>>>"
-    )
-
-    from techradar.llm.client import complete_json
-    from techradar.llm.roles import Role
-
+    user_prompt = wrap_untrusted("\n".join(_prompt_line(i, c) for i, c in enumerate(candidates)))
     try:
-        res = await complete_json(
-            completer,
-            Role.WORKER,
-            REVIEW_SYSTEM,
-            user_prompt,
-            Picks,
-        )
-    except Exception:
+        res = await complete_json(completer, role, REVIEW_SYSTEM, user_prompt, Picks)
+    except Exception:  # bad JSON, a link in the wording, a timeout: no suggestions this week
         return []
 
-    valid_picks: list[Pick] = []
+    seen: set[int] = set()
+    valid: list[Pick] = []
     for p in res.picks:
-        if 0 <= p.candidate_index < len(candidates):
-            valid_picks.append(p)
-    return valid_picks
+        if 0 <= p.candidate_index < len(candidates) and p.candidate_index not in seen:
+            seen.add(p.candidate_index)
+            valid.append(p)
+    return valid[:3]

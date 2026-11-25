@@ -24,13 +24,14 @@ from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
 from techradar.feedback.jobs import run_nightly_patterns
+from techradar.feedback.report import run_weekly_report
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
 from techradar.library.quarantine import purge_deleted_held_docs
 from techradar.library.summaries import summarize_doc
 from techradar.llm.litellm import LiteLLMCompleter, LiteLLMEmbedder
-from techradar.llm.roles import load_roles
+from techradar.llm.roles import Role, load_roles
 from techradar.messaging.outbox import enqueue_message
 from techradar.night.chains import run_chains
 from techradar.night.deep_dive import run_deep_dive
@@ -1076,3 +1077,39 @@ async def find_patterns_job(timestamp: int | None = None) -> None:
         )
         await session.commit()
     logger.info("patterns: %s", result.model_dump())
+
+
+# Sundays 13:00 UTC = 18:30 in Asia/Kolkata. It runs on the `llm` queue (the worker model); the
+# night model is used only when the night window is open, which a Sunday evening never is.
+@app.periodic(cron="0 13 * * 0")
+@app.task(
+    queue="llm",
+    lock="improvement_report",
+    queueing_lock="weekly_report_queued",
+    name="weekly_report_job",
+)
+@alert_on_failure("weekly_report_job")
+async def weekly_report_job(timestamp: int | None = None) -> None:
+    """Send the weekly improvement report: at most 3 suggestions, each waiting for my tap."""
+    settings = _get_settings()
+    completer, embedder = _exam_models()
+    now = datetime.now(UTC)
+    local = now.astimezone(ZoneInfo(settings.tz))
+    window = in_night_window(
+        local,
+        day_time.fromisoformat(settings.night_start),
+        day_time.fromisoformat(settings.night_end),
+    )
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        result = await run_weekly_report(
+            session,
+            completer,
+            embedder,
+            now=now,
+            today=local.date(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            role=Role.NIGHT if window else Role.WORKER,
+        )
+        await session.commit()
+    logger.info("weekly report: %s", result.model_dump())

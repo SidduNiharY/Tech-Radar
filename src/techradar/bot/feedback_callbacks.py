@@ -64,3 +64,39 @@ async def handle_feedback_callback(
         )
         await session.commit()
     await query.answer(FEEDBACK_REPLIES[result])
+
+
+REPORT_ACTIONS = frozenset({"rule_ok", "rule_no", "undo"})
+
+
+async def handle_report_callback(
+    query: Any, bot_data: Mapping[str, Any], action: str, args: list[int]
+) -> None:
+    """`rule_ok`, `rule_no` and `undo`: only the owner's own tap in the owner's own chat.
+
+    Only a tap changes a rule (SEC-48): the proposal row was made by code from a pattern
+    candidate, and `approve_proposal` re-validates it. Nothing here reads message text.
+    """
+    from techradar.feedback.approval import approve_proposal, ignore_proposal, undo_change
+
+    session_factory = bot_data.get("session_factory")
+    message = owner_message(query, bot_data)
+    if session_factory is None or message is None or len(args) != 1:
+        await query.answer("Not available.")
+        return
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        if action == "rule_ok":
+            result = await approve_proposal(session, args[0], now)
+            reply = {"approved": "Approved.", "not_proposed": "Already decided."}.get(
+                result, "Not available."
+            )
+        elif action == "rule_no":
+            reply = "Ignored." if await ignore_proposal(session, args[0]) else "Already decided."
+        else:
+            undone = await undo_change(session, args[0], now)
+            reply = {"undone": "Undone.", "already_undone": "Already undone."}.get(
+                undone, "Cannot undo that."
+            )
+        await session.commit()
+    await query.answer(reply)

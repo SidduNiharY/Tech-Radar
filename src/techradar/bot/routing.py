@@ -33,6 +33,9 @@ Action = Literal[
     "stop",
     "skill",
     "drill",  # Phase 8
+    "improvements",  # Phase 11
+    "setup",  # Phase 11
+    "fix",  # Phase 11
 ]
 
 
@@ -116,6 +119,11 @@ def route_update(
         # Timed drills are the owner's own practice, not a study group's.
         return Routed("drill") if chat_id == owner_id else Routed("ignore")
     # --- end Phase 8 ---
+    # --- Phase 11: rules, setup and fixes are the owner's own, never a study group's (SEC-26) ---
+    if cmd in ("/improvements", "/setup", "/fix"):
+        if chat_id != owner_id:
+            return Routed("ignore")
+        return Routed(cmd[1:], cleaned[len(words[0]) :].strip())  # type: ignore[arg-type]
     if cmd == "/econ":  # --- Phase 7: the owner keeps the numbers ---
         if chat_id != owner_id:
             return Routed("ignore")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from collections.abc import Sequence
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import PreferenceRule
 from techradar.schemas.pipeline import NoLinks
+
+logger = logging.getLogger(__name__)
 
 
 class Mode(StrEnum):
@@ -96,6 +99,18 @@ PAIR_VARIANT_RULES: dict[str, tuple[str, str]] = {
     "example_first": ("order", "example_first"),
     "definition_first": ("order", "definition_first"),
 }
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9 ]")
+
+
+def safe_subject(text: str, limit: int = 60) -> str:
+    """Letters, digits and spaces only: a chapter title or any content text becomes inert.
+
+    Content text (a chapter title) must never stop the nightly job with a validation error or
+    carry a link into a proposal (SEC-48).
+    """
+    return " ".join(_UNSAFE.sub(" ", text).split())[:limit].strip() or "this topic"
+
 
 # --- Pure pattern detection functions ---
 
@@ -361,7 +376,7 @@ def mistakes_candidates(
             candidates.append(
                 PatternCandidate(
                     kind="mistakes",
-                    subject=f"Repeated mistakes in {subj}",
+                    subject=f"Repeated mistakes in {safe_subject(subj)}",
                     evidence=Evidence(
                         ids=ids,
                         count=len(rows),
@@ -371,7 +386,7 @@ def mistakes_candidates(
                     ),
                     proposal=ContentProposal(
                         kind="focused_revision",
-                        subject=subj[:120],
+                        subject=safe_subject(subj, 120),
                     ),
                 )
             )
@@ -683,26 +698,62 @@ async def find_patterns(
 
     ts = now or datetime.now(UTC)
     candidates: list[PatternCandidate] = []
-    candidates += frequency_candidates(await _frequency_rows(session, ts))
-    candidates += source_candidates(await _source_rows(session, ts))
-    candidates += sequence_candidates(await _sequence_rows(session, ts))
-    candidates += mistakes_candidates(await _mistake_rows(session, ts))
-    edits = await session.execute(select(Edit).where(Edit.at >= _since(ts, 14)))
-    candidates += edit_candidates(list(edits.scalars().all()))
-    sessions = await session.execute(
-        select(StudySession).where(
-            StudySession.started_at >= _since(ts, 14), StudySession.minutes.is_not(None)
+
+    async def frequency() -> list[PatternCandidate]:
+        return frequency_candidates(await _frequency_rows(session, ts))
+
+    async def source() -> list[PatternCandidate]:
+        return source_candidates(await _source_rows(session, ts))
+
+    async def sequence() -> list[PatternCandidate]:
+        return sequence_candidates(await _sequence_rows(session, ts))
+
+    async def mistakes() -> list[PatternCandidate]:
+        return mistakes_candidates(await _mistake_rows(session, ts))
+
+    async def edit() -> list[PatternCandidate]:
+        rows = await session.execute(select(Edit).where(Edit.at >= _since(ts, 14)))
+        return edit_candidates(list(rows.scalars().all()))
+
+    async def time() -> list[PatternCandidate]:
+        rows = await session.execute(
+            select(StudySession).where(
+                StudySession.started_at >= _since(ts, 14), StudySession.minutes.is_not(None)
+            )
         )
-    )
-    candidates += time_candidates(list(sessions.scalars().all()))
-    pairs = await session.execute(
-        select(PreferencePair).where(
-            PreferencePair.answered_at >= _since(ts, 14), PreferencePair.chosen.in_(("a", "b"))
+        return time_candidates(list(rows.scalars().all()))
+
+    async def pairs() -> list[PatternCandidate]:
+        rows = await session.execute(
+            select(PreferencePair).where(
+                PreferencePair.answered_at >= _since(ts, 14),
+                PreferencePair.chosen.in_(("a", "b")),
+            )
         )
-    )
-    candidates += pairs_candidates(list(pairs.scalars().all()))
-    if owner_chat_id is not None:
-        candidates += confusion_candidates(await _ask_vectors(session, embedder, owner_chat_id, ts))
+        return pairs_candidates(list(rows.scalars().all()))
+
+    async def confusion() -> list[PatternCandidate]:
+        if owner_chat_id is None:
+            return []
+        return confusion_candidates(await _ask_vectors(session, embedder, owner_chat_id, ts))
+
+    # Each rule runs on its own: one bad row or one failed query (a savepoint rolls it back)
+    # costs that rule's candidates for tonight, never the whole job.
+    for name, rule in (
+        ("frequency", frequency),
+        ("source", source),
+        ("sequence", sequence),
+        ("mistakes", mistakes),
+        ("edit", edit),
+        ("time", time),
+        ("pairs", pairs),
+        ("confusion", confusion),
+    ):
+        try:
+            async with session.begin_nested():
+                candidates += await rule()
+        except Exception:
+            logger.exception("pattern rule %s failed; skipped tonight", name)
 
     rules = (
         await session.execute(

@@ -15,7 +15,12 @@ from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
 from techradar.bot.drill import answer_drill
-from techradar.bot.feedback_callbacks import handle_feedback_callback, is_feedback_action
+from techradar.bot.feedback_callbacks import (
+    REPORT_ACTIONS,
+    handle_feedback_callback,
+    handle_report_callback,
+    is_feedback_action,
+)
 from techradar.bot.planner_commands import handle_checkin_tap
 from techradar.bot.practice_callbacks import (
     PRACTICE_ACTIONS,
@@ -66,6 +71,9 @@ async def handle_callback_query(
     # --- Phase 11: feedback taps, `fb_<signal>:<kind code>:<id>` ---
     if is_feedback_action(action):
         await handle_feedback_callback(query, context.application.bot_data, action, args)
+        return
+    if action in REPORT_ACTIONS:  # rule_ok, rule_no, undo
+        await handle_report_callback(query, context.application.bot_data, action, args)
         return
 
     if action in PRACTICE_ACTIONS:  # --- Phase 3 ---
