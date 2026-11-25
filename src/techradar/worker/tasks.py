@@ -23,6 +23,7 @@ from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
+from techradar.jarvis.greeting import run_prepare_greeting
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
@@ -1146,3 +1147,24 @@ async def trends_job(timestamp: int | None = None) -> None:
         sent = await run_trends(session, today, settings.telegram_owner_chat_id)
         await session.commit()
     logger.info("trends: %d terms counted, %d rising sent", terms, sent)
+
+
+# --- Phase 12 ---------------------------------------------------------------------
+# Jarvis. Only the greeting is a job here: the router, tickets, the `jarvis` queue and
+# api-voice come with the security tasks (WIRING(claude): Tasks 2 to 5).
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="io", queueing_lock="greeting_queued", name="greeting_job")
+async def greeting_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
+    """Store today's Jarvis greeting once the briefing exists; never in quiet hours.
+
+    The quiet-hours check and the "already stored" check are in `run_prepare_greeting`, so a
+    tick at night or a repeated tick stores nothing.
+    """
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        greeting = await run_prepare_greeting(session, _local_now())
+        await session.commit()
+    if greeting is not None:
+        logger.info("jarvis greeting stored with %d suggestions", len(greeting.suggestions))

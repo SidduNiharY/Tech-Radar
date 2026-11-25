@@ -1634,7 +1634,10 @@ class JarvisSession(Base):
     """Active or past conversation sessions with Jarvis."""
 
     __tablename__ = "jarvis_sessions"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        CheckConstraint("device IN ('mac','phone','server')", name="ck_jarvis_sessions_device"),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     device: Mapped[str] = mapped_column(Text, nullable=False)  # mac, phone, server
@@ -1650,7 +1653,10 @@ class JarvisTurn(Base):
     """Individual spoken or typed dialog turns in a Jarvis session."""
 
     __tablename__ = "jarvis_turns"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        CheckConstraint("role IN ('me','jarvis')", name="ck_jarvis_turns_role"),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     session_id: Mapped[int] = mapped_column(
@@ -1660,7 +1666,7 @@ class JarvisTurn(Base):
     text: Mapped[str] = mapped_column(String(2000), nullable=False)
     skill: Mapped[str | None] = mapped_column(Text, nullable=True)
     list_len: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    ticket_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ticket_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     reply_to: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     reply: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -1676,10 +1682,16 @@ class JarvisWrite(Base):
     """Pending or confirmed write actions requested by voice."""
 
     __tablename__ = "jarvis_writes"
-    __table_args__ = {"schema": "techradar"}
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('awaiting_tap','done','expired','undone')",
+            name="ck_jarvis_writes_status",
+        ),
+        {"schema": "techradar"},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    ticket_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ticket_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     action: Mapped[str] = mapped_column(Text, nullable=False)
     args: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     inverse_action: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -42,6 +42,7 @@ def upgrade() -> None:
         sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("practice", sa.Text(), nullable=True),
         sa.Column("quiz", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.CheckConstraint("device IN ('mac','phone','server')", name="ck_jarvis_sessions_device"),
         sa.PrimaryKeyConstraint("id"),
         schema=SCHEMA,
     )
@@ -55,7 +56,7 @@ def upgrade() -> None:
         sa.Column("text", sa.String(length=2000), nullable=False),
         sa.Column("skill", sa.Text(), nullable=True),
         sa.Column("list_len", sa.Integer(), nullable=True),
-        sa.Column("ticket_id", sa.Integer(), nullable=True),
+        sa.Column("ticket_id", sa.BigInteger(), nullable=True),
         sa.Column("reply_to", sa.BigInteger(), nullable=True),
         sa.Column("reply", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("delivered_at", sa.DateTime(timezone=True), nullable=True),
@@ -71,6 +72,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        sa.CheckConstraint("role IN ('me','jarvis')", name="ck_jarvis_turns_role"),
         sa.ForeignKeyConstraint(
             ["session_id"],
             [f"{SCHEMA}.jarvis_sessions.id"],
@@ -84,7 +86,7 @@ def upgrade() -> None:
     op.create_table(
         "jarvis_writes",
         sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
-        sa.Column("ticket_id", sa.Integer(), nullable=False),
+        sa.Column("ticket_id", sa.BigInteger(), nullable=False),
         sa.Column("action", sa.Text(), nullable=False),
         sa.Column("args", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("inverse_action", sa.Text(), nullable=True),
@@ -103,6 +105,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("undone_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "status IN ('awaiting_tap','done','expired','undone')",
+            name="ck_jarvis_writes_status",
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema=SCHEMA,
     )
@@ -134,6 +140,8 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         schema=SCHEMA,
     )
+    # The lease is one row that is updated, never inserted (Task 5): start it free.
+    op.execute("INSERT INTO techradar.gpu_lease (id) VALUES (1)")
 
 
 def downgrade() -> None:

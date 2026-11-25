@@ -1,122 +1,185 @@
+"""Morning greeting (Phase 12 Task 9)."""
+
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 
+import pytest
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from techradar.db.models import (
+    Briefing,
+    Flashcard,
+    JarvisGreeting,
+    Revision,
+    SyllabusTopic,
+    TopicMastery,
+    TopicSource,
+    UserSettings,
+)
 from techradar.jarvis.greeting import (
+    Greeting,
+    Suggestion,
+    choose_suggestions,
     is_quiet_hours,
-    prepare_greeting,
+    outside_usual_day,
+    render_greeting,
     run_prepare_greeting,
-    suggest_next_actions,
 )
 
-
-def test_is_quiet_hours_overnight_span():
-    # Quiet hours: 22:00 to 07:00
-    # Inside quiet hours (evening)
-    dt_2200 = datetime(2026, 11, 15, 22, 0, tzinfo=UTC)
-    assert is_quiet_hours(dt_2200, 22, 7) is True
-
-    dt_2359 = datetime(2026, 11, 15, 23, 59, tzinfo=UTC)
-    assert is_quiet_hours(dt_2359, 22, 7) is True
-
-    # Inside quiet hours (early morning)
-    dt_0000 = datetime(2026, 11, 15, 0, 0, tzinfo=UTC)
-    assert is_quiet_hours(dt_0000, 22, 7) is True
-
-    dt_0430 = datetime(2026, 11, 15, 4, 30, tzinfo=UTC)
-    assert is_quiet_hours(dt_0430, 22, 7) is True
-
-    dt_0659 = datetime(2026, 11, 15, 6, 59, tzinfo=UTC)
-    assert is_quiet_hours(dt_0659, 22, 7) is True
-
-    # Outside quiet hours
-    dt_0700 = datetime(2026, 11, 15, 7, 0, tzinfo=UTC)
-    assert is_quiet_hours(dt_0700, 22, 7) is False
-
-    dt_1200 = datetime(2026, 11, 15, 12, 0, tzinfo=UTC)
-    assert is_quiet_hours(dt_1200, 22, 7) is False
-
-    dt_2159 = datetime(2026, 11, 15, 21, 59, tzinfo=UTC)
-    assert is_quiet_hours(dt_2159, 22, 7) is False
+QUIET = (time(23, 0), time(6, 0))
+NOW = datetime(2026, 11, 25, 7, 30, tzinfo=UTC)  # 2026-11-25 is not an outside-usual day
+KINDS = ["news", "due_cards", "revision", "weak_topic", "no_source", "outside_usual"]
 
 
-def test_is_quiet_hours_same_day():
-    # Quiet hours within the same day: 13:00 to 15:00
-    dt_1259 = datetime(2026, 11, 15, 12, 59, tzinfo=UTC)
-    assert is_quiet_hours(dt_1259, 13, 15) is False
-
-    dt_1300 = datetime(2026, 11, 15, 13, 0, tzinfo=UTC)
-    assert is_quiet_hours(dt_1300, 13, 15) is True
-
-    dt_1430 = datetime(2026, 11, 15, 14, 30, tzinfo=UTC)
-    assert is_quiet_hours(dt_1430, 13, 15) is True
-
-    dt_1500 = datetime(2026, 11, 15, 15, 0, tzinfo=UTC)
-    assert is_quiet_hours(dt_1500, 13, 15) is False
+def sug(kind: str, text: str | None = None) -> Suggestion:
+    return Suggestion(kind=kind, text=text or f"{kind} text")  # type: ignore[arg-type]
 
 
-def test_suggest_next_actions_max_three():
-    # Verify at most 3 suggestions returned across diverse combinations
-    scenarios = [
-        (0, 0, None),
-        (5, 10, "GATE CS"),
-        (1, 1, "RBI Grade B"),
-        (0, 20, None),
-        (10, 0, "UPSC CSE"),
-        (100, 50, "ISRO Scientist"),
-    ]
-    for streak, due, exam in scenarios:
-        actions = suggest_next_actions(streak, due, exam)
-        assert len(actions) <= 3, (
-            f"Expected <= 3 actions, got {len(actions)} for {streak}, {due}, {exam}"
+def test_at_most_three_suggestions():
+    assert len(choose_suggestions([sug(k) for k in KINDS * 2])) == 3
+
+
+def test_priority_order():
+    shuffled = [sug(k) for k in ("no_source", "weak_topic", "news", "due_cards", "revision")]
+    assert [s.kind for s in choose_suggestions(shuffled)] == ["news", "due_cards", "revision"]
+
+
+def test_outside_usual_only_on_its_days():
+    cands = [sug(k) for k in KINDS]
+    assert "outside_usual" not in [s.kind for s in choose_suggestions(cands)]
+    picked = choose_suggestions(cands, include_outside_usual=True)
+    assert len(picked) == 3 and picked[-1].kind == "outside_usual"
+    assert [s.kind for s in picked[:2]] == ["news", "due_cards"]
+
+
+def test_outside_usual_appears_once_in_ten():
+    start = date(2026, 11, 1)
+    days = [start + timedelta(days=i) for i in range(10)]
+    assert sum(outside_usual_day(d) for d in days) == 1
+
+
+def test_render_greeting_counts():
+    two = Greeting(opening="Good morning.", suggestions=[sug("news", "A."), sug("due_cards", "B.")])
+    assert render_greeting(two).startswith("Good morning. Two things today:\n1. A.\n2. B.")
+    assert render_greeting(two).endswith("What do you want to start with?")
+    one = Greeting(opening="Good morning.", suggestions=[sug("news", "A.")])
+    assert "One thing today:" in render_greeting(one)
+    assert "Three things" in render_greeting(
+        Greeting(opening="Hi.", suggestions=[sug("news"), sug("revision"), sug("weak_topic")])
+    )
+    assert "Nothing urgent" in render_greeting(Greeting(opening="Hi."))
+
+
+def test_suggestion_text_has_no_links_and_a_length_cap():
+    with pytest.raises(ValidationError):
+        Suggestion(kind="news", text="see https://evil.example now")
+    with pytest.raises(ValidationError):
+        Suggestion(kind="news", text="x" * 161)
+    with pytest.raises(ValidationError):
+        Greeting(opening="Hi.", suggestions=[sug("news")] * 4)
+
+
+def test_quiet_hours_cross_midnight():
+    def at(h: int, m: int = 0) -> datetime:
+        return datetime(2026, 11, 25, h, m, tzinfo=UTC)
+
+    assert is_quiet_hours(at(23), QUIET) and is_quiet_hours(at(2), QUIET)
+    assert is_quiet_hours(at(5, 59), QUIET)
+    assert not is_quiet_hours(at(6), QUIET) and not is_quiet_hours(at(22, 59), QUIET)
+    assert is_quiet_hours(at(13, 30), (time(13), time(15)))
+    assert not is_quiet_hours(at(15), (time(13), time(15)))
+
+
+# --- database -------------------------------------------------------------------------------
+
+db = pytest.mark.db
+
+
+async def _briefing(session: AsyncSession, items: list[dict] | None = None) -> None:
+    session.add(Briefing(date=NOW.date(), sent_at=NOW, items=items or []))
+    await session.flush()
+
+
+@db
+async def test_greeting_stored_once_from_real_rows(session: AsyncSession):
+    await _briefing(
+        session,
+        [
+            {"title": "RBI", "section": "economy", "exam_tags": ["bank"]},
+            {"title": "Chips", "section": "tech", "exam_tags": []},
+        ],
+    )
+    session.add(Flashcard(front="f", back="b", source_kind="fact", due=NOW - timedelta(hours=1)))
+    session.add(Revision(goal="gov", topic="polity", due_date=NOW.date()))
+    session.add(TopicMastery(topic="OS", level="learning", prev_level="exam_ready"))
+    await session.flush()
+
+    g = await run_prepare_greeting(session, NOW)
+    assert g is not None and g.opening == "Good morning."
+    assert [s.kind for s in g.suggestions] == ["news", "due_cards", "revision"]
+    row = await session.get(JarvisGreeting, NOW.date())
+    assert row is not None and row.shown_devices == []
+    assert row.greeting["suggestions"][0]["kind"] == "news"
+    # A second run changes nothing.
+    assert await run_prepare_greeting(session, NOW) is None
+    assert len((await session.execute(select(JarvisGreeting))).scalars().all()) == 1
+
+
+@db
+async def test_no_greeting_before_the_briefing(session: AsyncSession):
+    assert await run_prepare_greeting(session, NOW) is None
+    assert await session.get(JarvisGreeting, NOW.date()) is None
+
+
+@db
+async def test_no_greeting_in_quiet_hours_and_the_setting_is_used(session: AsyncSession):
+    await _briefing(session)
+    late = NOW.replace(hour=23, minute=30)
+    assert await run_prepare_greeting(session, late) is None
+    assert await run_prepare_greeting(session, NOW.replace(hour=2)) is None
+    session.add(UserSettings(key="jarvis_quiet_hours", value="07:00-08:00"))
+    await session.flush()
+    assert await run_prepare_greeting(session, NOW) is None  # 07:30 is now quiet
+    assert await run_prepare_greeting(session, NOW.replace(hour=9)) is not None
+
+
+@db
+async def test_no_source_suggestion_only_with_a_suggested_source(session: AsyncSession):
+    await _briefing(session)
+    topic = SyllabusTopic(
+        exam="gate", subject="OS", topic="Banker's algorithm", slug="bankers", vault_path="v"
+    )
+    session.add(topic)
+    await session.flush()
+    g = await run_prepare_greeting(session, NOW)
+    assert g is not None and g.suggestions == []
+    await session.execute(
+        JarvisGreeting.__table__.delete().where(JarvisGreeting.date == NOW.date())
+    )
+    session.add(
+        TopicSource(
+            topic_id=topic.id, kind="chapter", ref_id=1, label="NPTEL OS week 5", status="suggested"
         )
-        assert all(isinstance(a, str) and len(a) > 0 for a in actions)
+    )
+    await session.flush()
+    g2 = await run_prepare_greeting(session, NOW)
+    assert g2 is not None and len(g2.suggestions) == 1
+    assert g2.suggestions[0].text == "Banker's algorithm has no material yet. Add NPTEL OS week 5?"
 
 
-def test_suggest_next_actions_prioritization():
-    # Due cards priority
-    actions_cards = suggest_next_actions(streak_days=3, due_cards=8, next_exam="GATE CS")
-    assert any("8 flashcards due" in a for a in actions_cards)
-    assert any("GATE CS" in a for a in actions_cards)
-    assert any("3-days study streak" in a for a in actions_cards)
-
-    # Singular flashcard
-    actions_1_card = suggest_next_actions(streak_days=1, due_cards=1, next_exam=None)
-    assert any("1 flashcard due" in a for a in actions_1_card)
-    assert any("1-day study streak" in a for a in actions_1_card)
-
-    # Zero streak kickoff suggestion
-    actions_zero_streak = suggest_next_actions(streak_days=0, due_cards=0, next_exam=None)
-    assert any("start your daily study streak" in a.lower() for a in actions_zero_streak)
-
-
-def test_prepare_greeting_time_of_day():
-    # Morning
-    dt_morning = datetime(2026, 11, 15, 8, 30, tzinfo=UTC)
-    greeting_m = prepare_greeting("Alice", dt_morning, 5, 10, "GATE CS")
-    assert greeting_m.startswith("Good morning, Alice.")
-    assert "Three things for you today:" in greeting_m
-    assert "10 flashcards" in greeting_m
-    assert "GATE CS" in greeting_m
-
-    # Afternoon
-    dt_afternoon = datetime(2026, 11, 15, 14, 0, tzinfo=UTC)
-    greeting_a = prepare_greeting("Bob", dt_afternoon, 0, 0, None)
-    assert greeting_a.startswith("Good afternoon, Bob.")
-
-    # Evening
-    dt_evening = datetime(2026, 11, 15, 19, 15, tzinfo=UTC)
-    greeting_e = prepare_greeting("Carol", dt_evening, 2, 4, "IBPS PO")
-    assert greeting_e.startswith("Good evening, Carol.")
-
-    # Night / early morning
-    dt_night = datetime(2026, 11, 15, 23, 30, tzinfo=UTC)
-    greeting_n = prepare_greeting("Dan", dt_night, 1, 0, None)
-    assert greeting_n.startswith("Hello, Dan.")
-
-    # Blank name fallback
-    greeting_blank = prepare_greeting("   ", dt_morning, 0, 0, None)
-    assert greeting_blank.startswith("Good morning, there.")
-
-    # Compatibility alias check
-    assert run_prepare_greeting("Alice", dt_morning, 5, 10, "GATE CS") == greeting_m
+@db
+async def test_outside_usual_story_on_its_day(session: AsyncSession):
+    day = next(
+        NOW.date() + timedelta(days=i)
+        for i in range(10)
+        if outside_usual_day(NOW.date() + timedelta(days=i))
+    )
+    now = datetime.combine(day, time(7, 30), tzinfo=UTC)
+    session.add(Briefing(date=day, sent_at=now, items=[{"title": "t", "section": "science"}]))
+    session.add(Flashcard(front="f", back="b", source_kind="fact", due=now - timedelta(hours=1)))
+    await session.flush()
+    g = await run_prepare_greeting(session, now)
+    assert g is not None and [s.kind for s in g.suggestions] == ["due_cards", "outside_usual"]

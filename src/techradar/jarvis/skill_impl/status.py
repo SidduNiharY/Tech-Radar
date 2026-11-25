@@ -1,11 +1,30 @@
+"""Status skill: the same health text as the bot's /status; it only reads."""
+
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from datetime import datetime
 
-def speak_system_status(uptime_h: float, ok: bool) -> str:
-    """Produce spoken text for system health and uptime status."""
-    uptime_str = f"{uptime_h:.1f}" if uptime_h % 1 != 0 else f"{int(uptime_h)}"
-    hours_label = "hour" if uptime_h == 1.0 else "hours"
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-    if ok:
-        return f"All systems are operational. Uptime is {uptime_str} {hours_label}."
-    return f"System degradation detected. Uptime is {uptime_str} {hours_label}."
+from techradar.bot.render import render_status
+from techradar.jarvis.skill_impl.result import SkillReply
+from techradar.ops.status import check_disk_live, check_ollama_live, collect_status
+
+
+async def run(
+    session: AsyncSession,
+    now: datetime,
+    *,
+    check_ollama: Callable[[], Awaitable[list[str] | None]] = check_ollama_live,
+    check_disk: Callable[[], float] = check_disk_live,
+) -> SkillReply:
+    async def check_db() -> bool:
+        try:
+            return (await session.execute(text("SELECT 1"))).scalar() == 1
+        except Exception:
+            return False
+
+    status = await collect_status(check_db, check_ollama, check_disk)
+    return SkillReply(say=render_status(status).replace("\n", ". "))
