@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,8 +63,16 @@ class WeightProposal(BaseModel):
     """Proposed topic or source weight adjustment."""
 
     kind: Literal["topic", "source"]
-    key: str
+    key: str = Field(min_length=1, max_length=100)
     target: float = Field(ge=0.2, le=2.0)
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def _clean_key(cls, v: Any) -> Any:
+        """A key can come from news text: clean it as the proposal is built (SEC-48)."""
+        from techradar.feedback.weights import safe_key
+
+        return safe_key(v) if isinstance(v, str) else v
 
 
 class ContentProposal(BaseModel):

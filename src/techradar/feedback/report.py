@@ -32,6 +32,7 @@ from techradar.feedback.patterns import (
     find_patterns,
 )
 from techradar.feedback.rules import Pick, choose_and_word
+from techradar.feedback.weights import safe_key
 from techradar.llm.roles import Role
 from techradar.messaging.outbox import Button, enqueue_message
 
@@ -102,10 +103,11 @@ def describe(c: PatternCandidate) -> str:
     """What approving does, written from the stored proposal (not from the model's wording)."""
     p = c.proposal
     if isinstance(p, StyleProposal):
-        return f"Rule: {p.mode.value if p.mode else 'all modes'}: {p.field} = {p.value}"
+        mode = p.mode.value if p.mode else "all modes"
+        return f"Rule: {mode}: {safe_key(p.field)} = {safe_key(p.value)}"
     if isinstance(p, WeightProposal):
-        return f"Weight: {p.key} to {p.target}"
-    return f"Make: {p.kind.replace('_', ' ')} on {p.subject}"
+        return f"Weight: {safe_key(p.key)} to {p.target}"
+    return f"Make: {p.kind.replace('_', ' ')} on {safe_key(p.subject)}"
 
 
 def render_report(

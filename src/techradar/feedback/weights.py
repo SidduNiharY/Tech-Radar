@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -202,14 +203,31 @@ async def apply_signal(
     return log_ids
 
 
+_KEY_UNSAFE = re.compile(r"[^A-Za-z0-9 _:-]")
+_DOMAIN_UNSAFE = re.compile(r"[^a-z0-9.-]")
+
+
+def safe_key(key: str, limit: int = 100) -> str:
+    """A weight key that is safe to store and to show: no link, markup or sentence survives.
+
+    `source:` keys keep dots (a domain); every other key keeps letters, digits, spaces,
+    `_`, `-` and `:` only. The text of a key can come from news, so it is cleaned where the
+    key is built (SEC-48).
+    """
+    head, sep, tail = key.partition(":")
+    if head == "source" and sep:
+        return "source:" + _DOMAIN_UNSAFE.sub("", tail.strip().lower())[:80]
+    return " ".join(_KEY_UNSAFE.sub("", key).split())[:limit]
+
+
 def source_key(domain: str) -> str:
     """The weight key of a source: `source:<registrable domain>`."""
-    return f"source:{domain.strip().lower()}"
+    return safe_key(f"source:{domain}")
 
 
 def entity_key(entity: str) -> str:
     """The weight key of an entity: `entity:<normalised entity>`."""
-    return "entity:" + " ".join(entity.lower().split())[:80]
+    return safe_key("entity:" + " ".join(entity.lower().split())[:80])
 
 
 def story_topic_keys(section: str, entities: Sequence[str]) -> list[str]:

@@ -24,7 +24,7 @@ from techradar.feedback.patterns import (
     WeightProposal,
 )
 from techradar.feedback.rules import Pick, StyleField, StyleRule
-from techradar.feedback.weights import bounded
+from techradar.feedback.weights import bounded, safe_key
 from techradar.messaging.outbox import Button
 from techradar.planner.sessions import Goal
 
@@ -63,7 +63,7 @@ async def store_proposals(
         elif isinstance(prop, WeightProposal):
             mode, field, value = None, f"weight_{prop.kind}", prop.key[:200]
         else:
-            mode, field, value = None, f"content_{prop.kind}", _clean(prop.subject)
+            mode, field, value = None, f"content_{prop.kind}", safe_key(prop.subject, 120)
         row = PreferenceRule(
             mode=mode,
             field=field,
