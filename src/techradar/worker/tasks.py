@@ -65,10 +65,13 @@ from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
 from techradar.security.urls import load_allowlist
 from techradar.settings import Settings, get_settings
+from techradar.voice.jobs import VOICE_UNAVAILABLE_REPLY, cleanup_voice, mark_voice_unavailable
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
 from techradar.worker.names import (
+    ANALYSE_VOICE,
     CARDS,
+    CLEANUP_VOICE,
     GRAMMAR_SET,
     MAKE_CHAPTER_CARDS,
     MISTAKES_PAGE,
@@ -78,6 +81,7 @@ from techradar.worker.names import (
     PREDICTIONS_SYNC,
     QUIZ,
     SAVE_TAKE,
+    VOICE_QUEUE,
 )
 from techradar.world.econ import collect_official, load_official_domains
 from techradar.world.predictions import run_prediction_reminder, sync_predictions_vault
@@ -1099,3 +1103,49 @@ async def econ_collect_job(timestamp: int | None = None) -> None:
         stored = await collect_official(session, official)
         await session.commit()
     logger.info("economy series updated from official facts: %d", stored)
+
+
+# --- Phase 6: voice notes ------------------------------------------------------------
+# The bot stores the owner's voice note (voice/intake.py) and defers analyse_voice on the
+# `voice` queue. Transcription stays behind the Transcriber Protocol: faster-whisper, the
+# wav2vec2 phoneme model and Kokoro are not approved yet, so this server has no transcriber
+# and the job says so. The recording keeps its 24-hour limit either way.
+
+
+def _voice_models() -> None:
+    """The transcriber and phoneme model of this server: none until the owner approves them.
+
+    WIRING(claude): Phase 6 Task 2 builds them in the voice-worker image and returns them here;
+    then analyse_voice_job calls techradar.voice.jobs.analyse_voice with them.
+    """
+    return None
+
+
+@app.task(queue=VOICE_QUEUE, name=ANALYSE_VOICE)
+async def analyse_voice_job(session_id: int) -> None:
+    """Analyse one stored voice note, or tell the owner analysis is not installed yet."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        if _voice_models() is None:
+            if await mark_voice_unavailable(session, session_id):
+                await enqueue_message(
+                    session,
+                    chat_id=settings.telegram_owner_chat_id,
+                    text=VOICE_UNAVAILABLE_REPLY,
+                    purpose="voice_unavailable",
+                    ref_id=session_id,
+                )
+            await session.commit()
+            return
+
+
+@app.periodic(cron="20 * * * *")  # hourly
+@app.task(queue="io", queueing_lock="cleanup_voice_queued", name=CLEANUP_VOICE)
+async def cleanup_voice_job(timestamp: int | None = None) -> None:
+    """Delete voice recordings and spoken replies past their 24 hours, unless kept."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        removed = await cleanup_voice(
+            session, now=datetime.now(UTC), voice_dir=settings.data_dir / "voice"
+        )
+    logger.info("voice recordings deleted: %d", removed)

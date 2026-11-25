@@ -20,3 +20,10 @@ NIGHT_QUEUE = "night"
 
 # --- Phase 7 ---
 PREDICTIONS_SYNC = "predictions_sync_job"
+
+# --- Phase 6: voice notes ---
+# analyse_voice runs on the `voice` queue (one at a time: the future voice-worker serves it with
+# concurrency 1); the bot defers it by name on this queue.
+VOICE_QUEUE = "voice"
+ANALYSE_VOICE = "analyse_voice"
+CLEANUP_VOICE = "cleanup_voice_job"

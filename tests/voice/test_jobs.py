@@ -53,6 +53,7 @@ async def test_no_speech_reply(session: Any, tmp_path: Path) -> None:
             completer=FakeCompleter([]),
             outbox=outbox,
             voice_dir=tmp_path,
+            probe=lambda _p: None,  # the dummy bytes are not a real Ogg file
         )
 
     assert outbox.texts == ["I couldn't hear speech in that note."]
@@ -96,6 +97,7 @@ async def test_audio_deleted_after_24h_unless_kept(session: Any, tmp_path: Path)
             completer=FakeCompleter([]),
             outbox=FakeOutbox(),
             voice_dir=tmp_path,
+            probe=lambda _p: None,  # the dummy bytes are not a real Ogg file
         )
 
     assert audio_file.exists()

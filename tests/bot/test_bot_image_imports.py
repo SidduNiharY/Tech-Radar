@@ -1,5 +1,5 @@
 """The intake doors load in the bot image, which has only python-telegram-bot on top of the core
-packages: no numpy, tldextract, jinja2, litellm or trafilatura (Phase 3 Task 3).
+packages: no numpy, tldextract, jinja2, litellm or trafilatura (Phase 3 Task 3, Phase 6 Task 1).
 """
 
 from __future__ import annotations
@@ -18,7 +18,9 @@ SRC = Path(__file__).resolve().parents[2] / "src"
     "module",
     [
         "techradar.bot.intake",
+        "techradar.bot.voice_intake",
         "techradar.bot.routing",
+        "techradar.voice.intake",
         "techradar.intake.owner_files",
     ],
 )

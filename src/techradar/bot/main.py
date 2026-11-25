@@ -11,7 +11,15 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from telegram import Document, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    Audio,
+    Document,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+    VideoNote,
+    Voice,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -39,6 +47,7 @@ from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.reply_target import find_reply_target
 from techradar.bot.routing import route_update
 from techradar.bot.take_reply import handle_take
+from techradar.bot.voice_intake import handle_voice
 from techradar.db.engine import make_session_factory
 from techradar.library.quarantine import quarantine_listing
 from techradar.logs import configure_logging
@@ -50,6 +59,7 @@ from techradar.ops.status import (
     collect_status,
 )
 from techradar.settings import get_settings, read_secret
+from techradar.voice.intake import NOT_VOICE_REPLY
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +83,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             logger.exception("could not take a document from the owner")
             await update.message.reply_text(NOT_SAVED_REPLY)
+        return
+
+    # --- Phase 6 Task 1: a voice note is checked before any download, owner only (SEC-26) ---
+    message = update.message
+    if isinstance(getattr(message, "voice", None), Voice):
+        if not is_owner_message(update, settings.telegram_owner_chat_id):
+            logger.warning("ignored a voice note from chat %s", chat_id)
+            return
+        try:
+            await handle_voice(update, context)
+        except Exception:
+            logger.exception("could not take a voice note from the owner")
+            await message.reply_text(NOT_SAVED_REPLY)
+        return
+    if isinstance(getattr(message, "audio", None), Audio) or isinstance(
+        getattr(message, "video_note", None), VideoNote
+    ):  # only voice notes are analysed; nothing else is downloaded
+        if is_owner_message(update, settings.telegram_owner_chat_id):
+            await message.reply_text(NOT_VOICE_REPLY)
         return
 
     # A reply to a Ready message asks that book. Only the owner's own chat is looked up, and
@@ -262,6 +291,8 @@ async def post_init(application: Application) -> None:
     # --- Phase 3 Task 3: the bot's private drop folder for owner PDFs and pasted notes. The
     # worker's owner_file job moves them into raw/; the bot never mounts raw/ or parse-jobs/.
     application.bot_data["owner_in_dir"] = settings.data_dir / "telegram-in"
+    # --- Phase 6 Task 1: voice notes are saved in data/voice/in (the bot's only voice mount)
+    application.bot_data["voice_dir"] = settings.data_dir / "voice"
 
     try:
         from procrastinate import App, PsycopgConnector
