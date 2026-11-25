@@ -24,6 +24,13 @@ from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
 from techradar.bot.drill import start_drill
 from techradar.bot.econ import handle_econ
+from techradar.bot.english_commands import (
+    handle_essay_reply,
+    handle_polish,
+    handle_reflection_reply,
+    handle_story,
+    story_is_open,
+)
 from techradar.bot.packs_command import packs_reply
 from techradar.bot.planner_commands import handle_planner_command
 from techradar.bot.practice_commands import COMMAND_JOBS, handle_inbox, handle_practice_command
@@ -89,6 +96,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             logger.exception("could not look up the prediction reminder")
 
+    # --- Phase 6: is a /story draft open? (the owner's own chat only) ---
+    story_open = False
+    if chat_id == settings.telegram_owner_chat_id and text and not text.startswith("/"):
+        try:
+            story_open = await story_is_open(context.application.bot_data, chat_id)
+        except Exception:
+            logger.exception("could not look up the story draft")
+
     routed = route_update(
         chat_id=chat_id,
         text=text,
@@ -100,6 +115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         prediction_message_ids=(
             frozenset({reply_id}) if prediction_id and reply_id else frozenset()
         ),
+        story_open=story_open,
     )
 
     if routed.action == "ignore":
@@ -183,6 +199,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if routed.action == "econ":
         await handle_econ(update, context.application.bot_data, routed.arg)
         return
+
+    # --- Phase 6: English practice (the router allows the owner's own chat only) ---
+    if routed.action == "polish":
+        await handle_polish(update, context.application.bot_data, routed.arg)
+        return
+    if routed.action == "story":
+        await handle_story(update, context.application.bot_data, chat_id, None)
+        return
+    if routed.action == "story_reply":
+        await handle_story(update, context.application.bot_data, chat_id, routed.arg)
+        return
+    if routed.action == "essay_reply" and reply_ref is not None:
+        await handle_essay_reply(update, context.application.bot_data, reply_ref, routed.arg)
+        return
+    if routed.action == "reflection_reply":
+        await handle_reflection_reply(update, context.application.bot_data, routed.arg)
+        return
+    # --- end Phase 6 ---
 
     if routed.action == "predict":
         today = datetime.now(ZoneInfo(settings.tz)).date()

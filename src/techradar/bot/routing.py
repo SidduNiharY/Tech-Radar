@@ -33,6 +33,12 @@ Action = Literal[
     "stop",
     "skill",
     "drill",  # Phase 8
+    # --- Phase 6: English practice ---
+    "polish",
+    "story",
+    "story_reply",
+    "essay_reply",
+    "reflection_reply",
 ]
 
 
@@ -54,6 +60,7 @@ def route_update(
     reply_to_purpose: str | None = None,
     reply_to_ref: int | None = None,
     prediction_message_ids: Set[int] = frozenset(),
+    story_open: bool = False,
 ) -> Routed:
     """Route an incoming Telegram message.
 
@@ -124,6 +131,12 @@ def route_update(
         if chat_id != owner_id:
             return Routed("ignore")
         return Routed("predict", cleaned[len(words[0]) :].strip())
+    # --- Phase 6: English practice is the owner's own, never a study group's (SEC-26) ---
+    if cmd in ("/polish", "/story"):
+        if chat_id != owner_id:
+            return Routed("ignore")
+        return Routed(cmd[1:], cleaned[len(words[0]) :].strip())  # type: ignore[arg-type]
+    # --- end Phase 6 ---
     if cmd == "/quarantine":
         # Releasing held files is the owner's alone, never a study group's (SEC-14).
         return Routed("quarantine") if chat_id == owner_id else Routed("ignore")
@@ -146,6 +159,15 @@ def route_update(
         # "My take": one line in reply to a briefing message. Owner's own chat only.
         return Routed("take", cleaned)
 
+    # --- Phase 6: replies to the essay prompt and the reflection prompt; a plain message while
+    # a /story draft is open. Owner's own chat only. ---
+    if not cmd.startswith("/") and chat_id == owner_id:
+        if reply_to_purpose == "essay" and reply_to_ref is not None:
+            return Routed("essay_reply", cleaned)
+        if reply_to_purpose == "reflection":
+            return Routed("reflection_reply", cleaned)
+    # --- end Phase 6 ---
+
     if (
         not cmd.startswith("/")
         and chat_id == owner_id
@@ -155,5 +177,8 @@ def route_update(
         # Replying to a Ready message asks that book. Owner's own chat only: the Ready message
         # is sent nowhere else.
         return Routed("ask_book", cleaned)
+
+    if not cmd.startswith("/") and chat_id == owner_id and story_open:  # --- Phase 6 ---
+        return Routed("story_reply", cleaned)
 
     return Routed("ignore")
