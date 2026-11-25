@@ -59,15 +59,19 @@ def _scope(doc_id: int | None) -> dict[str, Any]:
 
 async def _profile_for(
     session_factory: async_sessionmaker[AsyncSession], question: str, doc_id: int | None
-) -> tuple[str | None, str | None]:
-    """(profile block, mode) for the owner's question. Never blocks an answer (Phase 11)."""
+) -> tuple[str | None, str | None, list[str]]:
+    """(system block, mode, mastered topic names) for the owner's question (Phase 11).
+
+    Never blocks an answer. The names are untrusted: they go to the user prompt only.
+    """
     try:
         async with session_factory() as session:
             mode = await mode_of_doc(session, doc_id)
-            return await build_profile(session, question, mode), mode.value
+            block, known = await build_profile(session, question, mode)
+            return block, mode.value, known
     except Exception:
         logger.exception("could not build the profile block; answering without it")
-        return None, None
+        return None, None, []
 
 
 async def _deliver(
@@ -122,20 +126,21 @@ async def run_ask(
         return
     scope = _scope(doc_id)
     profile: str | None = None
+    known: list[str] = []
     if chat_id == owner_chat_id:
         # --- Phase 11: my preferences shape the owner's answers only, never a study group's;
         # the ask is logged (a follow-up within 10 minutes of my last answer is noted) ---
-        profile, mode = await _profile_for(session_factory, question, doc_id)
+        profile, mode, known = await _profile_for(session_factory, question, doc_id)
         async with session_factory() as session:
             await note_ask(
                 session, chat_id=chat_id, question=question, mode=mode, now=datetime.now(UTC)
             )
             await session.commit()
-    answer = await answer_question(question, deps, **scope, profile=profile)
+    answer = await answer_question(question, deps, **scope, profile=profile, known_topics=known)
     if answer.status == "needs_review" and "too_long" not in answer.flags:
         # one more try, searching with rewritten queries and the neighbouring chunks
         answer = await answer_question(
-            question, deps, **scope, rewrite=True, expand=True, profile=profile
+            question, deps, **scope, rewrite=True, expand=True, profile=profile, known_topics=known
         )
     if chat_id == owner_chat_id and is_hard(answer):
         try:
@@ -187,11 +192,20 @@ async def run_web_ask(
     scope = _scope(doc_id)
     f = RetrieveFilters(verified_only=True) if verified_only else None
     try:
-        profile = (await _profile_for(session_factory, question, doc_id))[0]  # Phase 11
-        answer = await answer_question(question, deps, f=f, **scope, profile=profile)
+        profile, _, known = await _profile_for(session_factory, question, doc_id)  # Phase 11
+        answer = await answer_question(
+            question, deps, f=f, **scope, profile=profile, known_topics=known
+        )
         if answer.status == "needs_review" and "too_long" not in answer.flags:
             answer = await answer_question(
-                question, deps, f=f, **scope, rewrite=True, expand=True, profile=profile
+                question,
+                deps,
+                f=f,
+                **scope,
+                rewrite=True,
+                expand=True,
+                profile=profile,
+                known_topics=known,
             )
     except Exception:
         await _fill_web_answer(session_factory, row_id, None)
@@ -235,7 +249,7 @@ async def run_night_ask(
     if not valid_ask_args(question, doc_id, deps.settings.max_question_chars):
         logger.warning("night ask job dropped: invalid arguments")
         return
-    profile = (await _profile_for(session_factory, question, doc_id))[0]  # Phase 11
+    profile, _, known = await _profile_for(session_factory, question, doc_id)  # Phase 11
     answer = await answer_question(
         question,
         deps,
@@ -244,5 +258,6 @@ async def run_night_ask(
         rewrite=True,
         expand=True,
         profile=profile,
+        known_topics=known,
     )
     await _deliver(session_factory, owner_chat_id, question, answer)

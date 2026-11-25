@@ -37,16 +37,37 @@ def mastery_level(
     return "learning"
 
 
+KNOWN_TOPICS_LINE = (
+    "I already know some topics in this question well, so skip their basics. "
+    "The topics are listed in the question between the UNTRUSTED markers."
+)
+
+
+def clean_topic(topic: str) -> str:
+    """A topic name on one line without control or invisible characters, cut to 120.
+
+    Topic names come from book and chapter titles, which come from files: untrusted text.
+    """
+    from techradar.security.text import sanitize_text
+
+    return " ".join(sanitize_text(topic).split())[:120]
+
+
+def mastered_topics(levels: Mapping[str, Level], topics_in_question: Sequence[str]) -> list[str]:
+    """The cleaned names of the mastered topics the question is about (data, never a prompt)."""
+    names = [clean_topic(t) for t in topics_in_question if levels.get(t) == "mastered"]
+    return [n for n in names if n]
+
+
 def mastery_line(
     levels: Mapping[str, Level],
     topics_in_question: Sequence[str],
 ) -> str | None:
-    """Generate prompt skip-basics guidance line for mastered topics."""
-    mastered = [t for t in topics_in_question if levels.get(t) == "mastered"]
-    if not mastered:
-        return None
-    joined = ", ".join(mastered)
-    return f"I already know these well, so skip their basics: {joined}."
+    """A fixed system-prompt line, or None. It never contains a topic name (SEC-17, SEC-48).
+
+    The names go in the user prompt between UNTRUSTED markers (see `rag.answer`).
+    """
+    return KNOWN_TOPICS_LINE if mastered_topics(levels, topics_in_question) else None
 
 
 # --- Phase 11 Task 7: the nightly mastery job -----------------------------------------------

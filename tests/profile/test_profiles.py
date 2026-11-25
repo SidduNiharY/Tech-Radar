@@ -6,7 +6,7 @@ import re
 
 from techradar.feedback.patterns import Mode
 from techradar.feedback.rules import StyleRule
-from techradar.profile.mastery import mastery_level, mastery_line
+from techradar.profile.mastery import KNOWN_TOPICS_LINE, mastery_level, mastery_line
 from techradar.profile.setup import parse_setup_choice, setup_buttons
 from techradar.profile.style import INVARIANT_LINE, mode_for, render_profile_block
 
@@ -53,7 +53,7 @@ def test_mastery_line():
     """Verify mastery skip-basics guidance line for mastered topics only."""
     levels = {"algorithms": "mastered", "graphs": "exam_ready", "sorting": "mastered"}
     line = mastery_line(levels, ["algorithms", "graphs"])
-    assert line == "I already know these well, so skip their basics: algorithms."
+    assert line == KNOWN_TOPICS_LINE and "algorithms" not in line  # names never in the system line
 
     line_none = mastery_line(levels, ["graphs", "heaps"])
     assert line_none is None
