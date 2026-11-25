@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 import yaml
 from procrastinate import RetryStrategy
 from procrastinate import exceptions as procrastinate_exceptions
@@ -20,6 +21,15 @@ from techradar.briefing.takes import save_take
 from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
+from techradar.english.grammar_check import LanguageToolClient
+from techradar.english.jobs import (
+    run_essay_prompt,
+    run_essay_reply,
+    run_polish,
+    run_reading_quiz,
+    run_reflection_prompt,
+)
+from techradar.english.reflection import save_reflection
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
@@ -38,6 +48,7 @@ from techradar.night.glossary import run_glossary
 from techradar.night.timelines import run_timelines
 from techradar.night.window import in_night_window, next_window_start, night_only
 from techradar.ops.alerts import alert_on_failure
+from techradar.ops.gpu import free_gpu
 from techradar.ops.health import read_backup_status, run_health_checks
 from techradar.ops.status import check_disk_live, check_ollama_live
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
@@ -63,16 +74,22 @@ from techradar.rag.indexer import (
 from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
+from techradar.voice.engines import NOT_SET_UP_TEXT, EnginesNotApproved, load_engines
+from techradar.voice.practice_time import run_english_reminder
+from techradar.voice.retention import cleanup_voice
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
 from techradar.worker.names import (
     CARDS,
+    ESSAY_REPLY,
     GRAMMAR_SET,
     MAKE_CHAPTER_CARDS,
     MISTAKES_PAGE,
     NIGHT_QUEUE,
+    POLISH,
     PREDICTIONS_SYNC,
     QUIZ,
+    REFLECTION_SAVE,
     SAVE_TAKE,
 )
 from techradar.world.econ import collect_official, load_official_domains
@@ -1168,3 +1185,159 @@ async def greeting_job(timestamp: int | None = None) -> None:  # periodic: gets 
         await session.commit()
     if greeting is not None:
         logger.info("jarvis greeting stored with %d suggestions", len(greeting.suggestions))
+
+
+# --- Phase 6: Voice Coach and English practice -------------------------------------
+# Thin wrappers over `english.jobs`. LanguageTool is the owner-only container behind
+# `LanguageToolClient`; when it is down feedback goes on without grammar issues.
+
+
+@app.task(queue="llm", name=POLISH)
+async def polish_job(text: str) -> None:
+    """`/polish`: improve a short text and send the feedback."""
+    settings = _get_settings()
+    async with (
+        httpx.AsyncClient(timeout=10.0) as http,
+        make_session_factory("app", settings)() as session,
+    ):
+        await run_polish(
+            session,
+            text,
+            owner_chat_id=settings.telegram_owner_chat_id,
+            lt=LanguageToolClient(http, settings.languagetool_url),
+            completer=_completer(),
+        )
+        await session.commit()
+
+
+@app.task(queue="llm", name=ESSAY_REPLY)
+async def essay_reply_job(ref_id: int, text: str, timed: bool = False) -> None:
+    """Feedback with a rubric for a reply to the weekly essay or letter prompt."""
+    settings = _get_settings()
+    async with (
+        httpx.AsyncClient(timeout=10.0) as http,
+        make_session_factory("app", settings)() as session,
+    ):
+        await run_essay_reply(
+            session,
+            text,
+            ref_id=ref_id,
+            timed=timed,
+            owner_chat_id=settings.telegram_owner_chat_id,
+            lt=LanguageToolClient(http, settings.languagetool_url),
+            completer=_completer(),
+        )
+        await session.commit()
+
+
+@app.periodic(cron="30 4 * * 6")  # Saturday 10:00 Asia/Kolkata
+@app.task(queue="io", queueing_lock="essay_prompt_queued", name="essay_prompt_job")
+async def essay_prompt_job(timestamp: int | None = None) -> None:
+    """Send the week's essay or letter prompt."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_essay_prompt(
+            session,
+            _local_now().date(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            vault_root=settings.data_dir / "vault",
+        )
+        await session.commit()
+
+
+@app.periodic(cron="30 12 * * 5")  # Friday 18:00 Asia/Kolkata
+@app.task(queue="llm", queueing_lock="reading_quiz_queued", name="reading_quiz_job")
+async def reading_quiz_job(timestamp: int | None = None) -> None:
+    """Send a five-question reading quiz from one recent note."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_reading_quiz(
+            session,
+            _local_now().date(),
+            owner_chat_id=settings.telegram_owner_chat_id,
+            vault_root=settings.data_dir / "vault",
+            completer=_completer(),
+        )
+        await session.commit()
+
+
+@app.periodic(cron="30 14 * * 0")  # Sunday 20:00 Asia/Kolkata
+@app.task(queue="io", queueing_lock="reflection_prompt_queued", name="reflection_prompt_job")
+async def reflection_prompt_job(timestamp: int | None = None) -> None:
+    """Ask the weekly reflection question."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_reflection_prompt(session, owner_chat_id=settings.telegram_owner_chat_id)
+        await session.commit()
+
+
+@app.task(queue="io", name=REFLECTION_SAVE)
+async def reflection_save_job(text: str) -> None:
+    """Save the owner's reply to the reflection prompt (database and reflections/<week>.md)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await save_reflection(session, _local_now().date(), text, settings.data_dir / "vault")
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="io", queueing_lock="english_reminder_queued", name="english_reminder_job")
+async def english_reminder_job(timestamp: int | None = None) -> None:
+    """Remind the owner to practise English at the chosen time (off unless a time is set)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_english_reminder(
+            session, _local_now(), owner_chat_id=settings.telegram_owner_chat_id
+        )
+        await session.commit()
+
+
+@app.task(queue="voice", name="analyse_voice")
+async def analyse_voice_job(session_id: int) -> None:
+    """Analyse one voice note (queue `voice`, concurrency 1: one note at a time on the GPU).
+
+    The intake (Phase 6 Task 1) defers this by name. The engines load only in the voice-worker
+    image; until they are approved the owner is told the feature is not set up.
+    """
+    # Imported here: voice.jobs needs numpy, which only the voice-worker image is sure to have.
+    from techradar.voice.jobs import EnqueueOutbox, analyse_voice, mark_not_set_up
+
+    settings = _get_settings()
+    voice_dir = settings.data_dir / "voice"
+    async with (
+        httpx.AsyncClient(timeout=10.0) as http,
+        make_session_factory("app", settings)() as session,
+    ):
+        outbox = EnqueueOutbox(session, settings.telegram_owner_chat_id)
+        try:
+            engines = load_engines(Path("/opt/models"))
+        except EnginesNotApproved:
+            await mark_not_set_up(session, session_id, outbox, NOT_SET_UP_TEXT)
+            await session.commit()
+            return
+
+        async def free() -> None:
+            await free_gpu(http, settings.ollama_base_url)
+
+        await analyse_voice(
+            session,
+            session_id,
+            transcriber=engines.transcriber,
+            phoneme_model=engines.phoneme_model,
+            completer=_completer(),
+            speaker=engines.speaker,
+            outbox=outbox,
+            grammar=LanguageToolClient(http, settings.languagetool_url),
+            voice_dir=voice_dir,
+            free_gpu_fn=free,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="10 * * * *")
+@app.task(queue="io", queueing_lock="cleanup_voice_queued", name="cleanup_voice_job")
+async def cleanup_voice_job(timestamp: int | None = None) -> None:
+    """Hourly: delete voice audio and spoken replies older than 24 hours unless kept."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        cleaned = await cleanup_voice(session, voice_dir=settings.data_dir / "voice")
+    logger.info("voice recordings deleted: %d", cleaned)

@@ -17,3 +17,8 @@ NIGHT_QUEUE = "night"
 
 # --- Phase 7 ---
 PREDICTIONS_SYNC = "predictions_sync_job"
+
+# --- Phase 6 ---
+POLISH = "polish_job"
+ESSAY_REPLY = "essay_reply_job"
+REFLECTION_SAVE = "reflection_save_job"

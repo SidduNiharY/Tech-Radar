@@ -104,6 +104,8 @@ class Settings(BaseSettings):
     final30_reviews: int = 80
     night_start: str = "01:00"
     night_end: str = "05:00"
+    # Phase 6: the LanguageTool container (owner-only, `tools` network; no internet).
+    languagetool_url: str = "http://languagetool:8010"
 
     @field_validator("index_skip", mode="before")
     @classmethod
