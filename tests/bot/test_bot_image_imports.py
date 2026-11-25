@@ -24,6 +24,8 @@ SRC = Path(__file__).resolve().parents[2] / "src"
         "techradar.intake.owner_files",
         "techradar.voice.retention",
         "techradar.bot.voice_callbacks",
+        "techradar.bot.main",  # the bot process itself must start in its image
+        "techradar.bot.callbacks",
     ],
 )
 def test_intake_modules_import_without_worker_packages(module: str) -> None:

@@ -8,7 +8,6 @@ from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-import jinja2
 import yaml
 from pydantic import BaseModel, ConfigDict
 
@@ -105,6 +104,8 @@ def note_rel_path(published: date, title: str, taken: set[str]) -> PurePosixPath
 
 def render_story(note: StoryNote) -> str:
     """Render StoryNote to Markdown through story.md.j2 template."""
+    import jinja2  # here, not at the top: the bot image imports slugify/write_note, not jinja2
+
     front_matter_data = {
         "kind": "news",
         "cluster_id": note.cluster_id,

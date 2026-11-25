@@ -1,21 +1,5 @@
-from __future__ import annotations
+"""Library: books, videos and notes the owner adds (Phase 2c).
 
-from techradar.library.inbox import (
-    MIME_TO_KIND,
-    InboxFile,
-    IntakeDecision,
-    LibraryKind,
-    classify,
-    plan_library_intake,
-    stable_files,
-)
-
-__all__ = [
-    "MIME_TO_KIND",
-    "InboxFile",
-    "IntakeDecision",
-    "LibraryKind",
-    "classify",
-    "plan_library_intake",
-    "stable_files",
-]
+Import the submodules directly. This package imports nothing, so the bot image (which lacks
+tldextract, jinja2, numpy and friends) can import a light submodule without the heavy ones.
+"""

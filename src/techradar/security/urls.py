@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import functools
 import ipaddress
 import urllib.parse
 from pathlib import Path
-from typing import Literal, Protocol
-
-import tldextract
+from typing import Any, Literal, Protocol
 
 UrlRejectReason = Literal[
     "scheme",
@@ -25,7 +24,18 @@ class UrlRejected(Exception):
         self.reason: UrlRejectReason = reason
 
 
-_SHARED_EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
+@functools.cache
+def _extractor() -> Any:
+    """The offline public-suffix extractor (no list download), built on first use.
+
+    tldextract is imported here, not at the top, so the bot image (which does not ship it) can
+    import modules that only need the other helpers in this file.
+    """
+    import tldextract
+
+    return tldextract.TLDExtract(suffix_list_urls=())
+
+
 _CARRIER_GRADE_NAT = ipaddress.ip_network("100.64.0.0/10")
 
 
@@ -135,7 +145,7 @@ async def check_resolved(host: str, resolver: Resolver) -> None:
 
 def registrable_domain(host: str) -> str:
     """Extract registrable domain using offline public suffix list snapshot."""
-    extracted = _SHARED_EXTRACTOR(host)
+    extracted = _extractor()(host)
     if hasattr(extracted, "top_domain_under_public_suffix"):
         domain = extracted.top_domain_under_public_suffix
     else:
