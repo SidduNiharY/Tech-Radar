@@ -2,10 +2,17 @@
 
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from techradar.db.models import Item, TrendCount
+from techradar.messaging.outbox import enqueue_message
 
 
 class TopicTrend(BaseModel):
@@ -88,6 +95,102 @@ def rising(
 
     results.sort(key=lambda item: (item.ratio, item.today), reverse=True)
     return results[:3]
+
+
+RISING_PURPOSE = "rising"
+HISTORY_DAYS = 14
+
+
+def extract_terms(reader_json: object) -> list[str]:
+    """The distinct normalised entities of one processed item (`reader_json["entities"]`)."""
+    if not isinstance(reader_json, dict):
+        return []
+    entities = reader_json.get("entities")
+    if not isinstance(entities, list):
+        return []
+    seen: dict[str, None] = {}
+    for entity in entities:
+        if not isinstance(entity, str) or len(entity) > 80:
+            continue
+        term = normalise_term(entity)
+        if term:
+            seen[term] = None
+    return list(seen)
+
+
+def render_rising(r: Rising) -> str:
+    """The Telegram card text for one rising term."""
+    term = r.term[:1].upper() + r.term[1:]
+    return f"🔥 Rising fast: {term}, {r.today} mentions today vs about {r.baseline:g}/day usually."
+
+
+def why_question(term: str) -> str:
+    """The question the "Why is everyone talking about this?" button asks."""
+    return f"Why is everyone talking about {term} this week?"
+
+
+def why_since(today: date) -> date:
+    """Retrieval window for that question: the last 7 days (`RetrieveFilters.since`)."""
+    return today - timedelta(days=7)
+
+
+async def count_day(session: AsyncSession, day: date, tz: str) -> int:
+    """Rebuild `trend_counts` for local `day` from the items processed that day.
+
+    A term counts once per item. Safe to run again: the day's rows are replaced.
+    """
+    zone = ZoneInfo(tz)
+    start = datetime.combine(day, datetime.min.time(), tzinfo=zone)
+    end = start + timedelta(days=1)
+    rows = await session.execute(
+        select(Item.reader_json).where(
+            Item.status == "done",
+            Item.processed_at >= start,
+            Item.processed_at < end,
+            Item.reader_json.is_not(None),
+        )
+    )
+    counts: Counter[str] = Counter()
+    for (reader_json,) in rows:
+        counts.update(extract_terms(reader_json))
+    await session.execute(delete(TrendCount).where(TrendCount.day == day))
+    for term, count in counts.items():
+        session.add(TrendCount(day=day, term=term, count=count))
+    await session.flush()
+    return len(counts)
+
+
+async def run_trends(session: AsyncSession, today: date, owner_chat_id: int) -> int:
+    """Queue one "Rising fast" message per rising term; returns how many were queued.
+
+    Reads `trend_counts` only. The history is zero-filled for days with no row.
+    WIRING(claude, later): the `Why is everyone talking about this?` button needs a callback
+    in `bot/callbacks.py`; it would run the ask job with `why_question(term)` and
+    `RetrieveFilters(since=why_since(today))`. Callback data must be numeric, so a trend id
+    (or a short term table) is needed first.
+    """
+    today_rows = (
+        await session.execute(
+            select(TrendCount.term, TrendCount.count).where(TrendCount.day == today)
+        )
+    ).all()
+    today_counts = {term: count for term, count in today_rows}
+    if not today_counts:
+        return 0
+    first = today - timedelta(days=HISTORY_DAYS)
+    hist_rows = await session.execute(
+        select(TrendCount.term, TrendCount.day, TrendCount.count).where(
+            TrendCount.day >= first, TrendCount.day < today, TrendCount.term.in_(list(today_counts))
+        )
+    )
+    history: dict[str, list[int]] = {t: [0] * HISTORY_DAYS for t in today_counts}
+    for term, day, count in hist_rows:
+        history[term][(day - first).days] = count
+    sent = 0
+    for r in rising(today_counts, history, days=HISTORY_DAYS):
+        await enqueue_message(session, owner_chat_id, render_rising(r), purpose=RISING_PURPOSE)
+        sent += 1
+    return sent
 
 
 def rank_emerging_topics(

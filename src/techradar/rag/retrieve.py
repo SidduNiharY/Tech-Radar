@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 
 from pydantic import BaseModel
 from sqlalchemy import Select, func, select
@@ -44,6 +45,7 @@ class RetrieveFilters(BaseModel):
     exam_tags: list[str] | None = None
     verified_only: bool = False
     include_generated: bool = False
+    since: date | None = None  # only chunks indexed on or after this day (Phase 10 trends)
 
 
 @dataclass
@@ -86,6 +88,8 @@ def _apply_filters(
         stmt = stmt.where(Chunk.doc_kind.in_(f.kinds))
     if f.exam_tags:
         stmt = stmt.where(Chunk.exam_tags.overlap(f.exam_tags))
+    if f.since is not None:
+        stmt = stmt.where(Chunk.indexed_at >= f.since)
     return stmt
 
 

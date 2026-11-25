@@ -1127,3 +1127,22 @@ async def digest_job(timestamp: int | None = None) -> None:
         )
         await session.commit()
     logger.info("release digest sent")
+
+
+@app.periodic(cron="30 14 * * *")  # daily 14:30 UTC = 20:00 IST
+@app.task(queue="io", queueing_lock="trends_queued", name="trends_job")
+async def trends_job(timestamp: int | None = None) -> None:
+    """Daily 20:00: count today's terms from processed items, then send "Rising fast" cards.
+
+    Local only: it reads items the pipeline already stored and fetches nothing.
+    """
+    from techradar.digest.trends import count_day, run_trends
+
+    settings = _get_settings()
+    today = datetime.now(UTC).astimezone(ZoneInfo(settings.tz)).date()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        terms = await count_day(session, today, settings.tz)
+        sent = await run_trends(session, today, settings.telegram_owner_chat_id)
+        await session.commit()
+    logger.info("trends: %d terms counted, %d rising sent", terms, sent)
