@@ -32,6 +32,7 @@ from techradar.bot.predict import find_prediction, handle_predict, handle_predic
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.reply_target import find_reply_target
 from techradar.bot.routing import route_update
+from techradar.bot.setup_command import handle_setup
 from techradar.bot.take_reply import handle_take
 from techradar.db.engine import make_session_factory
 from techradar.library.quarantine import quarantine_listing
@@ -151,6 +152,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # --- Phase 11: the router allows it from the owner's own chat only ---
     if routed.action == "improvements":
         await handle_improvements(update, context.application.bot_data)
+        return
+    if routed.action == "setup":
+        await handle_setup(update, context.application.bot_data)
         return
 
     if routed.action == "packs":  # the router allows it from the owner's own chat only

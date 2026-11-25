@@ -132,11 +132,9 @@ def _prompt(hits: Sequence[Hit], question: str) -> str:
     return f"{build_context(hits)}\n\nQuestion: {question}"
 
 
-def _context_tokens(question: str) -> int:
+def _context_tokens(question: str, system: str = ANSWER_SYSTEM) -> int:
     """Tokens the excerpts may use once the system prompt, question and answer are counted."""
-    room = context_budget(
-        max_tokens=ANSWER_MAX_TOKENS, system_tokens=conservative_tokens(ANSWER_SYSTEM)
-    )
+    room = context_budget(max_tokens=ANSWER_MAX_TOKENS, system_tokens=conservative_tokens(system))
     overhead = conservative_tokens(_prompt([], question))
     return min(ANSWER_CONTEXT_TOKENS, room - overhead)
 
@@ -172,6 +170,7 @@ async def answer_question(
     rewrite: bool = False,
     expand: bool = False,
     require_doc_id: bool = False,
+    profile: str | None = None,
 ) -> Answer:
     """Answer question grounded in retrieved notes with strict citation enforcement.
 
@@ -180,7 +179,15 @@ async def answer_question(
     adds the neighbouring chunks of each hit. Either way at most 6 excerpts are sent, within a
     token budget that keeps the whole request inside the model context. require_doc_id (book
     questions) makes a missing doc_id an error instead of a search of every note.
+
+    profile (Phase 11): the rendered "My preferences" block and mastery line, built only from
+    fixed templates (profile/style.py). It joins the system prompt and changes the form only;
+    the citation checks below run exactly as before.
     """
+    system = ANSWER_SYSTEM if not profile else f"{ANSWER_SYSTEM}\n\n{profile}"
+    # WIRING(claude): liked answers as style examples (profile/examples.py, wrapped with
+    # wrap_untrusted and introduced by "These are examples of the answer style I like...") go
+    # here, after the profile block and before the excerpts.
     # Scope checks come first: before any model call (the rewrite) or search.
     check_doc_id(doc_id)
     if require_doc_id and doc_id is None:
@@ -213,7 +220,7 @@ async def answer_question(
             used_unverified=False,
             flags=[LOW_CONFIDENCE] if near else [],
         )
-    budget = _context_tokens(sanitized)
+    budget = _context_tokens(sanitized, system)
     top = hits[0]
     if expand:
         # The relevance decision above is made on the real hits; neighbours only add context.
@@ -226,7 +233,7 @@ async def answer_question(
 
     # 3. Request LLM completion; the prompt is re-checked against the whole context.
     prompt = _prompt(hits, sanitized)
-    while not prompt_fits(ANSWER_SYSTEM, prompt, max_tokens=ANSWER_MAX_TOKENS):
+    while not prompt_fits(system, prompt, max_tokens=ANSWER_MAX_TOKENS):
         if len(hits) > 1:
             hits = hits[:-1]
         elif budget > 0:
@@ -245,7 +252,7 @@ async def answer_question(
         draft = await complete_json(
             deps.completer,
             role,
-            ANSWER_SYSTEM,
+            system,
             prompt,
             AnswerDraft,
             max_tokens=ANSWER_MAX_TOKENS,

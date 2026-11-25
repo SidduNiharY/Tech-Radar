@@ -28,6 +28,7 @@ from techradar.feedback.actions import note_ask
 from techradar.feedback.signals import TargetKind, feedback_buttons
 from techradar.llm.roles import Role
 from techradar.messaging.outbox import Button, enqueue_message
+from techradar.profile.style import build_profile, mode_of_doc
 from techradar.rag.answer import LOW_CONFIDENCE, Answer, answer_question
 from techradar.rag.retrieve import RagDeps, RetrieveFilters
 
@@ -54,6 +55,19 @@ def is_hard(answer: Answer) -> bool:
 
 def _scope(doc_id: int | None) -> dict[str, Any]:
     return {"doc_id": doc_id, "require_doc_id": doc_id is not None}
+
+
+async def _profile_for(
+    session_factory: async_sessionmaker[AsyncSession], question: str, doc_id: int | None
+) -> tuple[str | None, str | None]:
+    """(profile block, mode) for the owner's question. Never blocks an answer (Phase 11)."""
+    try:
+        async with session_factory() as session:
+            mode = await mode_of_doc(session, doc_id)
+            return await build_profile(session, question, mode), mode.value
+    except Exception:
+        logger.exception("could not build the profile block; answering without it")
+        return None, None
 
 
 async def _deliver(
@@ -107,16 +121,22 @@ async def run_ask(
         logger.warning("ask job dropped: invalid arguments")
         return
     scope = _scope(doc_id)
-    if chat_id == owner_chat_id:  # --- Phase 11: an ask, or a follow-up within 10 minutes ---
+    profile: str | None = None
+    if chat_id == owner_chat_id:
+        # --- Phase 11: my preferences shape the owner's answers only, never a study group's;
+        # the ask is logged (a follow-up within 10 minutes of my last answer is noted) ---
+        profile, mode = await _profile_for(session_factory, question, doc_id)
         async with session_factory() as session:
             await note_ask(
-                session, chat_id=chat_id, question=question, mode=None, now=datetime.now(UTC)
+                session, chat_id=chat_id, question=question, mode=mode, now=datetime.now(UTC)
             )
             await session.commit()
-    answer = await answer_question(question, deps, **scope)
+    answer = await answer_question(question, deps, **scope, profile=profile)
     if answer.status == "needs_review" and "too_long" not in answer.flags:
         # one more try, searching with rewritten queries and the neighbouring chunks
-        answer = await answer_question(question, deps, **scope, rewrite=True, expand=True)
+        answer = await answer_question(
+            question, deps, **scope, rewrite=True, expand=True, profile=profile
+        )
     if chat_id == owner_chat_id and is_hard(answer):
         try:
             await defer_night(question, doc_id)
@@ -167,9 +187,12 @@ async def run_web_ask(
     scope = _scope(doc_id)
     f = RetrieveFilters(verified_only=True) if verified_only else None
     try:
-        answer = await answer_question(question, deps, f=f, **scope)
+        profile = (await _profile_for(session_factory, question, doc_id))[0]  # Phase 11
+        answer = await answer_question(question, deps, f=f, **scope, profile=profile)
         if answer.status == "needs_review" and "too_long" not in answer.flags:
-            answer = await answer_question(question, deps, f=f, **scope, rewrite=True, expand=True)
+            answer = await answer_question(
+                question, deps, f=f, **scope, rewrite=True, expand=True, profile=profile
+            )
     except Exception:
         await _fill_web_answer(session_factory, row_id, None)
         raise
@@ -212,7 +235,14 @@ async def run_night_ask(
     if not valid_ask_args(question, doc_id, deps.settings.max_question_chars):
         logger.warning("night ask job dropped: invalid arguments")
         return
+    profile = (await _profile_for(session_factory, question, doc_id))[0]  # Phase 11
     answer = await answer_question(
-        question, deps, **_scope(doc_id), role=Role.NIGHT, rewrite=True, expand=True
+        question,
+        deps,
+        **_scope(doc_id),
+        role=Role.NIGHT,
+        rewrite=True,
+        expand=True,
+        profile=profile,
     )
     await _deliver(session_factory, owner_chat_id, question, answer)

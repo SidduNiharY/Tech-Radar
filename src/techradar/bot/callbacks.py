@@ -29,11 +29,13 @@ from techradar.bot.practice_callbacks import (
     markup,
 )
 from techradar.bot.predict import handle_outcome_button
+from techradar.bot.setup_command import handle_setup_callback
 from techradar.db.models import TopicSource
 from techradar.exams.sources import decide_source
 from techradar.feedback.actions import log_action
 from techradar.library.quarantine import DELETE_MESSAGES, delete_item, release_prompt
 from techradar.messaging.outbox import parse_callback
+from techradar.profile.setup import setup_mode
 from techradar.tickets import create_ticket, run_confirmed, tg_session_id, token_for
 from techradar.worker.names import SAVE_ANSWER
 
@@ -71,6 +73,9 @@ async def handle_callback_query(
     # --- Phase 11: feedback taps, `fb_<signal>:<kind code>:<id>` ---
     if is_feedback_action(action):
         await handle_feedback_callback(query, context.application.bot_data, action, args)
+        return
+    if (setup := setup_mode(action)) is not None:  # `set_<mode>:<question>:<option>`
+        await handle_setup_callback(query, context.application.bot_data, setup, args)
         return
     if action in REPORT_ACTIONS:  # rule_ok, rule_no, undo
         await handle_report_callback(query, context.application.bot_data, action, args)

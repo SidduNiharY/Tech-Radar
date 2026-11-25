@@ -54,6 +54,7 @@ from techradar.practice.mistakes import run_mistakes_page
 from techradar.practice.quiz import run_quiz
 from techradar.practice.supersede import run_fact_changes
 from techradar.practice.vocab import run_vocab
+from techradar.profile.mastery import compute_mastery
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -1113,3 +1114,16 @@ async def weekly_report_job(timestamp: int | None = None) -> None:
         )
         await session.commit()
     logger.info("weekly report: %s", result.model_dump())
+
+
+@app.periodic(cron="45 18 * * *")  # 18:45 UTC = 00:15 IST
+@app.task(queue="io", queueing_lock="compute_mastery_queued", name="compute_mastery_job")
+@alert_on_failure("compute_mastery_job")
+async def compute_mastery_job(timestamp: int | None = None) -> None:
+    """Nightly, plain code: recompute each chapter's level from quiz accuracy and FSRS stability."""
+    settings = _get_settings()
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        written = await compute_mastery(session, datetime.now(UTC))
+        await session.commit()
+    logger.info("mastery: %d topics", written)
