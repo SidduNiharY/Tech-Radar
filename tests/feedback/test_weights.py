@@ -131,3 +131,78 @@ async def test_apply_signal_exam_topic_floor():
     row = session.weights.get(("topic", "entity:polity"))
     assert row is not None
     assert row.value >= 0.8
+
+
+# --- Phase 11 Task 4: the weights reach the briefing's ranking ---------------------------
+
+
+def _story(cid: str, section: Any, rel: float, topics: list[str], exam: bool = False) -> Any:
+    from techradar.briefing.compose import StoryCandidate
+
+    return StoryCandidate(
+        cluster_id=cid,
+        title=f"t{cid}",
+        section=section,
+        relevance=rel,
+        topic_keys=topics,
+        exam_tags=["gate"] if exam else [],
+    )
+
+
+def test_select_items_sorts_by_learned_score_not_relevance():
+    from techradar.briefing.compose import select_items
+    from techradar.schemas.pipeline import Section
+
+    liked = _story("1", Section.TECH, 0.5, ["entity:ai"])
+    disliked = _story("2", Section.WORLD, 0.9, ["entity:crypto"])
+    weights = {"entity:ai": 2.0, "entity:crypto": 0.2}
+    out = select_items([disliked, liked], frozenset(), weights=weights)
+    assert [c.cluster_id for c in out] == ["1", "2"]  # 0.5*2.0 beats 0.9*0.2
+
+
+def test_select_items_without_weights_keeps_relevance_order():
+    from techradar.briefing.compose import select_items
+    from techradar.schemas.pipeline import Section
+
+    a = _story("1", Section.TECH, 0.5, ["entity:ai"])
+    b = _story("2", Section.WORLD, 0.9, ["entity:crypto"])
+    assert [c.cluster_id for c in select_items([a, b], frozenset())] == ["2", "1"]
+
+
+def test_select_items_keeps_an_outside_usual_story_and_every_exam_story():
+    from techradar.briefing.compose import select_items
+    from techradar.schemas.pipeline import Section
+
+    fav = {"entity:ai": 1.5}
+    chosen = [
+        _story(
+            str(i), Section.TECH if i < 3 else Section.WORLD, 0.9 - i / 100, ["entity:ai"], i == 0
+        )
+        for i in range(6)
+    ]
+    outside = _story("99", Section.SCIENCE, 0.1, ["entity:bio"])
+    out = select_items([*chosen, outside], frozenset(), per_section=3, max_items=6, weights=fav)
+    assert "99" in [c.cluster_id for c in out]
+    assert "0" in [c.cluster_id for c in out]  # the exam story stays
+
+
+@pytest.mark.db
+async def test_exam_topic_floor(session):
+    from sqlalchemy import select
+
+    from techradar.db.models import ImprovementLog, Weight
+
+    for _ in range(20):
+        await apply_signal(
+            session, topics=["entity:polity"], source=None, delta=-0.1, exam_topic=True, now=NOW
+        )
+    w = (await session.execute(select(Weight).where(Weight.key == "entity:polity"))).scalar_one()
+    assert w.value == 0.8
+    # a later signal without the exam flag keeps the floor
+    await apply_signal(
+        session, topics=["entity:polity"], source=None, delta=-0.1, exam_topic=False, now=NOW
+    )
+    await session.refresh(w)
+    assert w.value == 0.8
+    logged = (await session.execute(select(ImprovementLog))).scalars().all()
+    assert len(logged) == 21 and all(r.automatic for r in logged)
