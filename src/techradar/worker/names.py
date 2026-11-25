@@ -10,6 +10,9 @@ CARDS = "cards"
 MISTAKES_PAGE = "mistakes_page"
 MAKE_CHAPTER_CARDS = "make_chapter_cards"
 GRAMMAR_SET = "grammar_set"
+# Phase 3 Task 3: links, PDFs and pasted text from the owner (the bot defers, the worker does)
+OWNER_LINK = "owner_link"
+OWNER_FILE = "owner_file"
 
 # The queue of every night-window job (Phase 7 Task 1). One worker serves it with concurrency 1,
 # so two heavy night jobs never share the GPU.

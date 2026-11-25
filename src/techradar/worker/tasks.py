@@ -14,6 +14,7 @@ from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
 from techradar.alerts.watcher import ChangeEvent, run_exam_poll
+from techradar.bot.intake import MAX_LINK_CHARS, NOT_AVAILABLE_REPLY, intake_link
 from techradar.briefing.capsule import month_start, run_capsule
 from techradar.briefing.compose import run_briefing
 from techradar.briefing.takes import save_take
@@ -23,6 +24,7 @@ from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
+from techradar.fetcher.owner import OWNER_FILE_REPLIES, take_owner_file
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
@@ -61,6 +63,7 @@ from techradar.rag.indexer import (
 )
 from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
+from techradar.security.urls import load_allowlist
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
@@ -70,6 +73,8 @@ from techradar.worker.names import (
     MAKE_CHAPTER_CARDS,
     MISTAKES_PAGE,
     NIGHT_QUEUE,
+    OWNER_FILE,
+    OWNER_LINK,
     PREDICTIONS_SYNC,
     QUIZ,
     SAVE_TAKE,
@@ -927,6 +932,52 @@ async def fact_changes_job(timestamp: int | None = None) -> None:
             now=_local_now(),
         )
         await session.commit()
+
+
+# --- Phase 3 Task 3: links, PDFs and pasted text from the owner ----------------------
+# The bot only defers these with the owner's URL or the hash name of a file it saved in
+# data/telegram-in; it never writes raw/ or parse-jobs/ and never fetches (SEC-05, SEC-57).
+
+
+@app.task(queue="io", name=OWNER_LINK)
+async def owner_link_job(url: str) -> None:
+    """Check the owner's link against the Squid allowlist and queue it for the fetcher."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        try:
+            allowed = load_allowlist(settings.squid_allowlist)
+        except OSError, UnicodeDecodeError:
+            logger.error("Squid allowlist cannot be read: the owner's link is not queued")
+            reply = NOT_AVAILABLE_REPLY
+        else:
+            reply = await intake_link(session, url[:MAX_LINK_CHARS], allowed)
+        await enqueue_message(
+            session, chat_id=settings.telegram_owner_chat_id, text=reply, purpose="owner_link"
+        )
+        await session.commit()
+
+
+@app.task(queue="io", name=OWNER_FILE)
+async def owner_file_job(name: str) -> None:
+    """Move the owner's saved PDF or note into raw/ and queue it for the parser sandbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        outcome = await take_owner_file(
+            session,
+            name,
+            settings.data_dir / "telegram-in",
+            settings.data_dir / "raw",
+            settings.data_dir / "parse-jobs",
+            now=datetime.now(UTC),
+        )
+        if outcome != "queued":  # the bot already said "Queued."
+            await enqueue_message(
+                session,
+                chat_id=settings.telegram_owner_chat_id,
+                text=OWNER_FILE_REPLIES[outcome],
+                purpose="owner_file",
+            )
+            await session.commit()
 
 
 # --- Phase 7: understanding and world -----------------------------------------------

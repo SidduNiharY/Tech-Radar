@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Document, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -24,6 +24,13 @@ from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
 from techradar.bot.drill import start_drill
 from techradar.bot.econ import handle_econ
+from techradar.bot.intake import (
+    NOT_SAVED_REPLY,
+    handle_document,
+    handle_link,
+    handle_paste,
+    is_owner_message,
+)
 from techradar.bot.packs_command import packs_reply
 from techradar.bot.planner_commands import handle_planner_command
 from techradar.bot.practice_commands import COMMAND_JOBS, handle_inbox, handle_practice_command
@@ -55,6 +62,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_chat.id
     text = update.message.text
     settings = get_settings()
+
+    # --- Phase 3 Task 3: a document is checked before any download, owner only (SEC-26) ---
+    if isinstance(getattr(update.message, "document", None), Document):
+        if not is_owner_message(update, settings.telegram_owner_chat_id):
+            logger.warning("ignored a file from chat %s", chat_id)
+            return
+        try:
+            await handle_document(update, context)
+        except Exception:
+            logger.exception("could not take a document from the owner")
+            await update.message.reply_text(NOT_SAVED_REPLY)
+        return
 
     # A reply to a Ready message asks that book. Only the owner's own chat is looked up, and
     # a database failure never silently widens the question to every note.
@@ -195,6 +214,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    # --- Phase 3 Task 3: the router allows both from the owner's own chat only ---
+    if routed.action in ("link", "paste"):
+        if not is_owner_message(update, settings.telegram_owner_chat_id):
+            return
+        if routed.action == "link":
+            await handle_link(update, context.application.bot_data, routed.arg)
+        else:
+            await handle_paste(update, context.application.bot_data, routed.arg)
+        return
+
     if routed.action in ("ask", "ask_book"):
         await handle_ask(
             update,
@@ -230,6 +259,9 @@ async def post_init(application: Application) -> None:
     # --- Phase 5 --- (/skill edits skills/<name>.md; the vault must be writable in `bot`)
     application.bot_data["vault_root"] = settings.data_dir / "vault"
     application.bot_data["tz"] = settings.tz  # Phase 8: the day a drill question belongs to
+    # --- Phase 3 Task 3: the bot's private drop folder for owner PDFs and pasted notes. The
+    # worker's owner_file job moves them into raw/; the bot never mounts raw/ or parse-jobs/.
+    application.bot_data["owner_in_dir"] = settings.data_dir / "telegram-in"
 
     try:
         from procrastinate import App, PsycopgConnector

@@ -9,6 +9,7 @@ from collections.abc import Set
 from typing import Literal, NamedTuple
 
 from techradar.bot.auth import is_allowed
+from techradar.bot.intake import is_paste, link_in
 
 Action = Literal[
     "start",
@@ -33,6 +34,9 @@ Action = Literal[
     "stop",
     "skill",
     "drill",  # Phase 8
+    # --- Phase 3 Task 3: links and pasted text from the owner ---
+    "link",
+    "paste",
 ]
 
 
@@ -76,6 +80,11 @@ def route_update(
         Routed("predict", arg) for /predict from the owner's own chat only (Phase 7)
         Routed("prediction_reply", text) for a plain-text reply from the owner's own chat to
             one of `prediction_message_ids` (the caller looked the reminders up)
+        Routed("link", url) for owner text (own chat only) that is exactly one URL-like token,
+            including schemes that are never fetched (javascript:, file:, ...), so they get a
+            clear refusal; the worker checks it against the allowlist (Phase 3 Task 3)
+        Routed("paste", text) for owner text (own chat only) of 200 characters or more with
+            no URL in it (Phase 3 Task 3)
         Routed("ignore") for unauthorized chats or unknown/empty messages
     """
     if not is_allowed(chat_id, owner_id, group_ids):
@@ -155,5 +164,13 @@ def route_update(
         # Replying to a Ready message asks that book. Owner's own chat only: the Ready message
         # is sent nowhere else.
         return Routed("ask_book", cleaned)
+
+    # --- Phase 3 Task 3: links and pasted text, the owner's own chat only (SEC-26) ---
+    if chat_id == owner_id and not cmd.startswith("/"):
+        url = link_in(cleaned)
+        if url is not None:
+            return Routed("link", url)
+        if is_paste(cleaned):
+            return Routed("paste", cleaned)
 
     return Routed("ignore")
