@@ -156,6 +156,12 @@ def upgrade() -> None:
         sa.Column("from_feedback_id", sa.BigInteger(), nullable=True),
         sa.Column("passing", sa.Boolean(), nullable=True),
         sa.Column("last_run_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         schema=SCHEMA,
     )

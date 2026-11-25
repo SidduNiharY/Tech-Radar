@@ -29,3 +29,28 @@ async def handle_improvements(update: Any, bot_data: Mapping[str, Any]) -> None:
         else None
     )
     await update.message.reply_text(text, reply_markup=markup)
+
+
+async def handle_fix(update: Any, bot_data: Mapping[str, Any], arg: str) -> None:
+    """`/fix [<answer id>] <what it should say>`: my own words become a test's must_include.
+
+    The router lets it through from the owner's own chat only. Without an id the latest
+    answer is used.
+    """
+    from datetime import UTC, datetime
+
+    from techradar.feedback.regression import set_must_include
+
+    session_factory = bot_data.get("session_factory")
+    if session_factory is None:
+        await update.message.reply_text("Not available yet.")
+        return
+    first, _, rest = arg.strip().partition(" ")
+    if first.isdigit() and len(first) <= 12 and rest.strip():
+        answer_id, text = int(first), rest
+    else:
+        answer_id, text = None, arg
+    async with session_factory() as session:
+        reply = await set_must_include(session, text, answer_id, now=datetime.now(UTC))
+        await session.commit()
+    await update.message.reply_text(reply)

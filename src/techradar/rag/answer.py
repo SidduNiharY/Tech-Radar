@@ -178,6 +178,7 @@ async def answer_question(
     require_doc_id: bool = False,
     profile: str | None = None,
     known_topics: Sequence[str] = (),
+    min_score: float | None = None,
 ) -> Answer:
     """Answer question grounded in retrieved notes with strict citation enforcement.
 
@@ -191,6 +192,7 @@ async def answer_question(
     fixed templates (profile/style.py). It joins the system prompt and changes the form only;
     the citation checks below run exactly as before. known_topics are cleaned topic names from
     book titles (untrusted): they go only into the user prompt, between UNTRUSTED markers.
+    min_score (Phase 11 Task 8) replaces `rag_min_score` for one book: the tuned cut-off.
     """
     system = ANSWER_SYSTEM if not profile else f"{ANSWER_SYSTEM}\n\n{profile}"
     # WIRING(claude): liked answers as style examples (profile/examples.py, wrapped with
@@ -219,7 +221,8 @@ async def answer_question(
         hits = await retrieve_multi(queries, deps, f, doc_id=doc_id)
     else:
         hits = await retrieve(sanitized, deps, f, doc_id=doc_id)
-    if not hits or hits[0].score < deps.settings.rag_min_score:
+    cut = deps.settings.rag_min_score if min_score is None else min_score
+    if not hits or hits[0].score < cut:
         near = bool(hits) and hits[0].score >= LOW_CONFIDENCE_FLOOR
         return Answer(
             text=NOT_FOUND,

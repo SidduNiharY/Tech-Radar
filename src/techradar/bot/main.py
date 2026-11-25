@@ -24,7 +24,7 @@ from techradar.bot.book_ask import find_ready_doc, handle_ask, reply_message_id
 from techradar.bot.callbacks import handle_callback_query
 from techradar.bot.drill import start_drill
 from techradar.bot.econ import handle_econ
-from techradar.bot.improvements_command import handle_improvements
+from techradar.bot.improvements_command import handle_fix, handle_improvements
 from techradar.bot.packs_command import packs_reply
 from techradar.bot.planner_commands import handle_planner_command
 from techradar.bot.practice_commands import COMMAND_JOBS, handle_inbox, handle_practice_command
@@ -152,6 +152,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # --- Phase 11: the router allows it from the owner's own chat only ---
     if routed.action == "improvements":
         await handle_improvements(update, context.application.bot_data)
+        return
+    if routed.action == "fix":
+        await handle_fix(update, context.application.bot_data, routed.arg)
         return
     if routed.action == "setup":
         await handle_setup(update, context.application.bot_data)

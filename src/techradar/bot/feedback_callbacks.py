@@ -14,7 +14,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from techradar.feedback.signals import parse_feedback_callback, record_feedback
+from techradar.feedback.regression import save_case_for_answer
+from techradar.feedback.signals import TargetKind, parse_feedback_callback, record_feedback
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,9 @@ async def handle_feedback_callback(
             owner_id=int(bot_data["owner_id"]),
             now=now,
         )
+        if result == "recorded" and kind is TargetKind.ANSWER:
+            # --- Task 8: a `wrong` or `down` on an answer becomes a regression case ---
+            await save_case_for_answer(session, target_id, signal.value, now=now)
         await session.commit()
     await query.answer(FEEDBACK_REPLIES[result])
 

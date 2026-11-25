@@ -25,6 +25,7 @@ from techradar.bot.book_ask import valid_id
 from techradar.bot.render import render_answer
 from techradar.db.models import Answer as AnswerModel
 from techradar.feedback.actions import note_ask
+from techradar.feedback.search_tuning import book_min_score
 from techradar.feedback.signals import TargetKind, feedback_buttons
 from techradar.llm.roles import Role
 from techradar.messaging.outbox import Button, enqueue_message
@@ -72,6 +73,20 @@ async def _profile_for(
     except Exception:
         logger.exception("could not build the profile block; answering without it")
         return None, None, []
+
+
+async def _min_score_for(
+    session_factory: async_sessionmaker[AsyncSession], doc_id: int | None
+) -> float | None:
+    """The tuned cut-off of one book (`weights`, kind `search`), or None (Phase 11 Task 8)."""
+    if doc_id is None:
+        return None
+    try:
+        async with session_factory() as session:
+            return await book_min_score(session, doc_id)
+    except Exception:
+        logger.exception("could not read the book's cut-off; using the default")
+        return None
 
 
 async def _deliver(
@@ -127,6 +142,7 @@ async def run_ask(
     scope = _scope(doc_id)
     profile: str | None = None
     known: list[str] = []
+    min_score = await _min_score_for(session_factory, doc_id)
     if chat_id == owner_chat_id:
         # --- Phase 11: my preferences shape the owner's answers only, never a study group's;
         # the ask is logged (a follow-up within 10 minutes of my last answer is noted) ---
@@ -136,11 +152,20 @@ async def run_ask(
                 session, chat_id=chat_id, question=question, mode=mode, now=datetime.now(UTC)
             )
             await session.commit()
-    answer = await answer_question(question, deps, **scope, profile=profile, known_topics=known)
+    answer = await answer_question(
+        question, deps, **scope, profile=profile, known_topics=known, min_score=min_score
+    )
     if answer.status == "needs_review" and "too_long" not in answer.flags:
         # one more try, searching with rewritten queries and the neighbouring chunks
         answer = await answer_question(
-            question, deps, **scope, rewrite=True, expand=True, profile=profile, known_topics=known
+            question,
+            deps,
+            **scope,
+            rewrite=True,
+            expand=True,
+            profile=profile,
+            known_topics=known,
+            min_score=min_score,
         )
     if chat_id == owner_chat_id and is_hard(answer):
         try:
@@ -193,8 +218,9 @@ async def run_web_ask(
     f = RetrieveFilters(verified_only=True) if verified_only else None
     try:
         profile, _, known = await _profile_for(session_factory, question, doc_id)  # Phase 11
+        min_score = await _min_score_for(session_factory, doc_id)
         answer = await answer_question(
-            question, deps, f=f, **scope, profile=profile, known_topics=known
+            question, deps, f=f, **scope, profile=profile, known_topics=known, min_score=min_score
         )
         if answer.status == "needs_review" and "too_long" not in answer.flags:
             answer = await answer_question(
@@ -250,6 +276,7 @@ async def run_night_ask(
         logger.warning("night ask job dropped: invalid arguments")
         return
     profile, _, known = await _profile_for(session_factory, question, doc_id)  # Phase 11
+    min_score = await _min_score_for(session_factory, doc_id)
     answer = await answer_question(
         question,
         deps,
@@ -259,5 +286,6 @@ async def run_night_ask(
         expand=True,
         profile=profile,
         known_topics=known,
+        min_score=min_score,
     )
     await _deliver(session_factory, owner_chat_id, question, answer)

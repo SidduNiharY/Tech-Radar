@@ -25,6 +25,7 @@ from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_so
 from techradar.exams.syllabus import sync_syllabus
 from techradar.feedback.jobs import run_nightly_patterns
 from techradar.feedback.report import run_weekly_report
+from techradar.feedback.search_tuning import run_tune_books
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all
@@ -63,7 +64,7 @@ from techradar.rag.indexer import (
     sync_index,
 )
 from techradar.rag.rerank import CrossEncoderReranker
-from techradar.rag.retrieve import RagDeps
+from techradar.rag.retrieve import RagDeps, retrieve
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
@@ -1127,3 +1128,22 @@ async def compute_mastery_job(timestamp: int | None = None) -> None:
         written = await compute_mastery(session, datetime.now(UTC))
         await session.commit()
     logger.info("mastery: %d topics", written)
+
+
+@app.periodic(cron="0 14 * * 0")  # Sundays 14:00 UTC = 19:30 IST
+@app.task(queue="io", queueing_lock="tune_books_queued", name="tune_books_job")
+@alert_on_failure("tune_books_job")
+async def tune_books_job(timestamp: int | None = None) -> None:
+    """Weekly: tune each book's search cut-off against its own retrieval checks (plain code)."""
+    settings = _get_settings()
+    deps = get_rag_deps()
+
+    async def retrieve_hits(question: str, doc_id: int) -> list[tuple[int, float]]:
+        hits = await retrieve(question, deps, doc_id=doc_id)
+        return [(h.chunk_id, h.score) for h in hits]
+
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        tuned = await run_tune_books(session, retrieve_hits, now=datetime.now(UTC))
+        await session.commit()
+    logger.info("book tuning: %s", tuned)
