@@ -166,6 +166,109 @@ def check_citations(text: str, cited: Sequence[str], n_hits: int) -> bool:
     return True
 
 
+def fit_request(
+    hits: Sequence[Hit],
+    question: str,
+    system: str,
+    known: Sequence[str],
+    budget: int,
+    top: Hit,
+) -> tuple[list[Hit], str] | None:
+    """Cut the hits until the whole request fits the model context; None when nothing fits.
+
+    Shared by `answer_question` and the "Which is better?" pairs (SEC-38, SEC-41).
+    """
+    hits = list(hits)
+    prompt = _prompt(hits, question, known)
+    while not prompt_fits(system, prompt, max_tokens=ANSWER_MAX_TOKENS):
+        if len(hits) > 1:
+            hits = hits[:-1]
+        elif budget > 0:
+            budget = budget * 9 // 10
+            hits = [_truncated(top, budget)]
+        else:
+            return None
+        prompt = _prompt(hits, question, known)
+    return hits, prompt
+
+
+def vet_draft(draft: AnswerDraft, hits: Sequence[Hit]) -> Answer:
+    """Every check on a model draft: "not found", citations, injection flags, then the
+    citations' verification and gateway flags. One place for every answer a user sees.
+    """
+    # 4. Check for explicit NOT_FOUND answer
+    if draft.answer.strip() == NOT_FOUND:
+        return Answer(
+            text=NOT_FOUND,
+            citations=[],
+            status="not_found",
+            used_unverified=False,
+            flags=[],
+        )
+
+    # 5. Citation verification
+    if not check_citations(draft.answer, draft.citations, len(hits)):
+        return Answer(
+            text=draft.answer,
+            citations=[],
+            status="needs_review",
+            used_unverified=False,
+            flags=["bad_citation"],
+        )
+
+    # 6. Check for prompt injection attempts in model answer
+    flags = injection_flags(draft.answer)
+    if flags:
+        return Answer(
+            text=draft.answer,
+            citations=[],
+            status="needs_review",
+            used_unverified=False,
+            flags=flags,
+        )
+
+    # 7. Resolve cited hits and verification status
+    cited_nums: set[int] = set()
+    for c in draft.citations:
+        m = re.match(r"^C([0-9]+)$", c)
+        if m:
+            cited_nums.add(int(m.group(1)))
+    for m in re.findall(r"\[C([0-9]+)\]", draft.answer):
+        cited_nums.add(int(m))
+
+    citations: list[Citation] = []
+    used_unverified = False
+    used_flagged = False
+    for n in sorted(cited_nums):
+        hit = hits[n - 1]
+        heading = " › ".join(hit.heading_path) if hit.heading_path else ""
+        citations.append(
+            Citation(
+                n=n,
+                doc_path=hit.doc_path,
+                title=hit.title,
+                heading=heading,
+                verified=hit.verified,
+            )
+        )
+        if hit.verified is False:
+            used_unverified = True
+        if hit.flagged:
+            used_flagged = True
+
+    out_flags: list[str] = []
+    if used_flagged:
+        out_flags.append("used_flagged")
+
+    return Answer(
+        text=draft.answer,
+        citations=citations,
+        status="answered",
+        used_unverified=used_unverified,
+        flags=out_flags,
+    )
+
+
 async def answer_question(
     question: str,
     deps: RagDeps,
@@ -243,22 +346,16 @@ async def answer_question(
     hits = fit_hits(hits, budget) if hits else [_truncated(top, budget)]
 
     # 3. Request LLM completion; the prompt is re-checked against the whole context.
-    prompt = _prompt(hits, sanitized, known_topics)
-    while not prompt_fits(system, prompt, max_tokens=ANSWER_MAX_TOKENS):
-        if len(hits) > 1:
-            hits = hits[:-1]
-        elif budget > 0:
-            budget = budget * 9 // 10
-            hits = [_truncated(top, budget)]
-        else:
-            return Answer(
-                text="Question too long.",
-                citations=[],
-                status="needs_review",
-                used_unverified=False,
-                flags=["too_long"],
-            )
-        prompt = _prompt(hits, sanitized, known_topics)
+    fitted = fit_request(hits, sanitized, system, known_topics, budget, top)
+    if fitted is None:
+        return Answer(
+            text="Question too long.",
+            citations=[],
+            status="needs_review",
+            used_unverified=False,
+            flags=["too_long"],
+        )
+    hits, prompt = fitted
     try:
         draft = await complete_json(
             deps.completer,
@@ -277,74 +374,4 @@ async def answer_question(
             flags=["invalid_output"],
         )
 
-    # 4. Check for explicit NOT_FOUND answer
-    if draft.answer.strip() == NOT_FOUND:
-        return Answer(
-            text=NOT_FOUND,
-            citations=[],
-            status="not_found",
-            used_unverified=False,
-            flags=[],
-        )
-
-    # 5. Citation verification
-    if not check_citations(draft.answer, draft.citations, len(hits)):
-        return Answer(
-            text=draft.answer,
-            citations=[],
-            status="needs_review",
-            used_unverified=False,
-            flags=["bad_citation"],
-        )
-
-    # 6. Check for prompt injection attempts in model answer
-    flags = injection_flags(draft.answer)
-    if flags:
-        return Answer(
-            text=draft.answer,
-            citations=[],
-            status="needs_review",
-            used_unverified=False,
-            flags=flags,
-        )
-
-    # 7. Resolve cited hits and verification status
-    cited_nums: set[int] = set()
-    for c in draft.citations:
-        m = re.match(r"^C([0-9]+)$", c)
-        if m:
-            cited_nums.add(int(m.group(1)))
-    for m in re.findall(r"\[C([0-9]+)\]", draft.answer):
-        cited_nums.add(int(m))
-
-    citations: list[Citation] = []
-    used_unverified = False
-    used_flagged = False
-    for n in sorted(cited_nums):
-        hit = hits[n - 1]
-        heading = " › ".join(hit.heading_path) if hit.heading_path else ""
-        citations.append(
-            Citation(
-                n=n,
-                doc_path=hit.doc_path,
-                title=hit.title,
-                heading=heading,
-                verified=hit.verified,
-            )
-        )
-        if hit.verified is False:
-            used_unverified = True
-        if hit.flagged:
-            used_flagged = True
-
-    out_flags: list[str] = []
-    if used_flagged:
-        out_flags.append("used_flagged")
-
-    return Answer(
-        text=draft.answer,
-        citations=citations,
-        status="answered",
-        used_unverified=used_unverified,
-        flags=out_flags,
-    )
+    return vet_draft(draft, hits)

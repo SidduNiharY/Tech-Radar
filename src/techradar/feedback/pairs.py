@@ -42,35 +42,54 @@ async def make_pair(
     variant: tuple[str, str, StyleRule, StyleRule],
     role: Any = None,
 ) -> tuple[str, str] | None:
-    """Two answers from the same excerpts, one per style rule, each checked like any answer.
+    """Two answers from the same excerpts, one per style rule, each vetted like any answer.
 
-    Each answer must pass `check_citations` (and may not be "not found"); otherwise there is
-    no pair (SEC-38). `excerpts` are the retrieved `Hit`s. The style rules are fixed templates.
+    The question is sanitized, the request must fit the context, and every draft goes through
+    the same `vet_draft` as `answer_question` (not found, citations, injection flags). The pair
+    is dropped when any check fails, when a draft cites an unverified note, or when any excerpt
+    is flagged by the Intake Gateway (SEC-37, SEC-38, SEC-41). `excerpts` are the retrieved
+    `Hit`s; the style rules are fixed templates.
     """
     from techradar.llm.client import LLMOutputError, complete_json
     from techradar.llm.roles import Role
     from techradar.profile.style import render_profile_block
     from techradar.rag.answer import (
+        ANSWER_MAX_TOKENS,
         ANSWER_SYSTEM,
-        NOT_FOUND,
         AnswerDraft,
-        build_context,
-        check_citations,
+        _context_tokens,
+        fit_request,
+        vet_draft,
     )
+    from techradar.security.text import sanitize_text
 
-    prompt = f"{build_context(excerpts)}\n\nQuestion: {question}"
+    hits = list(excerpts)
+    clean = sanitize_text(question)
+    if not hits or not clean or any(h.flagged for h in hits):
+        return None
+    systems = [f"{ANSWER_SYSTEM}\n\n{render_profile_block([r])}" for r in (variant[2], variant[3])]
+    longest = max(systems, key=len)  # both versions get the same excerpts
+    fitted = fit_request(hits, clean, longest, (), _context_tokens(clean, longest), hits[0])
+    if fitted is None:
+        return None
+    fitted_hits, prompt = fitted
     texts: list[str] = []
-    for rule in (variant[2], variant[3]):
-        system = f"{ANSWER_SYSTEM}\n\n{render_profile_block([rule])}"
+    for system in systems:
         try:
-            draft = await complete_json(completer, role or Role.WORKER, system, prompt, AnswerDraft)
+            draft = await complete_json(
+                completer,
+                role or Role.WORKER,
+                system,
+                prompt,
+                AnswerDraft,
+                max_tokens=ANSWER_MAX_TOKENS,
+            )
         except LLMOutputError:
             return None
-        if draft.answer.strip() == NOT_FOUND or not check_citations(
-            draft.answer, draft.citations, len(excerpts)
-        ):
+        vetted = vet_draft(draft, fitted_hits)
+        if vetted.status != "answered" or vetted.used_unverified or vetted.flags:
             return None
-        texts.append(draft.answer)
+        texts.append(vetted.text)
     return texts[0], texts[1]
 
 
