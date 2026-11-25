@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest.mock
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,6 +15,15 @@ from techradar.voice.transcribe import Transcript, Word
 from tests.fakes import FakeCompleter, FakePhonemeModel, FakeTranscriber
 
 
+def _stored(tmp_path: Path, data: bytes) -> tuple[Path, Path]:
+    """(voice_dir, note): a hash-named note in voice_dir/in, as intake stores it."""
+    voice_dir = tmp_path / "voice"
+    (voice_dir / "in").mkdir(parents=True, exist_ok=True)
+    note = voice_dir / "in" / (hashlib.sha256(data).hexdigest() + ".ogg")
+    note.write_bytes(data)
+    return voice_dir, note
+
+
 class FakeOutbox:
     def __init__(self) -> None:
         self.texts: list[str] = []
@@ -26,8 +36,7 @@ class FakeOutbox:
 
 @pytest.mark.db
 async def test_no_speech_reply(session: Any, tmp_path: Path) -> None:
-    audio_file = tmp_path / "silent.ogg"
-    audio_file.write_bytes(b"dummy")
+    voice_dir, audio_file = _stored(tmp_path, b"dummy")
 
     voice_row = VoiceSession(
         source="telegram",
@@ -52,7 +61,8 @@ async def test_no_speech_reply(session: Any, tmp_path: Path) -> None:
             phoneme_model=FakePhonemeModel(),
             completer=FakeCompleter([]),
             outbox=outbox,
-            voice_dir=tmp_path,
+            voice_dir=voice_dir,
+            probe=lambda _p: None,  # the dummy bytes are not a real Ogg file
         )
 
     assert outbox.texts == ["I couldn't hear speech in that note."]
@@ -61,8 +71,7 @@ async def test_no_speech_reply(session: Any, tmp_path: Path) -> None:
 
 @pytest.mark.db
 async def test_audio_deleted_after_24h_unless_kept(session: Any, tmp_path: Path) -> None:
-    audio_file = tmp_path / "note.ogg"
-    audio_file.write_bytes(b"content")
+    voice_dir, audio_file = _stored(tmp_path, b"content")
 
     t = Transcript(
         text="hello world this is a test note",
@@ -95,7 +104,8 @@ async def test_audio_deleted_after_24h_unless_kept(session: Any, tmp_path: Path)
             phoneme_model=FakePhonemeModel(),
             completer=FakeCompleter([]),
             outbox=FakeOutbox(),
-            voice_dir=tmp_path,
+            voice_dir=voice_dir,
+            probe=lambda _p: None,  # the dummy bytes are not a real Ogg file
         )
 
     assert audio_file.exists()
@@ -103,7 +113,7 @@ async def test_audio_deleted_after_24h_unless_kept(session: Any, tmp_path: Path)
 
     # Run cleanup past 24h
     now = datetime.now(UTC) + timedelta(hours=25)
-    cleaned = await cleanup_voice(session, now=now)
+    cleaned = await cleanup_voice(session, now=now, voice_dir=voice_dir)
 
     assert cleaned == 1
     assert not audio_file.exists()

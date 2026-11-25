@@ -9,6 +9,7 @@ from collections.abc import Set
 from typing import Literal, NamedTuple
 
 from techradar.bot.auth import is_allowed
+from techradar.bot.intake import is_paste, link_in
 
 Action = Literal[
     "start",
@@ -39,6 +40,9 @@ Action = Literal[
     "story_reply",
     "essay_reply",
     "reflection_reply",
+    # --- Phase 3 Task 3: links and pasted text from the owner ---
+    "link",
+    "paste",
 ]
 
 
@@ -83,6 +87,18 @@ def route_update(
         Routed("predict", arg) for /predict from the owner's own chat only (Phase 7)
         Routed("prediction_reply", text) for a plain-text reply from the owner's own chat to
             one of `prediction_message_ids` (the caller looked the reminders up)
+        Routed("link", url) for owner text (own chat only) that is exactly one URL-like token,
+            including schemes that are never fetched (javascript:, file:, ...), so they get a
+            clear refusal; the worker checks it against the allowlist (Phase 3 Task 3)
+        Routed("paste", text) for owner text (own chat only) of 200 characters or more with
+            no URL in it (Phase 3 Task 3)
+        Routed("polish" | "story", arg) for /polish and /story from the owner's own chat only
+        Routed("essay_reply" | "reflection_reply", text) for a plain reply from the owner's
+            own chat to the essay or reflection prompt; Routed("story_reply", text) for a plain
+            message while a /story draft is open (Phase 6)
+
+    Order: commands first, then replies to a message we sent and an open /story draft, and
+    only then a bare link or a pasted text, so a long reply is never taken for a paste.
         Routed("ignore") for unauthorized chats or unknown/empty messages
     """
     if not is_allowed(chat_id, owner_id, group_ids):
@@ -180,5 +196,16 @@ def route_update(
 
     if not cmd.startswith("/") and chat_id == owner_id and story_open:  # --- Phase 6 ---
         return Routed("story_reply", cleaned)
+
+    # --- Phase 3 Task 3: links and pasted text, the owner's own chat only (SEC-26). Last of
+    # all: a command, a reply to a message we sent (briefing, essay, reflection, Ready,
+    # prediction) or an open /story draft always wins, so a long reply is never taken for a
+    # paste. ---
+    if chat_id == owner_id and not cmd.startswith("/"):
+        url = link_in(cleaned)
+        if url is not None:
+            return Routed("link", url)
+        if is_paste(cleaned):
+            return Routed("paste", cleaned)
 
     return Routed("ignore")

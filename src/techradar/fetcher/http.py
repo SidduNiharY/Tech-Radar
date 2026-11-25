@@ -118,6 +118,11 @@ async def fetch_url(
             resp = await deps.client.send(req, stream=True, follow_redirects=False)
         except httpx.RequestError as exc:
             return FetchResult(status="http_error", reason=str(exc))
+        except httpx.InvalidURL:
+            # httpx builds the next request of every redirect even when not following it, so
+            # a Location such as `javascript:alert(1)` raises here. Refuse it instead of
+            # letting it end the whole fetch cycle.
+            return FetchResult(status="rejected", reason="bad_redirect")
 
         if resp.status_code in (301, 302, 303, 307, 308):
             redirect_count += 1

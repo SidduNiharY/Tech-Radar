@@ -15,6 +15,7 @@ from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
 from techradar.alerts.watcher import ChangeEvent, run_exam_poll
+from techradar.bot.intake import MAX_LINK_CHARS, NOT_AVAILABLE_REPLY
 from techradar.briefing.capsule import month_start, run_capsule
 from techradar.briefing.compose import run_briefing
 from techradar.briefing.takes import save_take
@@ -36,6 +37,7 @@ from techradar.exams.mock_intake import collect_mock_results
 from techradar.exams.pyq_intake import PYQ_RECORDS_DIR, collect_pyq_results, queue_gate_papers
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
+from techradar.fetcher.owner import OWNER_FILE_REPLIES, intake_link, take_owner_file
 from techradar.jarvis.greeting import run_prepare_greeting
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
@@ -76,24 +78,31 @@ from techradar.rag.indexer import (
 )
 from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
+from techradar.security.urls import load_allowlist
 from techradar.settings import Settings, get_settings
-from techradar.voice.engines import NOT_SET_UP_TEXT, EnginesNotApproved, load_engines
+from techradar.voice.engines import NOT_SET_UP_TEXT as VOICE_UNAVAILABLE_REPLY
+from techradar.voice.engines import EnginesNotApproved, load_engines
 from techradar.voice.practice_time import run_english_reminder
-from techradar.voice.retention import cleanup_voice
+from techradar.voice.retention import cleanup_voice, mark_voice_unavailable
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
 from techradar.worker.names import (
+    ANALYSE_VOICE,
     CARDS,
+    CLEANUP_VOICE,
     ESSAY_REPLY,
     GRAMMAR_SET,
     MAKE_CHAPTER_CARDS,
     MISTAKES_PAGE,
     NIGHT_QUEUE,
+    OWNER_FILE,
+    OWNER_LINK,
     POLISH,
     PREDICTIONS_SYNC,
     QUIZ,
     REFLECTION_SAVE,
     SAVE_TAKE,
+    VOICE_QUEUE,
 )
 from techradar.world.econ import collect_official, load_official_domains
 from techradar.world.predictions import run_prediction_reminder, sync_predictions_vault
@@ -950,6 +959,52 @@ async def fact_changes_job(timestamp: int | None = None) -> None:
         await session.commit()
 
 
+# --- Phase 3 Task 3: links, PDFs and pasted text from the owner ----------------------
+# The bot only defers these with the owner's URL or the hash name of a file it saved in
+# data/telegram-in; it never writes raw/ or parse-jobs/ and never fetches (SEC-05, SEC-57).
+
+
+@app.task(queue="io", name=OWNER_LINK)
+async def owner_link_job(url: str) -> None:
+    """Check the owner's link against the Squid allowlist and queue it for the fetcher."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        try:
+            allowed = load_allowlist(settings.squid_allowlist)
+        except OSError, UnicodeDecodeError:
+            logger.error("Squid allowlist cannot be read: the owner's link is not queued")
+            reply = NOT_AVAILABLE_REPLY
+        else:
+            reply = await intake_link(session, url[:MAX_LINK_CHARS], allowed)
+        await enqueue_message(
+            session, chat_id=settings.telegram_owner_chat_id, text=reply, purpose="owner_link"
+        )
+        await session.commit()
+
+
+@app.task(queue="io", name=OWNER_FILE)
+async def owner_file_job(name: str) -> None:
+    """Move the owner's saved PDF or note into raw/ and queue it for the parser sandbox."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        outcome = await take_owner_file(
+            session,
+            name,
+            settings.data_dir / "telegram-in",
+            settings.data_dir / "raw",
+            settings.data_dir / "parse-jobs",
+            now=datetime.now(UTC),
+        )
+        if outcome != "queued":  # the bot already said "Queued."
+            await enqueue_message(
+                session,
+                chat_id=settings.telegram_owner_chat_id,
+                text=OWNER_FILE_REPLIES[outcome],
+                purpose="owner_file",
+            )
+            await session.commit()
+
+
 # --- Phase 7: understanding and world -----------------------------------------------
 # Night jobs sit on the `night` queue and are `night_only`: outside 01:00 to 05:00 they put
 # themselves back for the next window. Periodic jobs take the `timestamp` procrastinate passes.
@@ -1294,29 +1349,40 @@ async def english_reminder_job(timestamp: int | None = None) -> None:
         await session.commit()
 
 
-@app.task(queue="voice", name="analyse_voice")
+# --- Phase 6: voice notes -----------------------------------------------------------
+# The bot stores the owner's voice note (voice/intake.py) and defers analyse_voice on the
+# `voice` queue. The engines (faster-whisper, wav2vec2, Kokoro) sit behind Protocols and load
+# only in the voice-worker image once approved; until then the note fails, the owner is told,
+# and the recording keeps its 24-hour limit.
+
+
+@app.task(queue=VOICE_QUEUE, name=ANALYSE_VOICE)
 async def analyse_voice_job(session_id: int) -> None:
-    """Analyse one voice note (queue `voice`, concurrency 1: one note at a time on the GPU).
-
-    The intake (Phase 6 Task 1) defers this by name. The engines load only in the voice-worker
-    image; until they are approved the owner is told the feature is not set up.
-    """
-    # Imported here: voice.jobs needs numpy, which only the voice-worker image is sure to have.
-    from techradar.voice.jobs import EnqueueOutbox, analyse_voice, mark_not_set_up
-
+    """Analyse one stored voice note (queue `voice`, concurrency 1: one note at a time on the
+    GPU), or tell the owner analysis is not set up on this server yet."""
     settings = _get_settings()
-    voice_dir = settings.data_dir / "voice"
+    try:
+        engines = load_engines(Path("/opt/models"))
+    except EnginesNotApproved:
+        async with make_session_factory("app", settings)() as session:
+            if await mark_voice_unavailable(session, session_id):
+                await enqueue_message(
+                    session,
+                    chat_id=settings.telegram_owner_chat_id,
+                    text=VOICE_UNAVAILABLE_REPLY,
+                    purpose="voice_unavailable",
+                    ref_id=session_id,
+                )
+            await session.commit()
+        return
+
+    # Imported here: voice.jobs needs numpy, which only the voice-worker image is sure to have.
+    from techradar.voice.jobs import EnqueueOutbox, analyse_voice
+
     async with (
         httpx.AsyncClient(timeout=10.0) as http,
         make_session_factory("app", settings)() as session,
     ):
-        outbox = EnqueueOutbox(session, settings.telegram_owner_chat_id)
-        try:
-            engines = load_engines(Path("/opt/models"))
-        except EnginesNotApproved:
-            await mark_not_set_up(session, session_id, outbox, NOT_SET_UP_TEXT)
-            await session.commit()
-            return
 
         async def free() -> None:
             await free_gpu(http, settings.ollama_base_url)
@@ -1328,22 +1394,27 @@ async def analyse_voice_job(session_id: int) -> None:
             phoneme_model=engines.phoneme_model,
             completer=_completer(),
             speaker=engines.speaker,
-            outbox=outbox,
+            outbox=EnqueueOutbox(session, settings.telegram_owner_chat_id),
             grammar=LanguageToolClient(http, settings.languagetool_url),
-            voice_dir=voice_dir,
+            voice_dir=settings.data_dir / "voice",
             free_gpu_fn=free,
         )
         await session.commit()
 
 
-@app.periodic(cron="10 * * * *")
-@app.task(queue="io", queueing_lock="cleanup_voice_queued", name="cleanup_voice_job")
+@app.periodic(cron="10 * * * *")  # hourly
+@app.task(queue="io", queueing_lock="cleanup_voice_queued", name=CLEANUP_VOICE)
 async def cleanup_voice_job(timestamp: int | None = None) -> None:
-    """Hourly: delete voice audio and spoken replies older than 24 hours unless kept."""
+    """Hourly: delete voice recordings and spoken replies past their 24 hours, unless kept.
+
+    Only hash-named notes in data/voice/in and our replies in data/voice/out are ever removed.
+    """
     settings = _get_settings()
     async with make_session_factory("app", settings)() as session:
-        cleaned = await cleanup_voice(session, voice_dir=settings.data_dir / "voice")
-    logger.info("voice recordings deleted: %d", cleaned)
+        removed = await cleanup_voice(
+            session, now=datetime.now(UTC), voice_dir=settings.data_dir / "voice"
+        )
+    logger.info("voice recordings deleted: %d", removed)
 
 
 # --- Phase 8: exam files from the library inbox (wire/intake) -----------------------

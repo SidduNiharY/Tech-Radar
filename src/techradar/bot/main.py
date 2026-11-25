@@ -12,7 +12,15 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    Audio,
+    Document,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+    VideoNote,
+    Voice,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -32,6 +40,13 @@ from techradar.bot.english_commands import (
     handle_story,
     story_is_open,
 )
+from techradar.bot.intake import (
+    NOT_SAVED_REPLY,
+    handle_document,
+    handle_link,
+    handle_paste,
+    is_owner_message,
+)
 from techradar.bot.mock_intake import mock_handler
 from techradar.bot.packs_command import packs_reply
 from techradar.bot.planner_commands import handle_planner_command
@@ -41,6 +56,7 @@ from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.reply_target import find_reply_target
 from techradar.bot.routing import route_update
 from techradar.bot.take_reply import handle_take
+from techradar.bot.voice_intake import handle_voice
 from techradar.db.engine import make_session_factory
 from techradar.library.quarantine import quarantine_listing
 from techradar.logs import configure_logging
@@ -52,6 +68,7 @@ from techradar.ops.status import (
     collect_status,
 )
 from techradar.settings import get_settings, read_secret
+from techradar.voice.intake import NOT_VOICE_REPLY
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +81,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_chat.id
     text = update.message.text
     settings = get_settings()
+
+    # --- Phase 3 Task 3: a document is checked before any download, owner only (SEC-26) ---
+    if isinstance(getattr(update.message, "document", None), Document):
+        if not is_owner_message(update, settings.telegram_owner_chat_id):
+            logger.warning("ignored a file from chat %s", chat_id)
+            return
+        try:
+            await handle_document(update, context)
+        except Exception:
+            logger.exception("could not take a document from the owner")
+            await update.message.reply_text(NOT_SAVED_REPLY)
+        return
+
+    # --- Phase 6 Task 1: a voice note is checked before any download, owner only (SEC-26) ---
+    message = update.message
+    if isinstance(getattr(message, "voice", None), Voice):
+        if not is_owner_message(update, settings.telegram_owner_chat_id):
+            logger.warning("ignored a voice note from chat %s", chat_id)
+            return
+        try:
+            await handle_voice(update, context)
+        except Exception:
+            logger.exception("could not take a voice note from the owner")
+            await message.reply_text(NOT_SAVED_REPLY)
+        return
+    if isinstance(getattr(message, "audio", None), Audio) or isinstance(
+        getattr(message, "video_note", None), VideoNote
+    ):  # only voice notes are analysed; nothing else is downloaded
+        if is_owner_message(update, settings.telegram_owner_chat_id):
+            await message.reply_text(NOT_VOICE_REPLY)
+        return
 
     # A reply to a Ready message asks that book. Only the owner's own chat is looked up, and
     # a database failure never silently widens the question to every note.
@@ -231,6 +279,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    # --- Phase 3 Task 3: the router allows both from the owner's own chat only ---
+    if routed.action in ("link", "paste"):
+        if not is_owner_message(update, settings.telegram_owner_chat_id):
+            return
+        if routed.action == "link":
+            await handle_link(update, context.application.bot_data, routed.arg)
+        else:
+            await handle_paste(update, context.application.bot_data, routed.arg)
+        return
+
     if routed.action in ("ask", "ask_book"):
         await handle_ask(
             update,
@@ -266,10 +324,17 @@ async def post_init(application: Application) -> None:
     # --- Phase 5 --- (/skill edits skills/<name>.md; the vault must be writable in `bot`)
     application.bot_data["vault_root"] = settings.data_dir / "vault"
     application.bot_data["tz"] = settings.tz  # Phase 8: the day a drill question belongs to
-    # Phase 8: `mock` scorecards are stored in raw/ with a parse job (needs the bot's
-    # ./data/raw and ./data/parse-jobs mounts from Phase 3 Task 3).
+    # Phase 8: `mock` scorecards are stored in raw/ with a parse job.
+    # WIRING(claude): compose gives the bot no raw/ or parse-jobs/ mount (Phase 3 Task 3 kept
+    # the bot to its own drop folder data/telegram-in), so mock intake should go through
+    # telegram-in and a worker job like owner_file does.
     application.bot_data.setdefault("raw_dir", settings.data_dir / "raw")
     application.bot_data.setdefault("jobs_dir", settings.data_dir / "parse-jobs")
+    # --- Phase 3 Task 3: the bot's private drop folder for owner PDFs and pasted notes. The
+    # worker's owner_file job moves them into raw/; the bot never mounts raw/ or parse-jobs/.
+    application.bot_data["owner_in_dir"] = settings.data_dir / "telegram-in"
+    # --- Phase 6 Task 1: voice notes are saved in data/voice/in (the bot's only voice mount)
+    application.bot_data["voice_dir"] = settings.data_dir / "voice"
 
     try:
         from procrastinate import App, PsycopgConnector

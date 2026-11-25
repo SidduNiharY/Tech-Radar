@@ -1,3 +1,5 @@
+import pytest
+
 from techradar.bot.routing import Routed, route_update
 
 
@@ -98,3 +100,48 @@ def test_practice_commands_are_the_owners_alone() -> None:
     for cmd in ("/quiz", "/cards", "/grammar", "/inbox"):
         assert route_update(42, cmd, 42).action == cmd[1:]
         assert route_update(-100, cmd, 42, group_ids=group) == Routed("ignore")
+
+
+# --- Phase 3 Task 3 + Phase 6: a long reply is never taken for a pasted text ------------------
+
+LONG = "I think the policy change matters because " + "word " * 60  # 200+ chars, no URL
+
+
+def test_long_text_alone_is_a_paste() -> None:
+    assert len(LONG.strip()) >= 200
+    assert route_update(42, LONG, 42).action == "paste"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "action"),
+    [
+        ({"reply_to_purpose": "briefing", "reply_to_ref": 3}, "take"),
+        ({"reply_to_purpose": "essay", "reply_to_ref": 3}, "essay_reply"),
+        ({"reply_to_purpose": "reflection"}, "reflection_reply"),
+        ({"ready_message_ids": frozenset({11})}, "ask_book"),
+        ({"prediction_message_ids": frozenset({11})}, "prediction_reply"),
+        ({"story_open": True}, "story_reply"),
+    ],
+)
+def test_reply_targets_and_an_open_story_win_over_the_paste_rule(
+    kwargs: dict[str, object], action: str
+) -> None:
+    routed = route_update(42, LONG, 42, reply_to_message_id=11, **kwargs)  # type: ignore[arg-type]
+    assert routed == Routed(action, LONG.strip())  # type: ignore[arg-type]
+
+
+def test_a_reply_that_is_one_link_still_goes_to_its_target() -> None:
+    kw = {"reply_to_purpose": "briefing", "reply_to_ref": 3}
+    assert route_update(42, "https://pib.gov.in/x", 42, reply_to_message_id=11, **kw) == Routed(
+        "take", "https://pib.gov.in/x"
+    )
+
+
+def test_commands_win_over_the_paste_rule() -> None:
+    assert route_update(42, "/polish " + LONG, 42).action == "polish"
+    assert route_update(42, "/ask " + LONG, 42).action == "ask"
+
+
+def test_a_group_reply_is_never_a_paste_or_a_story() -> None:
+    group = frozenset({-100})
+    assert route_update(-100, LONG, 42, group_ids=group, story_open=True) == Routed("ignore")

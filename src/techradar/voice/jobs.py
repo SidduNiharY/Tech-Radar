@@ -1,10 +1,16 @@
-"""The voice analysis job body and the 24-hour audio retention (Phase 6 Task 6).
+"""The voice analysis job body (Phase 6 Tasks 1 and 6).
 
 `analyse_voice` takes every engine as an argument (transcriber, phoneme model, speaker, grammar
 checker, completer), so it runs here with fakes. The real engines (faster-whisper, wav2vec2,
-Kokoro) are loaded by `voice.engines` inside the `voice-worker` container once approved.
+Kokoro) are loaded by `voice.engines` inside the `voice-worker` container once approved; until
+then the worker fails the note through `voice.retention.mark_voice_unavailable`.
 
-SEC: SEC-15, SEC-17, SEC-18.
+Before anything decodes the stored note, `probe` (`voice.intake.voice_file_problem`) checks it is
+a real Ogg voice note within the limits. Every path that touches the row sets `delete_after`, so
+audio never stays for good unless the owner taps Keep. Deletion itself is `voice.retention`
+(numpy-free, re-exported here).
+
+SEC: SEC-15, SEC-17, SEC-18, SEC-57.
 """
 
 from __future__ import annotations
@@ -33,12 +39,14 @@ from techradar.voice.feedback import (
     phrase_feedback,
     render_voice_report,
 )
+from techradar.voice.intake import NOT_VOICE_REPLY, voice_file_problem
 from techradar.voice.metrics import compute_metrics
 from techradar.voice.pronounce import PhonemeModel, score_words
-from techradar.voice.retention import (  # noqa: F401  (cleanup_voice, keep_voice re-exported)
+from techradar.voice.retention import (  # noqa: F401  (re-exported for callers and tests)
     RETENTION,
     cleanup_voice,
     keep_voice,
+    mark_voice_unavailable,
     reply_path,
 )
 from techradar.voice.speak import Speaker
@@ -98,11 +106,14 @@ async def analyse_voice(
     voice_dir: Path | None = None,
     free_gpu_fn: Callable[[], Awaitable[Any]] | None = None,
     now: datetime | None = None,
+    probe: Callable[[Path], str | None] = voice_file_problem,
 ) -> None:
-    """Free the GPU, then transcribe, measure, score, phrase and report one voice note.
+    """Free the GPU, then check, transcribe, measure, score, phrase and report one voice note.
 
-    Whatever happens, the row gets a `delete_after` 24 hours out, so audio never stays for good
-    unless the owner taps Keep.
+    `probe` checks the stored file before anything decodes it (a regular Ogg file within the
+    limits, ffprobe with the `ogg` demuxer and `-protocol_whitelist file`); anything else is
+    refused. Whatever happens, the row gets a `delete_after` 24 hours out, so audio never stays
+    for good unless the owner taps Keep.
     """
     if free_gpu_fn is not None:
         await free_gpu_fn()
@@ -129,6 +140,17 @@ async def analyse_voice(
         return
 
     audio_path = Path(voice_row.audio_path)
+    # The file must still be a real Ogg voice note before anything decodes it (SEC-57).
+    try:
+        problem = await anyio.to_thread.run_sync(probe, audio_path)
+    except Exception:  # e.g. swapped for a link between the checks: refuse, never decode
+        logger.warning("voice note %s could not be checked", session_id, exc_info=True)
+        problem = "unreadable"
+    if problem is not None:
+        logger.warning("voice note %s refused before decoding: %s", session_id, problem)
+        await finish("failed", NOT_VOICE_REPLY)
+        return
+
     try:
         wav = await anyio.to_thread.run_sync(decode_audio, audio_path)
         voice_row.peaks = compute_peaks(wav, n=800)
@@ -198,20 +220,3 @@ async def analyse_voice(
         )
         if out_path is not None:
             await outbox.send_voice(out_path)
-
-
-async def mark_not_set_up(
-    session: AsyncSession,
-    session_id: int,
-    outbox: VoiceOutbox,
-    text: str,
-    now: datetime | None = None,
-) -> None:
-    """The engines are missing: fail the note (audio still goes after 24 hours) and say so."""
-    row = await session.get(VoiceSession, session_id)
-    if row is None:
-        return
-    row.status = "failed"
-    row.delete_after = (now or datetime.now(UTC)) + RETENTION
-    await session.commit()
-    await outbox.send_text(text)

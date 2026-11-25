@@ -110,6 +110,12 @@ services:
       # /quarantine Delete unlinks held copies (rw). Nothing else under /data: originals of
       # deleted held library docs are removed by worker-bulk (purge_deleted_held_docs).
       - ./data/quarantine:/data/quarantine
+      # Phase 3 Task 3: owner PDFs and pasted notes, saved as <sha256>.<ext> (rw). The
+      # worker's owner_file job moves them into raw/; the bot never mounts raw/ or parse-jobs/.
+      - ./data/telegram-in:/data/telegram-in
+      # Phase 6 Task 1: the owner's voice notes, saved as voice/in/<sha256>.ogg (rw). Only
+      # the input folder: the bot never sees generated replies or other audio.
+      - ./data/voice/in:/data/voice/in
     secrets:
       - tr_ro_password
       - telegram_bot_token
@@ -222,6 +228,10 @@ services:
       - ./data/library:/data/library
       # Held news copies: process.py lists them, retention unlinks expired ones (rw).
       - ./data/quarantine:/data/quarantine
+      # Phase 3 Task 3: the owner_file job reads the bot's drop folder and removes what it took.
+      - ./data/telegram-in:/data/telegram-in
+      # Phase 6: cleanup_voice_job deletes recordings and spoken replies after 24 hours (rw).
+      - ./data/voice:/data/voice
       - ./infra/intake/limits.yaml:/infra/intake/limits.yaml:ro
       - ./infra/sources:/infra/sources:ro
       - ./infra/squid/allowlist.txt:/etc/squid/allowlist.txt:ro

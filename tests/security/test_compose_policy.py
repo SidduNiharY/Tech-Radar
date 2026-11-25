@@ -217,13 +217,18 @@ def _mounts(svc: dict) -> tuple[set[str], set[str]]:
 
 def test_bot_mounts_only_the_quarantine_folder(compose_data):
     # /quarantine Delete unlinks the held copy (remove_held_file), so the bot needs rw on
-    # data/quarantine and nothing else under /data. The originals of deleted held docs are
-    # removed by worker-bulk (purge_deleted_held_docs), never by the bot.
+    # data/quarantine. The originals of deleted held docs are removed by worker-bulk
+    # (purge_deleted_held_docs), never by the bot.
+    # Phase 3 Task 3 (2026-11-25): owner PDFs and pasted notes go to the bot's own drop folder
+    # data/telegram-in; the worker moves them into raw/. Phase 6 Task 1: voice notes go to
+    # data/voice/in only. Nothing else under /data.
     svc = compose_data["services"]["bot"]
     rw, ro = _mounts(svc)
-    assert rw == {"/data/quarantine"}
+    assert rw == {"/data/quarantine", "/data/telegram-in", "/data/voice/in"}
     assert ro == set()
     assert "./data/quarantine:/data/quarantine" in svc["volumes"]
+    assert "./data/telegram-in:/data/telegram-in" in svc["volumes"]
+    assert "./data/voice/in:/data/voice/in" in svc["volumes"]
     assert svc["user"] == "1000:1000" and svc["read_only"] is True
     assert svc["cap_drop"] == ["ALL"] and svc["tmpfs"] == ["/tmp"]  # noqa: S108
 
@@ -237,6 +242,35 @@ def test_bot_has_no_access_to_library_files(compose_data):
     for src in sources:
         assert not src.startswith(("./data/library", "./data/clean", "./data/raw")), src
         assert src not in {".", "./data"}, src
+
+
+def test_owner_drop_folder_is_only_where_the_code_uses_it(compose_data):
+    # Phase 3 Task 3: the bot writes data/telegram-in, the worker's owner_file job reads it
+    # and removes what it took. The parser and every other service never see it, and it is
+    # its own folder: never raw/, parse-jobs/ or the whole data folder.
+    holders = {
+        name
+        for name, svc in compose_data["services"].items()
+        if any(str(v).split(":")[1] == "/data/telegram-in" for v in svc.get("volumes", []))
+    }
+    assert holders == {"bot", "worker"}
+    for name in holders:
+        svc = compose_data["services"][name]
+        assert "./data/telegram-in:/data/telegram-in" in svc["volumes"], name
+
+
+def test_voice_audio_is_only_where_the_code_uses_it(compose_data):
+    # Phase 6: the bot writes voice/in only; the worker's cleanup_voice_job deletes recordings
+    # and spoken replies after 24 hours. The parser and every other service never see them.
+    holders = {
+        name
+        for name, svc in compose_data["services"].items()
+        if any(str(v).split(":")[1].startswith("/data/voice") for v in svc.get("volumes", []))
+    }
+    assert holders == {"bot", "worker"}
+    bot_rw, _ = _mounts(compose_data["services"]["bot"])
+    assert {p for p in bot_rw if p.startswith("/data/voice")} == {"/data/voice/in"}
+    assert "./data/voice:/data/voice" in compose_data["services"]["worker"]["volumes"]
 
 
 def test_worker_can_read_and_sweep_the_quarantine_folder(compose_data):
