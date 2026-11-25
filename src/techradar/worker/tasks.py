@@ -21,6 +21,7 @@ from techradar.db.engine import make_session_factory
 from techradar.db.models import Answer as AnswerModel
 from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
+from techradar.exams.inbox import csv_handler, exam_official_domains, run_csv_inbox
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
 from techradar.library.inbox import load_limits, plan_library_intake
@@ -1048,3 +1049,37 @@ async def econ_collect_job(timestamp: int | None = None) -> None:
         stored = await collect_official(session, official)
         await session.commit()
     logger.info("economy series updated from official facts: %d", stored)
+
+
+# --- Phase 8: exam files from the library inbox (wire/intake) -----------------------
+# cutoffs/*.csv and weightage/*.csv (Task 6) are read the safe way of library/inbox.py
+# (exams/inbox.py); library intake skips these folders.
+
+EXAM_INTAKE_PURPOSE = "exam_intake"
+
+
+@app.periodic(cron="*/10 * * * *")
+@app.task(queue="io", queueing_lock="exam_inbox_queued", name="exam_inbox_job")
+async def exam_inbox_job(timestamp: int | None = None) -> None:  # periodic: gets timestamp=
+    """Import settled cutoffs and weightage CSVs; each file then moves to done/ or rejected/."""
+    settings = _get_settings()
+    official = exam_official_domains(Path("infra/sources/official_domains.txt"))
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+
+        async def send(text: str) -> None:
+            await enqueue_message(
+                session,
+                chat_id=settings.telegram_owner_chat_id,
+                text=text,
+                purpose=EXAM_INTAKE_PURPOSE,
+            )
+
+        files = await run_csv_inbox(
+            session,
+            settings.library_inbox,
+            time.time(),
+            handle=csv_handler(session, official),
+            send=send,
+        )
+    logger.info("exam inbox: %d files handled", files)
