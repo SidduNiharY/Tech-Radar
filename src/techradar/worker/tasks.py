@@ -72,6 +72,7 @@ from techradar.rag.indexer import (
 from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
+from techradar.voice.practice_time import run_english_reminder
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
 from techradar.worker.names import (
@@ -1153,3 +1154,15 @@ async def reflection_save_job(text: str) -> None:
     settings = _get_settings()
     async with make_session_factory("app", settings)() as session:
         await save_reflection(session, _local_now().date(), text, settings.data_dir / "vault")
+
+
+@app.periodic(cron="*/15 * * * *")
+@app.task(queue="io", queueing_lock="english_reminder_queued", name="english_reminder_job")
+async def english_reminder_job(timestamp: int | None = None) -> None:
+    """Remind the owner to practise English at the chosen time (off unless a time is set)."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        await run_english_reminder(
+            session, _local_now(), owner_chat_id=settings.telegram_owner_chat_id
+        )
+        await session.commit()

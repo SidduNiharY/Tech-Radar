@@ -34,3 +34,9 @@ def test_on_demand_english_jobs_are_registered() -> None:
 def test_no_phase6_job_runs_on_the_night_queue_by_accident() -> None:
     for name in [*PERIODIC, POLISH, ESSAY_REPLY, REFLECTION_SAVE]:
         assert _task(name).queue != NIGHT_QUEUE
+
+
+def test_english_reminder_runs_every_15_minutes() -> None:
+    crons = {pt.task.name: pt.cron for pt in app.periodic_registry.periodic_tasks.values()}
+    assert crons["english_reminder_job"] == "*/15 * * * *"
+    assert "timestamp" in inspect.signature(tasks.english_reminder_job.func).parameters
