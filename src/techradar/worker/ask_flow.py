@@ -134,6 +134,7 @@ async def run_ask(
     session_factory: async_sessionmaker[AsyncSession],
     owner_chat_id: int,
     defer_night: DeferNight,
+    after_answered: DeferNight | None = None,
 ) -> None:
     """Answer one question (of one book when `doc_id` is set), or defer it to the night model."""
     if not valid_ask_args(question, doc_id, deps.settings.max_question_chars):
@@ -180,6 +181,11 @@ async def run_ask(
                 await session.commit()
             return
     await _deliver(session_factory, chat_id, question, answer)
+    if after_answered is not None and chat_id == owner_chat_id and answer.status == "answered":
+        try:  # --- Phase 11: maybe a "Which is better?" pair (owner only) ---
+            await after_answered(question, doc_id)
+        except Exception:
+            logger.exception("could not queue the pair job")
 
 
 async def run_web_ask(

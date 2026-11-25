@@ -18,6 +18,7 @@ from techradar.bot.drill import answer_drill
 from techradar.bot.feedback_callbacks import (
     REPORT_ACTIONS,
     handle_feedback_callback,
+    handle_pair_callback,
     handle_report_callback,
     is_feedback_action,
 )
@@ -76,6 +77,9 @@ async def handle_callback_query(
         return
     if (setup := setup_mode(action)) is not None:  # `set_<mode>:<question>:<option>`
         await handle_setup_callback(query, context.application.bot_data, setup, args)
+        return
+    if action == "pair":  # `pair:<id>:<1-3>`
+        await handle_pair_callback(query, context.application.bot_data, args)
         return
     if action in REPORT_ACTIONS:  # rule_ok, rule_no, undo
         await handle_report_callback(query, context.application.bot_data, action, args)

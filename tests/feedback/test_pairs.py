@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import pytest
+
 from techradar.db.models import PreferencePair
 from techradar.feedback.pairs import (
     VARIANTS,
@@ -24,38 +26,34 @@ def test_pair_due_limits():
     assert pair_due(2, 0) is True
 
 
-class FakeCompleter:
-    def __init__(self, responses: list[str]) -> None:
-        self.responses = list(responses)
+from tests.fakes import FakeCompleter  # noqa: E402
 
-    async def complete(self, *args, **kwargs) -> str:
-        return self.responses.pop(0)
+
+def _draft(answer: str, cites: list[str]) -> str:
+    import json
+
+    return json.dumps({"answer": answer, "citations": cites})
 
 
 async def test_make_pair_needs_both_answers_cited():
-    """make_pair returns None if either generated answer lacks valid citations."""
-    # Case 1: First answer cited, second answer uncited -> returns None
-    completer_bad = FakeCompleter(
-        [
-            '{"text": "Short answer here [C1]", "citations": ["[C1]"]}',
-            '{"text": "Detailed answer without citations", "citations": []}',
-        ]
-    )
-    res_bad = await make_pair(completer_bad, "What is CRR?", ["doc excerpt"], VARIANTS[0])
-    assert res_bad is None
+    """make_pair returns None if either answer fails check_citations; else both texts."""
+    from tests.rag.test_answer import HITS
 
-    # Case 2: Both answers cited -> returns tuple
-    completer_good = FakeCompleter(
-        [
-            '{"text": "Short answer here [C1]", "citations": ["[C1]"]}',
-            '{"text": "Detailed answer here with citations [C2]", "citations": ["[C2]"]}',
-        ]
+    bad = FakeCompleter([_draft("Short answer [C1].", ["C1"]), _draft("No citation here", [])])
+    assert await make_pair(bad, "What is CRR?", HITS, VARIANTS[0]) is None
+
+    out_of_range = FakeCompleter([_draft("Short [C1].", ["C1"]), _draft("Long [C9].", ["C9"])])
+    assert await make_pair(out_of_range, "What is CRR?", HITS, VARIANTS[0]) is None
+
+    good = FakeCompleter(
+        [_draft("Short answer [C1].", ["C1"]), _draft("Long answer [C2].", ["C2"])]
     )
-    res_good = await make_pair(completer_good, "What is CRR?", ["doc excerpt"], VARIANTS[0])
-    assert res_good is not None
-    assert len(res_good) == 2
-    assert "Short answer" in res_good[0]
-    assert "Detailed answer" in res_good[1]
+    res = await make_pair(good, "What is CRR?", HITS, VARIANTS[0])
+    assert res == ("Short answer [C1].", "Long answer [C2].")
+    # each version was asked with its own fixed template, and the same excerpts
+    systems = [c["messages"][0]["content"] for c in good.calls]
+    assert "under 120 words" in systems[0] and "comprehensive" in systems[1].lower()
+    assert good.calls[0]["messages"][1]["content"] == good.calls[1]["messages"][1]["content"]
 
 
 def test_format_pair_message_buttons():
@@ -115,6 +113,66 @@ async def test_create_and_record_choice():
     assert pid == 1
     assert session.pairs[0].chosen is None
 
-    await record_pair_choice(session, pair_id=1, chosen="a")
+    assert await record_pair_choice(session, pair_id=1, chosen="a") is True
     assert session.pairs[0].chosen == "a"
     assert session.pairs[0].answered_at is not None
+    assert await record_pair_choice(session, pair_id=1, chosen="b") is False  # never changed
+    assert session.pairs[0].chosen == "a"
+
+
+@pytest.mark.parametrize("data", ["pair:1:1", "pair:1:3"])
+@pytest.mark.parametrize(("from_id", "chat_id"), [(7, 42), (42, -100), (42, None)])
+async def test_pair_tap_outside_the_owners_own_chat_changes_nothing(data, from_id, chat_id):
+    from types import SimpleNamespace
+
+    from techradar.bot.callbacks import handle_callback_query
+
+    answers: list[Any] = []
+
+    async def answer(text: str | None = None) -> None:
+        answers.append(text)
+
+    def boom() -> Any:
+        raise AssertionError("a foreign tap must not open a session")
+
+    msg = None if chat_id is None else SimpleNamespace(chat=SimpleNamespace(id=chat_id))
+    q = SimpleNamespace(
+        data=data, from_user=SimpleNamespace(id=from_id), message=msg, answer=answer
+    )
+    ctx = SimpleNamespace(
+        application=SimpleNamespace(bot_data={"owner_id": 42, "session_factory": boom})
+    )
+    await handle_callback_query(SimpleNamespace(callback_query=q), ctx)
+    assert answers in ([None], ["Not available."])
+
+
+@pytest.mark.db
+async def test_pair_needs_both_answers_cited_and_respects_limits(session):
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from techradar.db.models import Outbox
+    from techradar.feedback.pairs import run_pair
+    from tests.rag.test_answer import HITS
+
+    now = datetime.now(UTC)
+    uncited = FakeCompleter([_draft("Short [C1].", ["C1"]), _draft("no cite", [])])
+    assert (
+        await run_pair(
+            session, uncited, HITS, "q", mode="gate", owner_chat_id=42, now=now, tz="UTC"
+        )
+        is None
+    )  # one uncited version: no pair is sent
+    assert (await session.execute(select(Outbox))).scalars().all() == []
+
+    ok = FakeCompleter([_draft("Short [C1].", ["C1"]), _draft("Long [C2].", ["C2"])])
+    pid = await run_pair(session, ok, HITS, "q", mode="gate", owner_chat_id=42, now=now, tz="UTC")
+    assert pid is not None
+    sent = (await session.execute(select(Outbox))).scalars().all()
+    assert len(sent) == 1 and sent[0].text.startswith("Which is better?")
+    ok2 = FakeCompleter([_draft("Short [C1].", ["C1"]), _draft("Long [C2].", ["C2"])])
+    again = await run_pair(
+        session, ok2, HITS, "q", mode="gate", owner_chat_id=42, now=now, tz="UTC"
+    )
+    assert again is None  # one a day

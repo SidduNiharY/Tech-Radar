@@ -24,6 +24,7 @@ from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
 from techradar.feedback.jobs import run_nightly_patterns
+from techradar.feedback.pairs import run_pair
 from techradar.feedback.report import run_weekly_report
 from techradar.feedback.search_tuning import run_tune_books
 from techradar.library.inbox import load_limits, plan_library_intake
@@ -56,6 +57,7 @@ from techradar.practice.quiz import run_quiz
 from techradar.practice.supersede import run_fact_changes
 from techradar.practice.vocab import run_vocab
 from techradar.profile.mastery import compute_mastery
+from techradar.profile.style import mode_of_doc
 from techradar.rag.indexer import (
     IndexDeps,
     collect_clipping_results,
@@ -67,7 +69,7 @@ from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps, retrieve
 from techradar.settings import Settings, get_settings
 from techradar.worker.app import app
-from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
+from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask, valid_ask_args
 from techradar.worker.names import (
     CARDS,
     GRAMMAR_SET,
@@ -278,6 +280,7 @@ async def ask_job(
         session_factory=make_session_factory("app", settings),
         owner_chat_id=settings.telegram_owner_chat_id,
         defer_night=_defer_ask_night,
+        after_answered=_defer_pair,
     )
 
 
@@ -1147,3 +1150,47 @@ async def tune_books_job(timestamp: int | None = None) -> None:
         tuned = await run_tune_books(session, retrieve_hits, now=datetime.now(UTC))
         await session.commit()
     logger.info("book tuning: %s", tuned)
+
+
+@app.task(queue="llm", lock="pair", queueing_lock="pair_queued", name="pair_job")
+@alert_on_failure("pair_job")
+async def pair_job(question: str, doc_id: int | None = None) -> None:
+    """After an answered ask: maybe send one "Which is better?" pair (3 a week, 1 a day)."""
+    settings = _get_settings()
+    deps = get_rag_deps()
+    if not valid_ask_args(question, doc_id, settings.max_question_chars):
+        logger.warning("pair job dropped: invalid arguments")
+        return
+    session_factory = make_session_factory("app", settings)
+    async with session_factory() as session:
+        mode = await mode_of_doc(session, doc_id)
+    hits = (await retrieve(question, deps, doc_id=doc_id))[:4]
+    async with session_factory() as session:
+        sent = await run_pair(
+            session,
+            deps.completer,
+            hits,
+            question,
+            mode=mode.value,
+            owner_chat_id=settings.telegram_owner_chat_id,
+            now=datetime.now(UTC),
+            tz=settings.tz,
+        )
+        await session.commit()
+    logger.info("pair sent: %s", sent)
+
+
+async def _defer_pair(question: str, doc_id: int | None) -> None:
+    try:
+        await pair_job.defer_async(question=question, doc_id=doc_id)
+    except procrastinate_exceptions.AlreadyEnqueued:
+        pass  # one is already waiting
+
+
+# WIRING(claude): `fsrs_optimize_job` (monthly) and `practice/optimizer.py` need the `fsrs`
+# package with its optimizer extra, which is not in infra/policy/approved_deps.yaml (and
+# `review_card` reading `user_settings["fsrs_params"]`). Nothing is built for them here.
+# WIRING(claude): `set_role_model` (models/registry.py, Phase 10) is not in this branch. When it
+# is, call `regression_refusal(bench_metrics)` (feedback/regression.py) for the roles worker,
+# checker and night, and add `regression_metrics(await run_regression(..., older_than_days=7))`
+# to the candidate's bench run (models/bench.py).

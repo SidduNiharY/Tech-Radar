@@ -104,3 +104,18 @@ async def handle_report_callback(
             )
         await session.commit()
     await query.answer(reply)
+
+
+async def handle_pair_callback(query: Any, bot_data: Mapping[str, Any], args: list[int]) -> None:
+    """`pair:<id>:<1-3>`: A, B or Skip. Only the owner's tap, once per pair."""
+    from techradar.feedback.pairs import CHOICES, record_pair_choice
+
+    session_factory = bot_data.get("session_factory")
+    message = owner_message(query, bot_data)
+    if session_factory is None or message is None or len(args) != 2 or args[1] not in CHOICES:
+        await query.answer("Not available.")
+        return
+    async with session_factory() as session:
+        done = await record_pair_choice(session, args[0], CHOICES[args[1]], datetime.now(UTC))
+        await session.commit()
+    await query.answer("Noted." if done else "Already answered.")
