@@ -23,6 +23,7 @@ from techradar.bot.practice_callbacks import (
     markup,
 )
 from techradar.bot.predict import handle_outcome_button
+from techradar.bot.voice_callbacks import handle_keep_voice
 from techradar.db.models import TopicSource
 from techradar.exams.sources import decide_source
 from techradar.library.quarantine import DELETE_MESSAGES, delete_item, release_prompt
@@ -104,6 +105,14 @@ async def handle_callback_query(
                 await query.answer("Not available.")
             else:
                 await handle_outcome_button(query, context.application.bot_data, args[0], args[1])
+        else:
+            await query.answer("Invalid request.")
+        return
+
+    # --- Phase 6: `keep_voice:<id>` under a voice report ---
+    if action == "keep_voice":
+        if len(args) == 1:
+            await handle_keep_voice(query, context.application.bot_data, args[0])
         else:
             await query.answer("Invalid request.")
         return

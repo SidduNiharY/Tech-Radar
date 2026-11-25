@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -239,11 +240,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
-async def outbox_worker(app_bot: Any, session_factory: Any) -> None:
+async def outbox_worker(app_bot: Any, session_factory: Any, voice_out: Path | None = None) -> None:
     """Periodically drain and send pending outbox messages."""
     while True:
         try:
-            await send_pending(app_bot, session_factory)
+            await send_pending(app_bot, session_factory, voice_out=voice_out)
         except Exception as exc:
             logger.warning("Error in outbox worker: %s", exc)
         await asyncio.sleep(5.0)
@@ -287,7 +288,9 @@ async def post_init(application: Application) -> None:
     except Exception as exc:
         logger.warning("Failed to initialize procrastinate in bot: %s", exc)
 
-    asyncio.create_task(outbox_worker(application.bot, session_factory))
+    asyncio.create_task(
+        outbox_worker(application.bot, session_factory, settings.data_dir / "voice" / "out")
+    )
 
 
 def main() -> None:

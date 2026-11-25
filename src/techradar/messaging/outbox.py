@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
@@ -76,13 +77,48 @@ async def enqueue_message(
     return msg.id
 
 
+def voice_file(file_path: str | None, voice_out: Path | None) -> Path | None:
+    """The file of a voice message, only when it is a real file inside `voice_out`."""
+    if not file_path or voice_out is None:
+        return None
+    path = Path(file_path)
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        path.resolve().relative_to(voice_out.resolve())
+    except ValueError:
+        return None
+    return path
+
+
+async def _deliver(bot: Any, msg: Outbox, reply_markup: Any, voice_out: Path | None) -> Any:
+    if msg.kind == "voice":
+        path = voice_file(msg.file_path, voice_out)
+        if path is None:
+            raise ValueError("voice file missing or outside the voice folder")
+        with path.open("rb") as handle:
+            return await bot.send_voice(
+                chat_id=msg.chat_id, voice=handle, reply_markup=reply_markup
+            )
+    return await bot.send_message(
+        chat_id=msg.chat_id,
+        text=msg.text,
+        reply_markup=reply_markup,
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+
+
 async def send_pending(
     bot: Any,
     session_factory: async_sessionmaker[AsyncSession],
     *,
     limit: int = 20,
+    voice_out: Path | None = None,
 ) -> int:
-    """Send up to limit pending outbox messages via Telegram."""
+    """Send up to limit pending outbox messages via Telegram.
+
+    `voice_out` is the only folder a `voice` message may be sent from (Phase 6).
+    """
     sent_count = 0
     async with session_factory() as session:
         stmt = (
@@ -104,13 +140,7 @@ async def send_pending(
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
 
-                link_opts = LinkPreviewOptions(is_disabled=True)
-                sent = await bot.send_message(
-                    chat_id=msg.chat_id,
-                    text=msg.text,
-                    reply_markup=reply_markup,
-                    link_preview_options=link_opts,
-                )
+                sent = await _deliver(bot, msg, reply_markup, voice_out)
                 msg.sent_at = datetime.now(UTC)
                 msg.sent_message_id = getattr(sent, "message_id", 1)
                 sent_count += 1

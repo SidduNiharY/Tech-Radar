@@ -47,6 +47,7 @@ from techradar.night.glossary import run_glossary
 from techradar.night.timelines import run_timelines
 from techradar.night.window import in_night_window, next_window_start, night_only
 from techradar.ops.alerts import alert_on_failure
+from techradar.ops.gpu import free_gpu
 from techradar.ops.health import read_backup_status, run_health_checks
 from techradar.ops.status import check_disk_live, check_ollama_live
 from techradar.pipeline.process import PipelineDeps, collect_results, process_new_items
@@ -72,7 +73,9 @@ from techradar.rag.indexer import (
 from techradar.rag.rerank import CrossEncoderReranker
 from techradar.rag.retrieve import RagDeps
 from techradar.settings import Settings, get_settings
+from techradar.voice.engines import NOT_SET_UP_TEXT, EnginesNotApproved, load_engines
 from techradar.voice.practice_time import run_english_reminder
+from techradar.voice.retention import cleanup_voice
 from techradar.worker.app import app
 from techradar.worker.ask_flow import run_ask, run_night_ask, run_web_ask
 from techradar.worker.names import (
@@ -1166,3 +1169,55 @@ async def english_reminder_job(timestamp: int | None = None) -> None:
             session, _local_now(), owner_chat_id=settings.telegram_owner_chat_id
         )
         await session.commit()
+
+
+@app.task(queue="voice", name="analyse_voice")
+async def analyse_voice_job(session_id: int) -> None:
+    """Analyse one voice note (queue `voice`, concurrency 1: one note at a time on the GPU).
+
+    The intake (Phase 6 Task 1) defers this by name. The engines load only in the voice-worker
+    image; until they are approved the owner is told the feature is not set up.
+    """
+    # Imported here: voice.jobs needs numpy, which only the voice-worker image is sure to have.
+    from techradar.voice.jobs import EnqueueOutbox, analyse_voice, mark_not_set_up
+
+    settings = _get_settings()
+    voice_dir = settings.data_dir / "voice"
+    async with (
+        httpx.AsyncClient(timeout=10.0) as http,
+        make_session_factory("app", settings)() as session,
+    ):
+        outbox = EnqueueOutbox(session, settings.telegram_owner_chat_id)
+        try:
+            engines = load_engines(Path("/opt/models"))
+        except EnginesNotApproved:
+            await mark_not_set_up(session, session_id, outbox, NOT_SET_UP_TEXT)
+            await session.commit()
+            return
+
+        async def free() -> None:
+            await free_gpu(http, settings.ollama_base_url)
+
+        await analyse_voice(
+            session,
+            session_id,
+            transcriber=engines.transcriber,
+            phoneme_model=engines.phoneme_model,
+            completer=_completer(),
+            speaker=engines.speaker,
+            outbox=outbox,
+            grammar=LanguageToolClient(http, settings.languagetool_url),
+            voice_dir=voice_dir,
+            free_gpu_fn=free,
+        )
+        await session.commit()
+
+
+@app.periodic(cron="10 * * * *")
+@app.task(queue="io", queueing_lock="cleanup_voice_queued", name="cleanup_voice_job")
+async def cleanup_voice_job(timestamp: int | None = None) -> None:
+    """Hourly: delete voice audio and spoken replies older than 24 hours unless kept."""
+    settings = _get_settings()
+    async with make_session_factory("app", settings)() as session:
+        cleaned = await cleanup_voice(session, voice_dir=settings.data_dir / "voice")
+    logger.info("voice recordings deleted: %d", cleaned)
