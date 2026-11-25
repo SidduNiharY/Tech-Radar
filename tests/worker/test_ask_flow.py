@@ -78,6 +78,13 @@ class FakeSession:
     async def commit(self) -> None:
         self.commits += 1
 
+    async def execute(self, stmt: Any) -> Any:  # Phase 11: the follow-up lookup finds nothing
+        class _Result:
+            def scalar_one_or_none(self) -> None:
+                return None
+
+        return _Result()
+
 
 class Env:
     def __init__(self) -> None:
@@ -136,8 +143,10 @@ async def test_a_plain_ask_is_answered_and_sent(env, monkeypatch) -> None:
     assert not script.calls[0][1].get("require_doc_id")
     assert [o.purpose for o in env.outbox] == ["answer"]
     assert env.outbox[0].chat_id == OWNER
-    assert env.outbox[0].buttons == [[{"text": "Save to vault", "data": "save_answer:1"}]]
-    assert len(env.answers) == 1 and env.session.commits == 1
+    aid = env.answers[0].id
+    assert env.outbox[0].buttons[0] == [{"text": "Save to vault", "data": f"save_answer:{aid}"}]
+    assert env.outbox[0].buttons[1][0] == {"text": "👍", "data": f"fb_up:2:{aid}"}  # Phase 11
+    assert len(env.answers) == 1 and env.session.commits == 2  # the ask note, then the answer
     assert env.deferred == []
 
 

@@ -40,6 +40,7 @@ from techradar.bot.english_commands import (
     handle_story,
     story_is_open,
 )
+from techradar.bot.improvements_command import handle_fix, handle_improvements
 from techradar.bot.intake import (
     NOT_SAVED_REPLY,
     handle_document,
@@ -55,6 +56,7 @@ from techradar.bot.predict import find_prediction, handle_predict, handle_predic
 from techradar.bot.render import START_TEXT, render_status
 from techradar.bot.reply_target import find_reply_target
 from techradar.bot.routing import route_update
+from techradar.bot.setup_command import handle_setup
 from techradar.bot.take_reply import handle_take
 from techradar.bot.voice_intake import handle_voice
 from techradar.db.engine import make_session_factory
@@ -211,6 +213,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else None
         )
         await update.message.reply_text(text, reply_markup=markup)
+        return
+
+    # --- Phase 11: the router allows it from the owner's own chat only ---
+    if routed.action == "improvements":
+        await handle_improvements(update, context.application.bot_data)
+        return
+    if routed.action == "fix":
+        await handle_fix(update, context.application.bot_data, routed.arg)
+        return
+    if routed.action == "setup":
+        await handle_setup(update, context.application.bot_data)
         return
 
     if routed.action == "packs":  # the router allows it from the owner's own chat only

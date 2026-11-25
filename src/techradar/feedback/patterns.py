@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from collections import Counter
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import PreferenceRule
+from techradar.schemas.pipeline import NoLinks
+
+logger = logging.getLogger(__name__)
 
 
 class Mode(StrEnum):
@@ -41,6 +46,8 @@ class Evidence(BaseModel):
         "mistakes",
         "study_sessions",
         "quiz_attempts",
+        "preference_pairs",
+        "answers",
     ]
 
 
@@ -56,15 +63,23 @@ class WeightProposal(BaseModel):
     """Proposed topic or source weight adjustment."""
 
     kind: Literal["topic", "source"]
-    key: str
+    key: str = Field(min_length=1, max_length=100)
     target: float = Field(ge=0.2, le=2.0)
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def _clean_key(cls, v: Any) -> Any:
+        """A key can come from news text: clean it as the proposal is built (SEC-48)."""
+        from techradar.feedback.weights import safe_key
+
+        return safe_key(v) if isinstance(v, str) else v
 
 
 class ContentProposal(BaseModel):
     """Proposed learning content creation to resolve confusion or repeated mistakes."""
 
     kind: Literal["foundation_page", "comparison_card", "plan_block", "focused_revision"]
-    subject: str = Field(max_length=120)
+    subject: NoLinks = Field(max_length=120)
 
 
 class PatternCandidate(BaseModel):
@@ -83,6 +98,26 @@ class PatternCandidate(BaseModel):
     subject: str = Field(max_length=120)
     evidence: Evidence
     proposal: StyleProposal | WeightProposal | ContentProposal
+
+
+# What each "Which is better?" variant name means as a style rule (see feedback/pairs.py).
+PAIR_VARIANT_RULES: dict[str, tuple[str, str]] = {
+    "short": ("length", "short"),
+    "detailed": ("length", "long"),
+    "example_first": ("order", "example_first"),
+    "definition_first": ("order", "definition_first"),
+}
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9 ]")
+
+
+def safe_subject(text: str, limit: int = 60) -> str:
+    """Letters, digits and spaces only: a chapter title or any content text becomes inert.
+
+    Content text (a chapter title) must never stop the nightly job with a validation error or
+    carry a link into a proposal (SEC-48).
+    """
+    return " ".join(_UNSAFE.sub(" ", text).split())[:limit].strip() or "this topic"
 
 
 # --- Pure pattern detection functions ---
@@ -130,7 +165,7 @@ def frequency_candidates(
                     ),
                     proposal=WeightProposal(
                         kind="topic",
-                        key=f"section:{topic}",
+                        key=topic if ":" in topic else f"section:{topic}",
                         target=0.5,
                     ),
                 )
@@ -349,7 +384,7 @@ def mistakes_candidates(
             candidates.append(
                 PatternCandidate(
                     kind="mistakes",
-                    subject=f"Repeated mistakes in {subj}",
+                    subject=f"Repeated mistakes in {safe_subject(subj)}",
                     evidence=Evidence(
                         ids=ids,
                         count=len(rows),
@@ -359,7 +394,7 @@ def mistakes_candidates(
                     ),
                     proposal=ContentProposal(
                         kind="focused_revision",
-                        subject=subj[:120],
+                        subject=safe_subject(subj, 120),
                     ),
                 )
             )
@@ -426,8 +461,10 @@ def pairs_candidates(
             variant = getattr(p, f"variant_{chosen}", "") or (
                 p.get(f"variant_{chosen}", "") if isinstance(p, dict) else ""
             )
-            field_name = "length" if variant in {"short", "detailed", "long"} else "order"
-            counts.setdefault((mode_val, field_name, variant), []).append(pid)
+            mapped = PAIR_VARIANT_RULES.get(variant)
+            if mapped is None:
+                continue
+            counts.setdefault((mode_val, mapped[0], mapped[1]), []).append(pid)
 
     candidates: list[PatternCandidate] = []
     for (m_str, fld, var), ids in counts.items():
@@ -445,7 +482,7 @@ def pairs_candidates(
                         count=len(ids),
                         total=None,
                         window_days=window_days,
-                        table="feedback",
+                        table="preference_pairs",
                     ),
                     proposal=StyleProposal(
                         mode=m,
@@ -457,41 +494,322 @@ def pairs_candidates(
     return candidates
 
 
+def confusion_candidates(
+    asks: Sequence[tuple[int, str, Sequence[float]]],
+    window_days: int = 21,
+    threshold: float = 0.80,
+) -> list[PatternCandidate]:
+    """At least 5 asks in 21 days that are pairwise at least 0.80 alike: one foundation page.
+
+    `asks` are (answer id, question, embedding). The subject is the most common longer word of
+    those questions, kept to letters (it never carries a link or markup).
+    """
+    from techradar.pipeline.filter import cosine
+
+    used: set[int] = set()
+    out: list[PatternCandidate] = []
+    for i in range(len(asks)):
+        if i in used:
+            continue
+        group = [i]
+        for j in range(i + 1, len(asks)):
+            if j in used:
+                continue
+            if all(cosine(asks[k][2], asks[j][2]) >= threshold for k in group):
+                group.append(j)
+        if len(group) < 5:
+            continue
+        used.update(group)
+        words: Counter[str] = Counter()
+        for k in group:
+            for w in re.findall(r"[A-Za-z]{4,}", asks[k][1].lower()):
+                if w not in _STOPWORDS:
+                    words[w] += 1
+        subject = words.most_common(1)[0][0] if words else "this topic"
+        out.append(
+            PatternCandidate(
+                kind="confusion",
+                subject=f"Repeated questions about {subject}",
+                evidence=Evidence(
+                    ids=[asks[k][0] for k in group][:200],
+                    count=len(group),
+                    total=None,
+                    window_days=window_days,
+                    table="answers",
+                ),
+                proposal=ContentProposal(kind="foundation_page", subject=subject),
+            )
+        )
+    return out
+
+
+_STOPWORDS = frozenset(
+    "what when where which that this with from have about does give tell explain "
+    "mean means they them their your into than then also more some very".split()
+)
+
+
 # --- Async pattern runner ---
+
+
+class _Row:
+    """A tiny record the pure rules read: attributes by name."""
+
+    def __init__(self, **kw: Any) -> None:
+        self.__dict__.update(kw)
+
+
+def _since(now: datetime, days: int) -> datetime:
+    return now - timedelta(days=days)
+
+
+async def _frequency_rows(session: AsyncSession, now: datetime) -> list[_Row]:
+    """Each topic of each story briefed in 14 days: a `skip` (real action_log id) or `shown`."""
+    from techradar.db.models import ActionLog, Briefing
+
+    since = _since(now, 14)
+    briefs = (await session.execute(select(Briefing).where(Briefing.sent_at >= since))).scalars()
+    skips = {
+        t: i
+        for i, t in (
+            await session.execute(
+                select(ActionLog.id, ActionLog.target).where(
+                    ActionLog.kind == "skip", ActionLog.at >= since
+                )
+            )
+        ).all()
+    }
+    rows: list[_Row] = []
+    for b in briefs:
+        for it in b.items or []:
+            target = f"story:{it.get('cluster_id', '')}"
+            for key in it.get("topic_keys") or []:
+                if target in skips:
+                    rows.append(_Row(id=skips[target], topic=key, kind="skip"))
+                else:
+                    rows.append(_Row(id=0, topic=key, kind="shown"))
+    return rows
+
+
+async def _source_rows(session: AsyncSession, now: datetime) -> list[_Row]:
+    """Negative feedback on stories, with the story's source domain."""
+    from techradar.db.models import Feedback, Item
+
+    fb = (
+        await session.execute(
+            select(Feedback).where(
+                Feedback.at >= _since(now, 14),
+                Feedback.target_kind == "digest_item",
+                Feedback.signal.in_(("down", "wrong", "wrong_source")),
+            )
+        )
+    ).scalars()
+    rows: list[_Row] = []
+    for f in fb:
+        domains = (
+            (await session.execute(select(Item.domain).where(Item.cluster_id == f.target_id)))
+            .scalars()
+            .all()
+        )
+        for d in sorted(set(domains)):
+            rows.append(_Row(id=f.id, signal=f.signal, source=d))
+    return rows
+
+
+async def _sequence_rows(session: AsyncSession, now: datetime) -> list[_Row]:
+    """My last 10 asks in each mode; `text` is the class of my follow-up words, if there was one."""
+    from techradar.db.models import ActionLog
+
+    asks = (
+        await session.execute(
+            select(ActionLog)
+            .where(ActionLog.kind.in_(("ask", "follow_up")), ActionLog.at >= _since(now, 14))
+            .order_by(ActionLog.id.desc())
+        )
+    ).scalars()
+    per_mode: dict[str, list[_Row]] = {}
+    for a in asks:
+        mode = a.mode or Mode.NEWS.value
+        bucket = per_mode.setdefault(mode, [])
+        if len(bucket) < 10:
+            text = (a.topic or "") if a.kind == "follow_up" else ""
+            bucket.append(_Row(id=a.id, mode=mode, text=text))
+    return [r for rows in per_mode.values() for r in rows]
+
+
+async def _mistake_rows(session: AsyncSession, now: datetime) -> list[_Row]:
+    """Wrong answers of 30 days, each with the chapter or fact subject of its question."""
+    from techradar.db.models import MCQ, Fact, LibraryChapter, Mistake
+
+    rows: list[_Row] = []
+    found = await session.execute(select(Mistake).where(Mistake.created_at >= _since(now, 30)))
+    for m in found.scalars():
+        subject: str | None = None
+        if m.kind == "mcq":
+            mcq = await session.get(MCQ, m.ref_id)
+            if mcq is not None and mcq.chapter_id is not None:
+                ch = await session.get(LibraryChapter, mcq.chapter_id)
+                subject = ch.title if ch else None
+            elif mcq is not None and mcq.fact_id is not None:
+                fact = await session.get(Fact, mcq.fact_id)
+                subject = fact.subject if fact else None
+        elif m.kind == "grammar":
+            subject = "grammar"
+        if subject:
+            rows.append(_Row(id=m.id, subject=subject))
+    return rows
+
+
+async def _ask_vectors(
+    session: AsyncSession, embedder: Any, owner_chat_id: int, now: datetime
+) -> list[tuple[int, str, Sequence[float]]]:
+    """My own questions of 21 days (never a study group's) with their embeddings."""
+    from techradar.db.models import Answer
+
+    if embedder is None:
+        return []
+    asked = (
+        await session.execute(
+            select(Answer.id, Answer.question)
+            .where(Answer.chat_id == owner_chat_id, Answer.created_at >= _since(now, 21))
+            .order_by(Answer.id.desc())
+            .limit(200)
+        )
+    ).all()
+    if len(asked) < 5:
+        return []
+    vectors = await embedder.embed([q for _, q in asked])
+    return [(i, q, v) for (i, q), v in zip(asked, vectors, strict=True)]
+
+
+def _covered(c: PatternCandidate, covered: set[tuple[str | None, str, str]]) -> bool:
+    """A style proposal an active or already-proposed rule has (never propose it twice)."""
+    p = c.proposal
+    if isinstance(p, StyleProposal):
+        return ((p.mode.value if p.mode else None), p.field, p.value) in covered
+    return False
 
 
 async def find_patterns(
     session: AsyncSession,
     embedder: Any = None,
     now: datetime | None = None,
+    *,
+    owner_chat_id: int | None = None,
 ) -> list[PatternCandidate]:
-    """Find candidate patterns and filter out proposals already active."""
+    """Run every rule over the stored rows and drop what a rule already covers.
+
+    Plain code, no model call. Evidence ids are real row ids, so `verify_evidence` can re-check
+    them later (SEC-48).
+    """
+    from techradar.db.models import Edit, PreferencePair, StudySession
+
+    ts = now or datetime.now(UTC)
     candidates: list[PatternCandidate] = []
 
-    # Filter out candidates already covered by active preference_rules
-    active_rules_stmt = select(PreferenceRule).where(PreferenceRule.status == "active")
-    res = await session.execute(active_rules_stmt)
-    active_rules = res.scalars().all()
-    active_keys = {(r.mode, r.field, r.value) for r in active_rules}
+    async def frequency() -> list[PatternCandidate]:
+        return frequency_candidates(await _frequency_rows(session, ts))
 
-    filtered: list[PatternCandidate] = []
-    for c in candidates:
-        if isinstance(c.proposal, StyleProposal):
-            mode_val = c.proposal.mode.value if c.proposal.mode else None
-            if (mode_val, c.proposal.field, c.proposal.value) in active_keys:
-                continue
-        filtered.append(c)
+    async def source() -> list[PatternCandidate]:
+        return source_candidates(await _source_rows(session, ts))
 
-    return filtered
+    async def sequence() -> list[PatternCandidate]:
+        return sequence_candidates(await _sequence_rows(session, ts))
+
+    async def mistakes() -> list[PatternCandidate]:
+        return mistakes_candidates(await _mistake_rows(session, ts))
+
+    async def edit() -> list[PatternCandidate]:
+        rows = await session.execute(select(Edit).where(Edit.at >= _since(ts, 14)))
+        return edit_candidates(list(rows.scalars().all()))
+
+    async def time() -> list[PatternCandidate]:
+        rows = await session.execute(
+            select(StudySession).where(
+                StudySession.started_at >= _since(ts, 14), StudySession.minutes.is_not(None)
+            )
+        )
+        return time_candidates(list(rows.scalars().all()))
+
+    async def pairs() -> list[PatternCandidate]:
+        rows = await session.execute(
+            select(PreferencePair).where(
+                PreferencePair.answered_at >= _since(ts, 14),
+                PreferencePair.chosen.in_(("a", "b")),
+            )
+        )
+        return pairs_candidates(list(rows.scalars().all()))
+
+    async def confusion() -> list[PatternCandidate]:
+        if owner_chat_id is None:
+            return []
+        return confusion_candidates(await _ask_vectors(session, embedder, owner_chat_id, ts))
+
+    # Each rule runs on its own: one bad row or one failed query (a savepoint rolls it back)
+    # costs that rule's candidates for tonight, never the whole job.
+    for name, rule in (
+        ("frequency", frequency),
+        ("source", source),
+        ("sequence", sequence),
+        ("mistakes", mistakes),
+        ("edit", edit),
+        ("time", time),
+        ("pairs", pairs),
+        ("confusion", confusion),
+    ):
+        try:
+            async with session.begin_nested():
+                candidates += await rule()
+        except Exception:
+            logger.exception("pattern rule %s failed; skipped tonight", name)
+
+    rules = (
+        await session.execute(
+            select(PreferenceRule).where(PreferenceRule.status.in_(("active", "proposed")))
+        )
+    ).scalars()
+    covered = {(r.mode, r.field, r.value) for r in rules}
+    return [c for c in candidates if not _covered(c, covered)]
+
+
+async def _lower_source_once(session: AsyncSession, key: str, now: datetime) -> None:
+    """Automatic -0.3 on a source with 5 bad signals, at most once in 14 days; it is logged."""
+    from techradar.db.models import ImprovementLog
+    from techradar.feedback.weights import apply_signal
+
+    recent = (
+        await session.execute(
+            select(ImprovementLog).where(
+                ImprovementLog.kind == "weight",
+                ImprovementLog.key == key,
+                ImprovementLog.at >= _since(now, 14),
+            )
+        )
+    ).scalars()
+    if any((r.after or {}).get("rule") == "source_pattern" for r in recent):
+        return
+    ids = await apply_signal(session, topics=[], source=key, delta=-0.3, exam_topic=False, now=now)
+    for log_id in ids:
+        log = await session.get(ImprovementLog, log_id)
+        if log is not None:
+            log.after = {**(log.after or {}), "rule": "source_pattern"}
+    await session.flush()
 
 
 async def run_find_patterns(
     session: AsyncSession,
     embedder: Any = None,
     now: datetime | None = None,
+    *,
+    owner_chat_id: int | None = None,
 ) -> list[PatternCandidate]:
-    """Execute nightly pattern detection job and return actionable candidates."""
-    return await find_patterns(session, embedder=embedder, now=now)
+    """The nightly job body: find candidates, and lower a bad source once per window."""
+    ts = now or datetime.now(UTC)
+    found = await find_patterns(session, embedder, ts, owner_chat_id=owner_chat_id)
+    for c in found:
+        if c.kind == "source" and isinstance(c.proposal, WeightProposal):
+            await _lower_source_once(session, c.proposal.key, ts)
+    return found
 
 
 async def find_recurring_patterns(
@@ -499,5 +817,5 @@ async def find_recurring_patterns(
     embedder: Any = None,
     now: datetime | None = None,
 ) -> list[PatternCandidate]:
-    """Detect recurring mistakes or high-friction areas."""
+    """Alias kept for the first run's callers."""
     return await find_patterns(session, embedder=embedder, now=now)

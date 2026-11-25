@@ -102,7 +102,7 @@ def test_render_card_back_without_source() -> None:
     )
     text, buttons = render_card_back(card)
     assert "Source:" not in text
-    assert len(buttons) == 1
+    assert len([r for r in buttons if r[0].data.startswith("rate:")]) == 1  # + Phase 11 row
     assert [b.text for b in buttons[0]] == ["Again", "Hard", "Good", "Easy"]
 
 

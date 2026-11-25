@@ -15,6 +15,13 @@ from telegram.ext import ContextTypes
 
 from techradar.bot.book_ask import chapters_listing, valid_id
 from techradar.bot.drill import answer_drill
+from techradar.bot.feedback_callbacks import (
+    REPORT_ACTIONS,
+    handle_feedback_callback,
+    handle_pair_callback,
+    handle_report_callback,
+    is_feedback_action,
+)
 from techradar.bot.planner_commands import handle_checkin_tap
 from techradar.bot.practice_callbacks import (
     PRACTICE_ACTIONS,
@@ -23,11 +30,14 @@ from techradar.bot.practice_callbacks import (
     markup,
 )
 from techradar.bot.predict import handle_outcome_button
+from techradar.bot.setup_command import handle_setup_callback
 from techradar.bot.voice_callbacks import handle_keep_voice
 from techradar.db.models import TopicSource
 from techradar.exams.sources import decide_source
+from techradar.feedback.actions import log_action
 from techradar.library.quarantine import DELETE_MESSAGES, delete_item, release_prompt
 from techradar.messaging.outbox import parse_callback
+from techradar.profile.setup import setup_mode
 from techradar.tickets import create_ticket, run_confirmed, tg_session_id, token_for
 from techradar.worker.names import SAVE_ANSWER
 
@@ -60,6 +70,20 @@ async def handle_callback_query(
             await _quarantine_callback(query, context.application.bot_data, action, args[0])
         else:
             await query.answer("Invalid request.")
+        return
+
+    # --- Phase 11: feedback taps, `fb_<signal>:<kind code>:<id>` ---
+    if is_feedback_action(action):
+        await handle_feedback_callback(query, context.application.bot_data, action, args)
+        return
+    if (setup := setup_mode(action)) is not None:  # `set_<mode>:<question>:<option>`
+        await handle_setup_callback(query, context.application.bot_data, setup, args)
+        return
+    if action == "pair":  # `pair:<id>:<1-3>`
+        await handle_pair_callback(query, context.application.bot_data, args)
+        return
+    if action in REPORT_ACTIONS:  # rule_ok, rule_no, undo
+        await handle_report_callback(query, context.application.bot_data, action, args)
         return
 
     if action in PRACTICE_ACTIONS:  # --- Phase 3 ---
@@ -119,6 +143,11 @@ async def handle_callback_query(
 
     if action == "save_answer" and len(args) == 1:
         procrastinate_app = context.application.bot_data.get("procrastinate_app")
+        factory = context.application.bot_data.get("session_factory")
+        if factory is not None:  # --- Phase 11: saving an answer is a `save` action ---
+            async with factory() as s:
+                await log_action(s, "save", f"answer:{args[0]}", now=datetime.now(UTC))
+                await s.commit()
         if procrastinate_app:
             await procrastinate_app.configure_task(name=SAVE_ANSWER).defer_async(answer_id=args[0])
         await query.answer("Saving to vault...")

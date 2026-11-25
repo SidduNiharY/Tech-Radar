@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -48,12 +49,15 @@ def score(relevance: float, topic_w: float, source_w: float) -> float:
     return float(relevance * topic_w * source_w)
 
 
-def _get_item_topic(item: Any) -> str | None:
-    if hasattr(item, "topic"):
-        return item.topic
-    if isinstance(item, dict):
-        return item.get("topic")
-    return None
+def _topic_keys(item: Any) -> list[str]:
+    """The topic keys of a candidate: `topic_keys` (briefing stories) or one `topic`."""
+    keys = getattr(item, "topic_keys", None)
+    if keys:
+        return list(keys)
+    topic = getattr(item, "topic", None)
+    if topic is None and isinstance(item, dict):
+        topic = item.get("topic")
+    return [topic] if topic else []
 
 
 def _has_exam_tags(item: Any) -> bool:
@@ -66,10 +70,8 @@ def _has_exam_tags(item: Any) -> bool:
 
 def is_favourite(item: Any, weights: Mapping[str, float]) -> bool:
     """Check if item topic has weight >= 1.0."""
-    topic = _get_item_topic(item)
-    if topic and topic in weights:
-        return weights[topic] >= 1.0
-    return False
+    known = [weights[k] for k in _topic_keys(item) if k in weights]
+    return bool(known) and sum(known) / len(known) >= 1.0
 
 
 def pick_outside_usual(
@@ -127,7 +129,7 @@ async def apply_signal(
 ) -> list[int]:
     """Apply weight change delta to topics and source, logging automatic changes."""
     log_ids: list[int] = []
-    floor = 0.8 if exam_topic else None
+    exam_floor = 0.8 if exam_topic else None
 
     for topic in topics:
         stmt = select(Weight).where(Weight.kind == "topic", Weight.key == topic)
@@ -135,6 +137,8 @@ async def apply_signal(
         w_row = res.scalar_one_or_none()
 
         old_val = w_row.value if w_row else 1.0
+        # a floor, once set for a topic, stays (a syllabus topic never drops below it)
+        floor = exam_floor if exam_floor is not None else (w_row.floor if w_row else None)
         new_val = bounded(old_val + delta, floor=floor)
 
         if w_row:
@@ -197,3 +201,93 @@ async def apply_signal(
         log_ids.append(log.id)
 
     return log_ids
+
+
+_KEY_UNSAFE = re.compile(r"[^A-Za-z0-9 _:-]")
+_DOMAIN_UNSAFE = re.compile(r"[^a-z0-9.-]")
+
+
+def safe_key(key: str, limit: int = 100) -> str:
+    """A weight key that is safe to store and to show: no link, markup or sentence survives.
+
+    `source:` keys keep dots (a domain); every other key keeps letters, digits, spaces,
+    `_`, `-` and `:` only. The text of a key can come from news, so it is cleaned where the
+    key is built (SEC-48).
+    """
+    head, sep, tail = key.partition(":")
+    if head == "source" and sep:
+        return "source:" + _DOMAIN_UNSAFE.sub("", tail.strip().lower())[:80]
+    return " ".join(_KEY_UNSAFE.sub("", key).split())[:limit]
+
+
+def source_key(domain: str) -> str:
+    """The weight key of a source: `source:<registrable domain>`."""
+    return safe_key(f"source:{domain}")
+
+
+def entity_key(entity: str) -> str:
+    """The weight key of an entity: `entity:<normalised entity>`."""
+    return safe_key("entity:" + " ".join(entity.lower().split())[:80])
+
+
+def story_topic_keys(section: str, entities: Sequence[str]) -> list[str]:
+    """`section:<section>` plus `entity:<entity>` for each reader entity."""
+    return [f"section:{section}", *(entity_key(e) for e in entities)]
+
+
+async def load_weights(session: AsyncSession, now: datetime) -> dict[str, float]:
+    """Every topic and source weight as it counts today: faded toward 1.0 by its age."""
+    rows = (
+        await session.execute(select(Weight).where(Weight.kind.in_(("topic", "source"))))
+    ).scalars()
+    out: dict[str, float] = {}
+    for w in rows:
+        age = max(0.0, (now - w.updated_at).total_seconds() / 86400) if w.updated_at else 0.0
+        out[w.key] = effective(w.value, age)
+    return out
+
+
+def mean_weight(keys: Sequence[str], weights: Mapping[str, float]) -> float:
+    """The average effective weight of the keys with a history; 1.0 when there is none."""
+    known = [weights[k] for k in keys if k in weights]
+    return sum(known) / len(known) if known else 1.0
+
+
+async def apply_digest_signal(
+    session: AsyncSession, cluster_id: int, delta: float, now: datetime
+) -> list[int]:
+    """Move the weights of one briefing story: its section, entities and sources.
+
+    The story's own stored data names the topics (never the feedback sender). A story with
+    exam tags counts as an exam topic, so its weight keeps the 0.8 floor.
+    """
+    from techradar.db.models import Item
+    from techradar.schemas.pipeline import ReaderOutput
+
+    items = (
+        (await session.execute(select(Item).where(Item.cluster_id == cluster_id))).scalars().all()
+    )
+    reader = next((it.reader_json for it in items if getattr(it, "reader_json", None)), None)
+    if reader is None:
+        return []
+    try:
+        out = ReaderOutput.model_validate(reader)
+    except ValueError:
+        return []
+    topics = story_topic_keys(str(out.section.value), out.entities)
+    ids: list[int] = []
+    domains = sorted({it.domain for it in items})
+    exam = bool(out.exam_tags)
+    ids += await apply_signal(
+        session,
+        topics=topics,
+        source=source_key(domains[0]) if domains else None,
+        delta=delta,
+        exam_topic=exam,
+        now=now,
+    )
+    for extra in domains[1:]:
+        ids += await apply_signal(
+            session, topics=[], source=source_key(extra), delta=delta, exam_topic=False, now=now
+        )
+    return ids

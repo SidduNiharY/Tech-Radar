@@ -23,6 +23,9 @@ class Session:
             def scalar_one_or_none(self) -> None:
                 return None
 
+            def scalars(self) -> list[Any]:  # Phase 11: no learned weights
+                return []
+
         return Result()
 
     def add(self, obj: Any) -> None:

@@ -24,8 +24,8 @@ CANDIDATE = PatternCandidate(
     kind="source",
     subject="Low quality source",
     evidence=Evidence(
-        ids=[1, 2, 3],
-        count=3,
+        ids=[1, 2, 3, 4, 5],
+        count=5,
         total=None,
         window_days=14,
         table="feedback",
@@ -45,9 +45,10 @@ def test_report_layout():
         tests_added=3,
     )
     assert text.startswith("🔧 Weekly improvement report\n\nChanges I suggest (tap to approve):\n")
-    assert "1. Reduce content from spam.com: 3 times in 14 days" in text
+    assert "1. Reduce content from spam.com: 5 times in 14 days" in text
     assert "• 3 bad answers saved as new tests" in text
     assert text.endswith("Undo anything: /improvements")
+    assert "   Weight: source:spam.com to 0.5" in text  # what approving does, from the proposal
     assert len(kb) == 1
     assert kb[0][0].data == "rule_ok:1"
     assert kb[0][1].data == "rule_no:1"
@@ -77,8 +78,8 @@ class FakeEvidenceSession:
 
 async def test_verify_evidence_success_and_failure():
     """Verify evidence passes when row count matches and fails when IDs are missing."""
-    session_ok = FakeEvidenceSession(3)
+    session_ok = FakeEvidenceSession(5)
     assert await verify_evidence(session_ok, CANDIDATE, NOW)
 
-    session_fail = FakeEvidenceSession(1)  # only 1 found instead of 3
+    session_fail = FakeEvidenceSession(1)  # only 1 found instead of 5
     assert not await verify_evidence(session_fail, CANDIDATE, NOW)

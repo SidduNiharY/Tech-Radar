@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -23,8 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from techradar.bot.book_ask import valid_id
 from techradar.bot.render import render_answer
 from techradar.db.models import Answer as AnswerModel
+from techradar.feedback.actions import note_ask
+from techradar.feedback.search_tuning import book_min_score
+from techradar.feedback.signals import TargetKind, feedback_buttons
 from techradar.llm.roles import Role
 from techradar.messaging.outbox import Button, enqueue_message
+from techradar.profile.style import build_profile, mode_of_doc
 from techradar.rag.answer import LOW_CONFIDENCE, Answer, answer_question
 from techradar.rag.retrieve import RagDeps, RetrieveFilters
 
@@ -53,6 +58,37 @@ def _scope(doc_id: int | None) -> dict[str, Any]:
     return {"doc_id": doc_id, "require_doc_id": doc_id is not None}
 
 
+async def _profile_for(
+    session_factory: async_sessionmaker[AsyncSession], question: str, doc_id: int | None
+) -> tuple[str | None, str | None, list[str]]:
+    """(system block, mode, mastered topic names) for the owner's question (Phase 11).
+
+    Never blocks an answer. The names are untrusted: they go to the user prompt only.
+    """
+    try:
+        async with session_factory() as session:
+            mode = await mode_of_doc(session, doc_id)
+            block, known = await build_profile(session, question, mode)
+            return block, mode.value, known
+    except Exception:
+        logger.exception("could not build the profile block; answering without it")
+        return None, None, []
+
+
+async def _min_score_for(
+    session_factory: async_sessionmaker[AsyncSession], doc_id: int | None
+) -> float | None:
+    """The tuned cut-off of one book (`weights`, kind `search`), or None (Phase 11 Task 8)."""
+    if doc_id is None:
+        return None
+    try:
+        async with session_factory() as session:
+            return await book_min_score(session, doc_id)
+    except Exception:
+        logger.exception("could not read the book's cut-off; using the default")
+        return None
+
+
 async def _deliver(
     session_factory: async_sessionmaker[AsyncSession],
     chat_id: int,
@@ -74,7 +110,10 @@ async def _deliver(
         await session.flush()
         buttons = None
         if answer.status == "answered":
-            buttons = [[Button(text="Save to vault", data=f"save_answer:{row.id}")]]
+            buttons = [
+                [Button(text="Save to vault", data=f"save_answer:{row.id}")],
+                *feedback_buttons(TargetKind.ANSWER, row.id),  # --- Phase 11 ---
+            ]
         await enqueue_message(
             session,
             chat_id=chat_id,
@@ -95,16 +134,40 @@ async def run_ask(
     session_factory: async_sessionmaker[AsyncSession],
     owner_chat_id: int,
     defer_night: DeferNight,
+    after_answered: DeferNight | None = None,
 ) -> None:
     """Answer one question (of one book when `doc_id` is set), or defer it to the night model."""
     if not valid_ask_args(question, doc_id, deps.settings.max_question_chars):
         logger.warning("ask job dropped: invalid arguments")
         return
     scope = _scope(doc_id)
-    answer = await answer_question(question, deps, **scope)
+    profile: str | None = None
+    known: list[str] = []
+    min_score = await _min_score_for(session_factory, doc_id)
+    if chat_id == owner_chat_id:
+        # --- Phase 11: my preferences shape the owner's answers only, never a study group's;
+        # the ask is logged (a follow-up within 10 minutes of my last answer is noted) ---
+        profile, mode, known = await _profile_for(session_factory, question, doc_id)
+        async with session_factory() as session:
+            await note_ask(
+                session, chat_id=chat_id, question=question, mode=mode, now=datetime.now(UTC)
+            )
+            await session.commit()
+    answer = await answer_question(
+        question, deps, **scope, profile=profile, known_topics=known, min_score=min_score
+    )
     if answer.status == "needs_review" and "too_long" not in answer.flags:
         # one more try, searching with rewritten queries and the neighbouring chunks
-        answer = await answer_question(question, deps, **scope, rewrite=True, expand=True)
+        answer = await answer_question(
+            question,
+            deps,
+            **scope,
+            rewrite=True,
+            expand=True,
+            profile=profile,
+            known_topics=known,
+            min_score=min_score,
+        )
     if chat_id == owner_chat_id and is_hard(answer):
         try:
             await defer_night(question, doc_id)
@@ -118,6 +181,11 @@ async def run_ask(
                 await session.commit()
             return
     await _deliver(session_factory, chat_id, question, answer)
+    if after_answered is not None and chat_id == owner_chat_id and answer.status == "answered":
+        try:  # --- Phase 11: maybe a "Which is better?" pair (owner only) ---
+            await after_answered(question, doc_id)
+        except Exception:
+            logger.exception("could not queue the pair job")
 
 
 async def run_web_ask(
@@ -155,9 +223,22 @@ async def run_web_ask(
     scope = _scope(doc_id)
     f = RetrieveFilters(verified_only=True) if verified_only else None
     try:
-        answer = await answer_question(question, deps, f=f, **scope)
+        profile, _, known = await _profile_for(session_factory, question, doc_id)  # Phase 11
+        min_score = await _min_score_for(session_factory, doc_id)
+        answer = await answer_question(
+            question, deps, f=f, **scope, profile=profile, known_topics=known, min_score=min_score
+        )
         if answer.status == "needs_review" and "too_long" not in answer.flags:
-            answer = await answer_question(question, deps, f=f, **scope, rewrite=True, expand=True)
+            answer = await answer_question(
+                question,
+                deps,
+                f=f,
+                **scope,
+                rewrite=True,
+                expand=True,
+                profile=profile,
+                known_topics=known,
+            )
     except Exception:
         await _fill_web_answer(session_factory, row_id, None)
         raise
@@ -200,7 +281,17 @@ async def run_night_ask(
     if not valid_ask_args(question, doc_id, deps.settings.max_question_chars):
         logger.warning("night ask job dropped: invalid arguments")
         return
+    profile, _, known = await _profile_for(session_factory, question, doc_id)  # Phase 11
+    min_score = await _min_score_for(session_factory, doc_id)
     answer = await answer_question(
-        question, deps, **_scope(doc_id), role=Role.NIGHT, rewrite=True, expand=True
+        question,
+        deps,
+        **_scope(doc_id),
+        role=Role.NIGHT,
+        rewrite=True,
+        expand=True,
+        profile=profile,
+        known_topics=known,
+        min_score=min_score,
     )
     await _deliver(session_factory, owner_chat_id, question, answer)

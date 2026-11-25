@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import MCQ, Flashcard, Mistake, QuizAttempt
+from techradar.feedback.signals import TargetKind, feedback_buttons
 from techradar.messaging.outbox import Button, enqueue_message
 from techradar.practice.flashcards import new_card_state
 
@@ -45,6 +46,7 @@ def render_mcq(m: Any, n: int, total: int) -> tuple[str, list[list[Button]]]:
 
     button_count = min(len(LETTERS), len(options)) if options else 4
     buttons = [[Button(text=LETTERS[i], data=f"ans:{mcq_id}:{i}") for i in range(button_count)]]
+    buttons += feedback_buttons(TargetKind.MCQ, mcq_id)  # --- Phase 11 ---
     return text, buttons
 
 

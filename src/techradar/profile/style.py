@@ -125,3 +125,43 @@ def mode_for(context: Any) -> Mode:
 
     # 4. Default
     return Mode.NEWS
+
+
+# --- Phase 11 Task 7: building the block an answer is given ----------------------------------
+
+
+async def mode_of_doc(session: Any, doc_id: int | None) -> Mode:
+    """The mode of a question: the asked book's exam tags, otherwise `NEWS` (see `mode_for`)."""
+    if doc_id is None:
+        return Mode.NEWS
+    from techradar.db.models import LibraryDoc
+
+    doc = await session.get(LibraryDoc, doc_id)
+    return mode_for({"exam_tags": list(doc.exam_tags or []) if doc else []})
+
+
+async def build_profile(session: Any, question: str, mode: Mode) -> tuple[str | None, list[str]]:
+    """(system block, mastered topic names) for one question.
+
+    The system block holds only fixed template lines (the rules, then a fixed mastery line with
+    no names). The topic names come from book titles, so they are returned separately for the
+    user prompt, where they sit between UNTRUSTED markers. Citations are checked as before.
+    """
+    from techradar.feedback.approval import active_style_rules
+    from techradar.profile.mastery import (
+        load_levels,
+        mastered_topics,
+        mastery_line,
+        topics_in_question,
+    )
+
+    rules = await active_style_rules(session, mode)
+    parts: list[str] = []
+    if rules:
+        parts.append(render_profile_block(rules))
+    levels = await load_levels(session)
+    named = topics_in_question(question, levels)
+    line = mastery_line(levels, named)
+    if line:
+        parts.append(line)
+    return ("\n".join(parts) if parts else None), mastered_topics(levels, named)

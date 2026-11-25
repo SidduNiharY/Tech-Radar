@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 
 from pydantic import BaseModel, Field
@@ -10,7 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from techradar.db.models import Briefing as BriefingModel
 from techradar.db.models import Item, Note
-from techradar.messaging.outbox import enqueue_message
+from techradar.feedback.signals import TargetKind, feedback_buttons
+from techradar.feedback.weights import (
+    load_weights,
+    mean_weight,
+    pick_outside_usual,
+    score,
+    source_key,
+    story_topic_keys,
+)
+from techradar.messaging.outbox import Button, enqueue_message
 from techradar.pipeline.verify import headline_ok
 from techradar.schemas.pipeline import ReaderOutput, Section
 
@@ -34,6 +43,10 @@ class StoryCandidate(BaseModel):
     domains: set[str] = Field(default_factory=set)
     verified_headline: bool = False
     relevance: float = 0.5
+    # --- Phase 11: what the learned weights need (filled by load_candidates) ---
+    topic_keys: list[str] = Field(default_factory=list)
+    source_keys: list[str] = Field(default_factory=list)
+    score: float = 0.0
 
 
 def select_items(
@@ -42,13 +55,20 @@ def select_items(
     *,
     per_section: int = 3,
     max_items: int = 15,
+    weights: Mapping[str, float] | None = None,
 ) -> list[StoryCandidate]:
     """Selects and caps stories for the daily briefing.
 
     - Drops a politics story unless `headline_ok` (3 or more domains, D7).
-    - Sorts by (verified_headline desc, relevance desc).
+    - Sorts by (verified_headline desc, score desc), where score is relevance times the
+      learned topic and source weights (Phase 11, D46); with no weights, score is relevance.
     - Caps at per_section per section, and at most max_items total.
+    - Keeps an outside-usual slot: at least 10% of the chosen come from topics with weight below
+      1 or no history, never replacing an exam-tagged story.
     """
+    w = weights or {}
+    for c in cands:  # the learned score, kept on the story for the outside-usual step
+        c.score = score(c.relevance, mean_weight(c.topic_keys, w), mean_weight(c.source_keys, w))
     valid = [
         c
         for c in cands
@@ -57,7 +77,7 @@ def select_items(
 
     sorted_cands = sorted(
         valid,
-        key=lambda c: (c.verified_headline, c.relevance),
+        key=lambda c: (c.verified_headline, c.score),
         reverse=True,
     )
 
@@ -70,7 +90,29 @@ def select_items(
             selected.append(c)
             section_counts[c.section] += 1
 
+    if w:
+        selected = pick_outside_usual(sorted_cands, selected, w)
     return selected
+
+
+def story_feedback_rows(message: str, items: Sequence[StoryCandidate]) -> list[list[Button]]:
+    """One feedback row per story that this message shows (Phase 11 Task 2).
+
+    Each button starts with the story's first words, so the row says which story it is about.
+    """
+    rows: list[list[Button]] = []
+    for it in items:
+        if f"• {it.title} " not in message or not it.cluster_id.isdigit():
+            continue
+        tag = it.title[:10].strip()
+        row = [b for r in feedback_buttons(TargetKind.DIGEST_ITEM, int(it.cluster_id)) for b in r]
+        rows.append(
+            [
+                Button(text=f"{b.text} {tag}"[:32] if i == 0 else b.text, data=b.data)
+                for i, b in enumerate(row)
+            ]
+        )
+    return rows
 
 
 class Briefing(BaseModel):
@@ -247,6 +289,8 @@ async def load_candidates(
                 domains=domains,
                 verified_headline=headline_ok(domains, out.section, official),
                 relevance=relevance,
+                topic_keys=story_topic_keys(str(out.section.value), out.entities),
+                source_keys=sorted(source_key(d) for d in domains),
             )
         )
     return cands
@@ -275,7 +319,8 @@ async def run_briefing(
 
     if candidates is None:
         candidates = await load_candidates(session, official_domains, now)
-    selected = select_items(list(candidates), official_domains)
+    weights = await load_weights(session, now)
+    selected = select_items(list(candidates), official_domains, weights=weights)
 
     briefing_obj = Briefing(date=now.date(), items=selected, plan_lines=plan_lines or [])
 
@@ -293,6 +338,7 @@ async def run_briefing(
             chat_id=owner_chat_id,
             text=msg,
             purpose="briefing",
+            buttons=story_feedback_rows(msg, selected) or None,
             ref_id=briefing_row.id,
         )
 

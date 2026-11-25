@@ -231,6 +231,9 @@ class FakeAsyncSession:
             def scalar_one_or_none(self) -> object:
                 return self.val
 
+            def scalars(self) -> list[object]:  # Phase 11: no learned weights yet
+                return []
+
         return FakeResult(self.last_sent)
 
     def add(self, obj: object) -> None:

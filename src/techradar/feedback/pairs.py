@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,51 +35,62 @@ def pair_due(asked_this_week: int, asked_today: int) -> bool:
     return asked_this_week < 3 and asked_today < 1
 
 
-def _has_valid_citations(text: str) -> bool:
-    """Check that answer text contains citations."""
-    return bool("[c" in text.lower() or "[1]" in text or "[c1]" in text.lower())
-
-
-class PairAnswer(BaseModel):
-    """Answer draft with citations for pair comparison."""
-
-    text: str
-    citations: list[str] = Field(default_factory=list)
-
-
 async def make_pair(
     completer: Any,
     question: str,
     excerpts: Sequence[Any],
     variant: tuple[str, str, StyleRule, StyleRule],
+    role: Any = None,
 ) -> tuple[str, str] | None:
-    """Generate two answers under contrasting style rules, requiring valid citations for both."""
-    from techradar.llm.client import complete_json
+    """Two answers from the same excerpts, one per style rule, each vetted like any answer.
+
+    The question is sanitized, the request must fit the context, and every draft goes through
+    the same `vet_draft` as `answer_question` (not found, citations, injection flags). The pair
+    is dropped when any check fails, when a draft cites an unverified note, or when any excerpt
+    is flagged by the Intake Gateway (SEC-37, SEC-38, SEC-41). `excerpts` are the retrieved
+    `Hit`s; the style rules are fixed templates.
+    """
+    from techradar.llm.client import LLMOutputError, complete_json
     from techradar.llm.roles import Role
     from techradar.profile.style import render_profile_block
+    from techradar.rag.answer import (
+        ANSWER_MAX_TOKENS,
+        ANSWER_SYSTEM,
+        AnswerDraft,
+        _context_tokens,
+        fit_request,
+        vet_draft,
+    )
+    from techradar.security.text import sanitize_text
 
-    var_a_name, var_b_name, rule_a, rule_b = variant
-    excerpts_text = "\n".join(str(e) for e in excerpts)
-
-    system_a = f"You are a helpful tutor.\n{render_profile_block([rule_a])}"
-    system_b = f"You are a helpful tutor.\n{render_profile_block([rule_b])}"
-    user_prompt = f"Excerpts:\n{excerpts_text}\n\nQuestion: {question}"
-
-    try:
-        ans_a = await complete_json(completer, Role.WORKER, system_a, user_prompt, PairAnswer)
-        ans_b = await complete_json(completer, Role.WORKER, system_b, user_prompt, PairAnswer)
-    except Exception:
+    hits = list(excerpts)
+    clean = sanitize_text(question)
+    if not hits or not clean or any(h.flagged for h in hits):
         return None
-
-    txt_a = ans_a.text
-    txt_b = ans_b.text
-
-    if not _has_valid_citations(txt_a) and not ans_a.citations:
+    systems = [f"{ANSWER_SYSTEM}\n\n{render_profile_block([r])}" for r in (variant[2], variant[3])]
+    longest = max(systems, key=len)  # both versions get the same excerpts
+    fitted = fit_request(hits, clean, longest, (), _context_tokens(clean, longest), hits[0])
+    if fitted is None:
         return None
-    if not _has_valid_citations(txt_b) and not ans_b.citations:
-        return None
-
-    return txt_a, txt_b
+    fitted_hits, prompt = fitted
+    texts: list[str] = []
+    for system in systems:
+        try:
+            draft = await complete_json(
+                completer,
+                role or Role.WORKER,
+                system,
+                prompt,
+                AnswerDraft,
+                max_tokens=ANSWER_MAX_TOKENS,
+            )
+        except LLMOutputError:
+            return None
+        vetted = vet_draft(draft, fitted_hits)
+        if vetted.status != "answered" or vetted.used_unverified or vetted.flags:
+            return None
+        texts.append(vetted.text)
+    return texts[0], texts[1]
 
 
 def format_pair_message(
@@ -89,7 +100,7 @@ def format_pair_message(
     pair_id: int,
 ) -> tuple[str, list[list[Button]]]:
     """Format Telegram comparison message and voting inline buttons."""
-    text = f"Which is better?\nA: {ans_a}\n\nB: {ans_b}"
+    text = f"Which is better?\nA: {ans_a[:1800]}\n\nB: {ans_b[:1800]}"
     buttons: list[list[Button]] = [
         [
             Button(text="A", data=f"pair:{pair_id}:1"),
@@ -125,18 +136,91 @@ async def create_pair(
     return pair.id
 
 
+CHOICES: dict[int, Literal["a", "b", "skip"]] = {1: "a", 2: "b", 3: "skip"}
+
+
 async def record_pair_choice(
     session: AsyncSession,
     pair_id: int,
     chosen: Literal["a", "b", "skip"],
     now: datetime | None = None,
-) -> None:
-    """Record user preference choice for an active pair."""
+) -> bool:
+    """Record the owner's choice once. An answered pair is never changed. True when recorded."""
     ts = now or datetime.now(UTC)
-    stmt = select(PreferencePair).where(PreferencePair.id == pair_id)
-    res = await session.execute(stmt)
+    res = await session.execute(select(PreferencePair).where(PreferencePair.id == pair_id))
     pair = res.scalar_one_or_none()
-    if pair:
-        pair.chosen = chosen
-        pair.answered_at = ts
-        await session.flush()
+    if pair is None or pair.chosen is not None:
+        return False
+    pair.chosen = chosen
+    pair.answered_at = ts
+    await session.flush()
+    return True
+
+
+async def pair_counts(session: AsyncSession, now: datetime, tz: str) -> tuple[int, int]:
+    """(pairs asked in the last 7 days, pairs asked on today's local date)."""
+    from zoneinfo import ZoneInfo
+
+    rows = (
+        (
+            await session.execute(
+                select(PreferencePair.asked_at).where(
+                    PreferencePair.asked_at >= now - timedelta(days=7)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    zone = ZoneInfo(tz)
+    today = now.astimezone(zone).date()
+    return len(rows), sum(1 for r in rows if r.astimezone(zone).date() == today)
+
+
+async def run_pair(
+    session: AsyncSession,
+    completer: Any,
+    hits: Sequence[Any],
+    question: str,
+    *,
+    mode: str,
+    owner_chat_id: int,
+    now: datetime,
+    tz: str,
+) -> int | None:
+    """After an answered ask: send one "Which is better?" pair when the limits allow it.
+
+    At most 3 a week and 1 a day, rotating the two variants, never without two checked
+    answers. Returns the pair id, or None when nothing was sent.
+    """
+    from techradar.messaging.outbox import enqueue_message
+
+    week, today = await pair_counts(session, now, tz)
+    if not pair_due(week, today) or not hits:
+        return None
+    variant = VARIANTS[week % len(VARIANTS)]
+    pair = await make_pair(completer, question, hits, variant)
+    if pair is None:
+        return None
+    first, second = (variant[0], variant[1]), (pair[0], pair[1])
+    if secrets.randbelow(2):  # which version is A is random, so the first position never wins
+        first, second = (first[1], first[0]), (second[1], second[0])
+    pair_id = await create_pair(
+        session,
+        mode=mode,
+        question=question[:500],
+        version_a=second[0],
+        version_b=second[1],
+        variant_a=first[0],
+        variant_b=first[1],
+    )
+    text, buttons = format_pair_message(question, second[0], second[1], pair_id)
+    await enqueue_message(
+        session,
+        chat_id=owner_chat_id,
+        text=text,
+        purpose="pair",
+        buttons=buttons,
+        ref_id=pair_id,
+    )
+    return pair_id

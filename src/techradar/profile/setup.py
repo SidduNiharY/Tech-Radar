@@ -88,3 +88,94 @@ def parse_setup_choice(
         field=field_name,
         value=val,
     )
+
+
+# --- Phase 11 Task 7: /setup stores the owner's taps as active rules -------------------------
+
+SETUP_MODES: list[Mode] = list(Mode)
+SETUP_PREFIX = "set_"
+
+
+def setup_mode(action: str) -> Mode | None:
+    """The mode of a `set_<mode>` callback action, or None when it is not a setup action."""
+    if not action.startswith(SETUP_PREFIX):
+        return None
+    try:
+        return Mode(action.removeprefix(SETUP_PREFIX))
+    except ValueError:
+        return None
+
+
+def setup_message(mode: Mode, question_index: int) -> tuple[str, list[list[Button]]]:
+    """One setup question for one mode, with its buttons."""
+    q = SETUP_QUESTIONS[question_index]
+    return f"{mode.value}: {q['question']}", setup_buttons(mode, question_index)
+
+
+def next_setup_step(mode: Mode, question_index: int) -> tuple[Mode, int] | None:
+    """The question after this one: the mode's next, then the next mode's first, then done."""
+    if question_index + 1 < len(SETUP_QUESTIONS):
+        return mode, question_index + 1
+    at = SETUP_MODES.index(mode)
+    if at + 1 < len(SETUP_MODES):
+        return SETUP_MODES[at + 1], 0
+    return None
+
+
+async def apply_setup_choice(
+    session: Any, mode: Mode, question_index: int, choice: int, now: Any
+) -> StyleRule:
+    """My tap becomes an active rule (`evidence={"setup": true}`) and is kept in the profile.
+
+    The rule comes only from the button's fixed option list, never from any text. A previous
+    active rule of the same mode and field is replaced (set back to `undone`).
+    """
+    from sqlalchemy import select
+
+    from techradar.db.models import ImprovementLog, PreferenceRule, StyleProfile
+
+    rule = parse_setup_choice(mode, question_index, choice)
+    found = await session.execute(
+        select(PreferenceRule).where(
+            PreferenceRule.status == "active",
+            PreferenceRule.field == rule.field,
+            PreferenceRule.mode == mode.value,
+        )
+    )
+    old = list(found.scalars().all())
+    for o in old:
+        o.status = "undone"
+    row = PreferenceRule(
+        mode=mode.value,
+        field=rule.field,
+        value=rule.value,
+        evidence={"setup": True},
+        status="active",
+        proposed_at=now,
+        approved_at=now,
+    )
+    session.add(row)
+    await session.flush()
+    session.add(
+        ImprovementLog(
+            kind="rule",
+            key=f"rule:{row.id}",
+            before={"status": "proposed", "replaced": [o.id for o in old]},
+            after={
+                "status": "active",
+                "mode": mode.value,
+                "field": rule.field,
+                "value": rule.value,
+            },
+            automatic=False,
+            at=now,
+        )
+    )
+    profile = await session.get(StyleProfile, mode.value)
+    if profile is None:
+        session.add(StyleProfile(mode=mode.value, setup={rule.field: rule.value}, updated_at=now))
+    else:
+        profile.setup = {**profile.setup, rule.field: rule.value}
+        profile.updated_at = now
+    await session.flush()
+    return rule

@@ -29,6 +29,7 @@ def _query(data: str, from_id: int = OWNER, chat_id: int = OWNER):
     update.callback_query = query
     session = MagicMock()
     session.commit = AsyncMock()
+    session.flush = AsyncMock()  # Phase 11: the action log flushes
 
     @asynccontextmanager
     async def factory():

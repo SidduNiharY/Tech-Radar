@@ -1428,6 +1428,10 @@ class RegressionCase(Base):
     from_feedback_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     passing: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # a case guards a model change only once it is 7 days old (feedback/regression.py)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class ImprovementLog(Base):
