@@ -90,4 +90,4 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_settings_requires_owner_chat_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TR_TELEGRAM_OWNER_CHAT_ID", raising=False)
     with pytest.raises(ValidationError):
-        Settings()
+        Settings(_env_file=None)  # a server's own .env (the TUF has one) must not satisfy it
