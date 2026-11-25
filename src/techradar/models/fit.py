@@ -3,6 +3,20 @@
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from techradar.db.models import ModelTest
+
+FitLabel = Literal["fits", "split", "mostly_ram"]
+_FIT_LABELS: tuple[FitLabel, ...] = ("fits", "split", "mostly_ram")
+
+
+class FitResult(BaseModel):
+    """What the Models screen shows: the label, and whether it was measured or estimated."""
+
+    fit: FitLabel
+    source: Literal["measured", "estimate"]
 
 
 class ModelVramEstimate(BaseModel):
@@ -125,3 +139,29 @@ def estimate_vram_and_fit(
         recommended_gpu_layers=recommended_gpu_layers,
         headroom_mb=headroom_mb,
     )
+
+
+def choose_fit(measured: object, model_bytes: int, ctx: int = 8192, **kw: int) -> FitResult:
+    """A measured fit beats the estimate; anything unrecognised falls back to the estimate."""
+    for label in _FIT_LABELS:
+        if measured == label:
+            return FitResult(fit=label, source="measured")
+    return FitResult(fit=estimate_fit(model_bytes, ctx, **kw), source="estimate")
+
+
+async def fit_for_tag(
+    session: AsyncSession, tag: str, model_bytes: int, ctx: int = 8192, **kw: int
+) -> FitResult:
+    """Fit for `tag`: the latest `model_tests` row with a measured `fit`, else the estimate.
+
+    `model_bytes` (Ollama's tag size) and the VRAM size are given by the caller.
+    WIRING(owner): live GPU numbers come from the `gpu-stats` container (Task 3). That is a
+    new container with a GPU reservation, so it is not built here.
+    """
+    rows = await session.execute(
+        select(ModelTest.metrics).where(ModelTest.tag == tag).order_by(ModelTest.id.desc())
+    )
+    for metrics in rows.scalars():
+        if isinstance(metrics, dict) and metrics.get("fit") in _FIT_LABELS:
+            return choose_fit(metrics["fit"], model_bytes, ctx, **kw)
+    return choose_fit(None, model_bytes, ctx, **kw)
