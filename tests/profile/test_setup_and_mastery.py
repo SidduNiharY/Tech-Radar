@@ -141,7 +141,7 @@ async def test_compute_mastery_levels_a_chapter(session) -> None:
         original_path="polity.pdf",
         size_bytes=1,
         status="ready",
-        trust="trusted",
+        trust="my_own",
     )
     session.add(doc)
     await session.flush()
