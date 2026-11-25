@@ -14,7 +14,7 @@ from procrastinate import exceptions as procrastinate_exceptions
 from sqlalchemy import select
 
 from techradar.alerts.watcher import ChangeEvent, run_exam_poll
-from techradar.bot.intake import MAX_LINK_CHARS, NOT_AVAILABLE_REPLY, intake_link
+from techradar.bot.intake import MAX_LINK_CHARS, NOT_AVAILABLE_REPLY
 from techradar.briefing.capsule import month_start, run_capsule
 from techradar.briefing.compose import run_briefing
 from techradar.briefing.takes import save_take
@@ -24,7 +24,7 @@ from techradar.db.models import LibraryChapter
 from techradar.exams.final30 import run_formula_sheets
 from techradar.exams.sources import enqueue_sources_digest, run_suggest_topic_sources
 from techradar.exams.syllabus import sync_syllabus
-from techradar.fetcher.owner import OWNER_FILE_REPLIES, take_owner_file
+from techradar.fetcher.owner import OWNER_FILE_REPLIES, intake_link, take_owner_file
 from techradar.library.inbox import load_limits, plan_library_intake
 from techradar.library.index import index_library_chapter
 from techradar.library.jobs import collect_bulk_results, plan_doc, resume_all

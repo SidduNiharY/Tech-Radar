@@ -19,15 +19,13 @@ from telegram import Document
 from techradar.bot import main as bot_main
 from techradar.bot.intake import (
     DOC_REFUSED_REPLY,
-    LINK_QUEUED_REPLY,
-    NOT_ALLOWLISTED_REPLY,
     check_document,
     intake_document,
-    intake_link,
     intake_paste,
     paste_html,
 )
 from techradar.bot.routing import route_update
+from techradar.fetcher.owner import LINK_QUEUED_REPLY, NOT_ALLOWLISTED_REPLY, intake_link
 from techradar.worker.names import OWNER_FILE, OWNER_LINK
 
 OWNER = 42

@@ -2,7 +2,8 @@
 
 The bot never writes `data/raw` or `data/parse-jobs` and never fetches a link itself:
 
-- **Link:** the bot defers `owner_link` with the URL; the worker runs `intake_link`, which
+- **Link:** the bot defers `owner_link` with the URL; the worker runs `intake_link`
+  (`techradar.fetcher.owner`: this module stays importable in the bot image), which
   checks it with `check_url` against the Squid allowlist and inserts a `raw_items` row
   (source 0, status `new`). The fetcher then fetches it through Squid and checks every
   redirect again. The reply comes back through the outbox.
@@ -22,7 +23,6 @@ SEC: SEC-05, SEC-06, SEC-17, SEC-25, SEC-26, SEC-57.
 
 from __future__ import annotations
 
-import hashlib
 import html
 import logging
 import re
@@ -32,28 +32,18 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from techradar.db.models import RawItem
 from techradar.intake.owner_files import UnsafeFile, write_private
-from techradar.security.urls import UrlRejected, check_url
 from techradar.worker.names import OWNER_FILE, OWNER_LINK
 
 logger = logging.getLogger(__name__)
 
-OWNER_SOURCE_ID = 0  # the seeded `manual` source (migration 0005)
 MAX_DOC_BYTES = 5_000_000
 MIN_PASTE_CHARS = 200
 MAX_PASTE_CHARS = 20_000
 MAX_LINK_CHARS = 4096  # longer is never a link; check_url refuses over 2000 anyway
 PDF_MIME = "application/pdf"
 
-NOT_ALLOWLISTED_REPLY = (
-    "That site isn't on the allowlist. Add it to infra/squid/allowlist.txt on the server, "
-    "or paste the text instead."
-)
-LINK_QUEUED_REPLY = "Queued. You'll see it in tomorrow's briefing or with /ask."
 QUEUED_REPLY = "Queued."
 DOC_REFUSED_REPLY = "Only PDFs up to 5 MB, please."
 NOT_SAVED_REPLY = "Couldn't save that file."
@@ -83,41 +73,6 @@ def is_paste(text: str) -> bool:
     """Owner text of at least 200 characters with no URL in it."""
     cleaned = text.strip()
     return len(cleaned) >= MIN_PASTE_CHARS and _URL_IN_TEXT_RE.search(cleaned) is None
-
-
-def link_reply(reason: str) -> str:
-    if reason == "not_allowlisted":
-        return NOT_ALLOWLISTED_REPLY
-    return f"That link can't be used ({reason})."
-
-
-async def intake_link(session: AsyncSession, url: str, allowed: frozenset[str]) -> str:
-    """Check the link and queue it for the fetcher; return the reply for the owner.
-
-    Runs in the worker (`owner_link` job). Nothing is fetched here; the fetcher fetches the
-    row through Squid and re-checks every redirect against the same allowlist.
-    """
-    try:
-        clean = check_url(url, allowed)
-    except UrlRejected as exc:
-        return link_reply(exc.reason)
-    url_hash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
-    known = (
-        await session.execute(select(RawItem.id).where(RawItem.url_hash == url_hash))
-    ).scalar_one_or_none()
-    if known is None:
-        path = clean.split("?", 1)[0].lower()
-        session.add(
-            RawItem(
-                source_id=OWNER_SOURCE_ID,
-                url=clean,
-                url_hash=url_hash,
-                kind="pdf" if path.endswith(".pdf") else "page",
-                status="new",
-            )
-        )
-        await session.flush()
-    return LINK_QUEUED_REPLY
 
 
 def _plain(text: str) -> str:
