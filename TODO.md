@@ -1,6 +1,6 @@
 # TechRadar Brain: TODO
 
-**Status date:** 2026-11-24 · **Branch:** `fix/b5-real-gates` at `30fd052`+ (pushed; never merge to `main` without the owner) · **Rough progress:** about half of the whole project.
+**Status date:** 2026-11-26 · **Branch:** `fix/b5-real-gates` (pushed; never merge to `main` without the owner) · **Rough progress:** about two thirds of the whole project.
 
 This file is the tracker. The task details are in the phase plans under `docs/superpowers/plans/`. The brief for Antigravity is [`implementations.md`](implementations.md). Server steps are in `TODO_TUF_AND_MAC.md`; gate sign-offs are in `docs/security/gates.md`.
 
@@ -30,28 +30,31 @@ Three levels, in this order. A phase is done only when all three are "yes" and i
 | 2 Ingest | yes | partly | partly | Internet stage: real feeds, real models, `guard-eval`, red-team. |
 | 2b RAG and Ask | yes | partly | partly | Internet stage: `rag-eval` in live mode. |
 | 2c Library | yes (11 of 11) | yes | db tests pass | Claude: `make simulate-2c`, `make gate-2c`, OCR timing on the TUF. Owner: pack URLs, bot database role. |
-| 3 Briefing and practice | yes | yes, except Task 3 | db tests pass | Claude (Opus): Task 3 intake (links, PDFs, pasted text); gate 3. Owner: changedetection image, exam hosts. |
+| 3 Briefing and practice | yes | yes (Task 3 intake done 2026-11-26) | db tests pass | Claude: gate 3. Owner: changedetection image, exam hosts. |
 | 4 Web app | yes (tables, schemas) | API Tasks 1, 2, 2b | db tests pass | Claude: Task 5b API routes. Owner: approve the web stack, then scaffold, screens, containers, gate 4. |
 | 5 Planner | yes | yes | db tests pass | Owner: compose mounts (`data/status` for the worker, vault for `/skill`); backup script writes `backup.json`. Claude: gate 5. |
-| 6 Voice and English | yes | no | 1 db test fails | Claude: wire English practice; fix `voice/feedback.py` (wrong `complete` call). Owner: approve whisper, Kokoro, wav2vec2, LanguageTool image. |
+| 6 Voice and English | yes | English practice, voice intake and analysis job (engines behind Protocols) | db tests pass | Owner: approve faster-whisper, Kokoro, wav2vec2, LanguageTool and voice-worker images. Claude: gate 6 after that. |
 | 7 World | yes | yes, except fetch and Task 8 | db tests pass | Claude (Opus): Task 8 fact-checker. Owner: Wikipedia and World Bank domains, SearXNG image, a separate night worker or not. |
-| 8 Exams | yes | yes, except intake | db tests pass | Claude (Opus): past papers, screenshots, answer keys, cutoffs folder reading. |
+| 8 Exams | yes | yes (past papers, cutoffs, mock screenshots, answer-key matching) | db tests pass | Owner: exam hosts for answer-key fetching. Claude: move mock screenshots to the bot drop folder + worker job; gate 8. |
 | 9 Live voice and group | small parts | no | no | Claude: group mode (Opus). Owner: Pipecat, `sympy`. |
-| 10 Models and extras | small parts | no | no | Claude: registry, switch, rollback, bench, digest jobs. Owner: `fastmcp`. |
-| 11 Feedback | yes | no | db tests pass | Claude: buttons, jobs, rules, reports. |
-| 12 Jarvis | small parts | no | db tests pass | Claude: router, permission levels, tickets (Opus). Owner: `onnxruntime-web`. |
+| 10 Models and extras | yes | registry, fit, bench, release digest, trends | db tests pass | Claude (Opus): owner-confirmed model switch, the worker reload, admin routes. Owner: `fastmcp`, gpu-stats image, registry domains. |
+| 11 Feedback | yes | yes | db tests pass | Claude: edits (Task 3), liked examples. Owner: `fsrs` optimizer. |
+| 12 Jarvis | tables, read skills, greeting | read side only | db tests pass | Claude (Opus): router, permission levels, voice tickets, jarvis service. Owner: `onnxruntime-web`. |
 
 "Old code" means the modules from the first Antigravity run. They sit under other names and keep data in memory instead of the database, so nothing can call them. `implementations.md` section 6 says what replaces each one.
 
 Migrations today: `0001` to `0004b`. The plans need `0005` to `0014`.
 
-## 3. State of the tree (2026-11-24)
+## 3. State of the tree (2026-11-26)
 
-- Antigravity's `basic/phases-3-12` was merged on 2026-11-22. Phases 2c, 3, 4 (API), 5, 7 and 8 were reviewed and wired by worktree agents (Opus for security, Sonnet for the rest) and merged through `integrate/wave1`. Order and rules: `docs/superpowers/plans/2026-11-22-phases3-12-wiring-order.md`.
-- `make lint test`: 2160 passed on the Mac; 7 import contracts kept. On the TUF all 277 db tests pass except `tests/voice/test_jobs.py::test_audio_deleted_after_24h_unless_kept` (Phase 6 code bug). Migrations `0001` to `0014` upgrade and downgrade on the TUF.
-- `tests/test_settings.py::test_settings_requires_owner_chat_id` fails on the TUF only, because the TUF's `.env` sets the owner id.
-- Bugs fixed while wiring: every periodic job now accepts procrastinate's `timestamp=` (17 jobs crashed on first run); the worker and bot procrastinate connectors could not open their pool; drill answer keys could be wrong; several `enqueue_message` calls could never send; flagged items fed night prompts.
-- Owner decisions found while wiring: the bot connects as the `app` role but compose gives it only `tr_ro_password` (`/quarantine`, `/packs`, practice buttons need writes); the API image needs python-telegram-bot (`messaging/outbox.py`).
+- Wave 1 (2026-11-24): Phases 2c, 3, 4 (API), 5, 7, 8 wired. Wave 2 (2026-11-26): Phases 6, 10, 11, 12 (read side) and the intake doors (Telegram links, PDFs, pasted text, voice notes; library-folder past papers, cutoffs, weightage; mock screenshots). Opus did security, Sonnet the wiring; rules in `docs/superpowers/plans/2026-11-22-phases3-12-wiring-order.md`.
+- On the TUF: `make lint test` 2494 passed, all 368 db tests pass, 8 import contracts kept, migrations `0001` to `0014` upgrade and downgrade.
+- Bugs fixed while wiring: 17 periodic jobs crashed on first run (procrastinate's `timestamp=`); the worker and bot could not open their job queue; the bot could not start in its image (jinja2, tldextract); the seeded manual source raised "no news fetched" for ever; voice and held-copy file races; several prompt-injection and fail-open paths found by the security review.
+- Owner decisions found while wiring:
+  - the bot connects as the `app` role but compose gives it only `tr_ro_password` (`/quarantine`, `/packs`, practice and feedback buttons, voice intake need writes);
+  - compose mounts: `data/status` read-only for the worker, the vault for `/skill`, `data/voice/out` read-only for the bot; create `data/telegram-in`, `data/voice/in`, `data/voice/out` as 1000:1000 on the TUF;
+  - the API image needs python-telegram-bot (`messaging/outbox.py`).
+- Known gap: mock scorecards from Telegram need `data/raw` and `data/parse-jobs` in the bot, which the compose policy forbids; move them to the `telegram-in` drop folder and a worker job.
 
 ## 4. Phase 2c: what is done, what is left
 
